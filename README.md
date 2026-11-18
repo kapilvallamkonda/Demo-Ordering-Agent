@@ -23,6 +23,8 @@ Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──
 - **Interruptions:** if the caller talks over the agent, the in-flight reply is cancelled
   and the agent is told what the caller actually heard.
 
+See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
+
 ## Project layout
 
 | Path | What it is |
