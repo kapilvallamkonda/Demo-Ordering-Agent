@@ -1,6 +1,6 @@
 # High-Level Design: Phone Ordering Agent
 
-Status: demo; first live call completed 2026-11-18 (no order placed yet). Last updated: 2026-11-18.
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-18.
 
 ## 1. Goal
 
@@ -144,7 +144,8 @@ is how to find out why a call didn't produce an order.
   in `ord` (Chicago) with a 1 GB volume at `/data` for `orders.db`. Always on because a
   cold start would leave a caller in silence; one machine because SQLite lives on one
   volume. Secrets are Fly secrets, never in the image (`.dockerignore` excludes `.env`
-  and local databases). Fixed URL `https://<app>.fly.dev` for Twilio and Stripe.
+  and local databases). Live at `https://phone-ordering-agent-604b.fly.dev` (region
+  `ord`); the Twilio number's voice webhook points there.
   Local development still works with uvicorn plus a tunnel.
 
 ## 6. Data model
@@ -263,4 +264,5 @@ transcripts through `/calls`.
 | 2026-11-18 | Orders dashboard at `/dashboard` (reads `/orders`, which now takes `limit`). |
 | 2026-11-18 | Hosting on Fly.io: Dockerfile, fly.toml, one always-on machine with a volume for orders. |
 | 2026-11-18 | Call transcripts (`calls`, `call_events` tables, `/calls` API, dashboard Calls tab). Interruptions during a tool call no longer cancel it, so a confirmed order can't be lost to the caller talking over the agent. |
+| 2026-11-18 | Deployed to Fly.io (`phone-ordering-agent-604b`); Twilio number moved off the cloudflared tunnel. |
 | 2026-11-18 | Restaurant named Hyderabad House. Agent no longer tells callers to phone the restaurant; unpriced desserts/drinks/specials are offered at the counter instead. |
