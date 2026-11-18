@@ -42,6 +42,9 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 ORDERS_API_TOKEN = os.environ.get("ORDERS_API_TOKEN", "")
 DASHBOARD_HTML = Path(__file__).parent / "static" / "dashboard.html"
 WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish before hanging up
+# An interrupted reply that is mid tool call (e.g. placing the order) is allowed this long
+# to finish before it is cancelled anyway.
+TOOL_FINISH_SECONDS = 30.0
 
 # Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
 # so Twilio's defaults apply.
@@ -140,14 +143,33 @@ async def voice(request: Request) -> Response:
     return Response(content=twiml, media_type="application/xml")
 
 
-@app.get("/orders")
-async def orders(request: Request, limit: int = 20) -> list[dict]:
-    """Recent placed orders, newest first. Disabled unless ORDERS_API_TOKEN is set."""
+def _require_token(request: Request) -> None:
+    """Staff-only endpoints. Disabled (404) unless ORDERS_API_TOKEN is set."""
     if not ORDERS_API_TOKEN:
         raise HTTPException(status_code=404)
     if not hmac.compare_digest(request.headers.get("authorization", ""), f"Bearer {ORDERS_API_TOKEN}"):
         raise HTTPException(status_code=401)
+
+
+@app.get("/orders")
+async def orders(request: Request, limit: int = 20) -> list[dict]:
+    """Recent placed orders, newest first."""
+    _require_token(request)
     return request.app.state.store.recent(max(1, min(limit, 500)))
+
+
+@app.get("/calls")
+async def calls(request: Request, limit: int = 50) -> list[dict]:
+    """Recent phone calls, newest first, including ones that didn't place an order."""
+    _require_token(request)
+    return request.app.state.store.recent_calls(max(1, min(limit, 500)))
+
+
+@app.get("/calls/{call_id}")
+async def call_transcript(request: Request, call_id: str) -> dict:
+    """What was said on one call: caller, agent, tool calls and events, in order."""
+    _require_token(request)
+    return {"call_id": call_id, "events": request.app.state.store.transcript(call_id)}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -199,6 +221,24 @@ class RelayCall:
         self.ws = ws
         self.agent: OrderingAgent | None = None
         self.reply_task: asyncio.Task | None = None
+        self.call_id: str | None = None
+        self.store: OrderStore | None = None
+        self._unrecorded: list[str] = []  # reply text sent but not yet in the transcript
+
+    def flush_spoken(self, suffix: str = "") -> None:
+        text = "".join(self._unrecorded).strip()
+        self._unrecorded = []
+        if text or suffix:
+            self.record("agent", f"{text} {suffix}".strip())
+
+    def record(self, role: str, text: str) -> None:
+        """Add a line to this call's transcript. Never lets a storage error break the call."""
+        if not (self.store and self.call_id and text):
+            return
+        try:
+            self.store.log_event(self.call_id, role, text)
+        except Exception:
+            log.exception("couldn't record transcript line")
 
     async def send(self, payload: dict) -> None:
         await self.ws.send_text(json.dumps(payload))
@@ -220,6 +260,13 @@ class RelayCall:
                 s = self.agent.session
                 log.info("call %s ended; order placed=%s number=%s", s.call_id, s.order.placed,
                          s.order_number)
+                self.record("event", "Call ended" + (f"; order #{s.order_number} placed"
+                                                     if s.order_number else "; no order placed"))
+                if self.store and self.call_id:
+                    try:
+                        self.store.end_call(self.call_id, s.order_number)
+                    except Exception:
+                        log.exception("couldn't record call end")
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -233,6 +280,15 @@ class RelayCall:
                 caller_phone=msg.get("from"),
                 payments=app_state.payments,
             )
+            self.agent.on_tool = self.record_tool
+            self.call_id, self.store = msg.get("callSid"), app_state.store
+            if self.call_id:
+                try:
+                    self.store.start_call(self.call_id, self.agent.session.order.customer_phone
+                                          or msg.get("from"))
+                except Exception:
+                    log.exception("couldn't record call start")
+            self.record("agent", self.agent.greeting)
             log.info("call %s started", msg.get("callSid"))
         elif kind == "prompt":
             if self.agent is None or not msg.get("last", True):
@@ -241,36 +297,66 @@ class RelayCall:
             if not text:
                 return
             await self.cancel_reply()
+            self.record("caller", text)
             self.reply_task = asyncio.create_task(self.reply(text))
         elif kind == "interrupt":
+            heard = msg.get("utteranceUntilInterrupt")
+            self.record("event", "Caller interrupted" + (f'; they heard: "{heard}"' if heard else ""))
             await self.cancel_reply()
             if self.agent:
-                self.agent.note_interrupted(msg.get("utteranceUntilInterrupt"))
+                self.agent.note_interrupted(heard)
         elif kind == "dtmf":
             log.info("dtmf digit %s ignored", msg.get("digit"))
         elif kind == "error":
             log.error("relay error: %s", msg.get("description"))
 
+    def record_tool(self, name: str, args: dict, result: str, is_error: bool) -> None:
+        self.flush_spoken()  # keep the transcript in the order things happened
+        args_text = json.dumps(args, ensure_ascii=False) if args else ""
+        self.record("tool", f"{name}({args_text}) {'ERROR ' if is_error else ''}-> {result}")
+
     async def cancel_reply(self) -> None:
+        """Stop the current reply. A reply that is mid tool call (say, placing the order)
+        is muted and allowed to finish, so the order isn't lost to an interruption."""
         task, self.reply_task = self.reply_task, None
-        if task and not task.done():
-            task.cancel()
+        if not task or task.done():
+            return
+        if self.agent and self.agent.stop_speaking():
+            self.record("event", "Interrupted during a tool call; finishing it silently")
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(asyncio.shield(task), TOOL_FINISH_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                log.error("tool call still running after %ss; cancelling it", TOOL_FINISH_SECONDS)
+            except Exception:
+                return  # reply() logs its own errors
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     async def reply(self, text: str) -> None:
         assert self.agent is not None
         spoken: list[str] = []
+        self._unrecorded = []
         try:
             async for chunk in self.agent.respond(text):
                 spoken.append(chunk)
+                self._unrecorded.append(chunk)
                 await self.send({"type": "text", "token": chunk, "last": False})
+        except asyncio.CancelledError:
+            if self._unrecorded:
+                self.flush_spoken("[cut off]")
+            raise
         except Exception:
             log.exception("agent failed")
+            self.flush_spoken("[error] Sorry, something went wrong.")
             await self.send({"type": "text", "token": "Sorry, something went wrong.", "last": True})
             return
+        self.flush_spoken()
+        if self.reply_task is not asyncio.current_task():
+            return  # interrupted mid tool call and finished silently; the next prompt takes over
         await self.send({"type": "text", "token": "", "last": True})
 
         if self.agent.end_requested:

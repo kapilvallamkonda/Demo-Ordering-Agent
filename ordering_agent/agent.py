@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import anthropic
 
@@ -64,17 +64,36 @@ class OrderingAgent:
         ]
         self.messages: list = []
         self._pending_note: str | None = None
+        # Called as on_tool(name, input, result_text, is_error) after each tool runs (transcripts).
+        self.on_tool: Callable[[str, dict, str, bool], None] | None = None
+        # True from the moment the model starts a tool call until its result is in the
+        # history. Cancelling then would lose the call (e.g. place_order) or leave a
+        # tool_use without a tool_result, so an interruption mutes the reply instead.
+        self._tool_turn = False
+        self._muted = False
 
     @property
     def end_requested(self) -> bool:
         return self.session.end_requested
 
+    def stop_speaking(self) -> bool:
+        """The caller interrupted. Returns True if the current reply has a tool call in
+        flight: it then finishes silently (the tool runs, its result is recorded, nothing
+        more is said) and the caller must await it rather than cancel it. Returns False
+        when the reply can simply be cancelled."""
+        if self._tool_turn:
+            self._muted = True
+            return True
+        return False
+
     def note_interrupted(self, heard: str | None) -> None:
         """The caller talked over the agent. Record what they actually heard."""
         if heard:
-            self._pending_note = f'(You were interrupted. The caller only heard you say: "{heard}")'
+            note = f'(You were interrupted. The caller only heard you say: "{heard}"'
         else:
-            self._pending_note = "(You were interrupted before the caller heard your reply.)"
+            note = "(You were interrupted before the caller heard your reply"
+        self._pending_note = (note + ". Anything after that, including tool results you "
+                              "haven't told them about, they have not heard.)")
 
     def _request_params(self) -> dict:
         params: dict = {
@@ -93,13 +112,35 @@ class OrderingAgent:
             params["speed"] = "fast"
         return params
 
+    def _add_caller_text(self, text: str) -> None:
+        # After an interrupted reply the history can already end on a user turn (a
+        # tool_result, or a turn that never got an answer). Extend it instead of
+        # sending two user turns in a row.
+        last = self.messages[-1] if self.messages else None
+        if last and last["role"] == "user":
+            blocks = last["content"]
+            if isinstance(blocks, str):
+                blocks = [{"type": "text", "text": blocks}]
+            last["content"] = [*blocks, {"type": "text", "text": text}]
+        else:
+            self.messages.append({"role": "user", "content": text})
+
     async def respond(self, caller_text: str) -> AsyncIterator[str]:
         """Handle one caller utterance, yielding reply text as it streams."""
+        self._tool_turn = self._muted = False
+        try:
+            async for chunk in self._respond(caller_text):
+                if not self._muted:
+                    yield chunk
+        finally:
+            self._tool_turn = self._muted = False
+
+    async def _respond(self, caller_text: str) -> AsyncIterator[str]:
         content = caller_text
         if self._pending_note:
             content = f"{self._pending_note}\n{caller_text}"
             self._pending_note = None
-        self.messages.append({"role": "user", "content": content})
+        self._add_caller_text(content)
 
         json_retries = 0
         rounds = 0
@@ -112,6 +153,9 @@ class OrderingAgent:
                     async for event in stream:
                         if event.type == "text":
                             yield event.text
+                        elif (event.type == "content_block_start"
+                              and getattr(event.content_block, "type", None) == "tool_use"):
+                            self._tool_turn = True
                     response = await stream.get_final_message()
                 json_retries = 0
             except ValueError:
@@ -128,8 +172,8 @@ class OrderingAgent:
                 yield ERROR_LINE
                 return
 
-            # Everything from here until the next await is synchronous, so a cancellation
-            # (caller interrupts) can't leave a tool_use without its tool_result.
+            # From here until the tool results are appended, interruptions mute rather than
+            # cancel (see stop_speaking), so a tool_use always gets its tool_result.
             self.messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "refusal":
@@ -141,6 +185,7 @@ class OrderingAgent:
             tool_uses = [b for b in response.content if b.type == "tool_use"]
             if not tool_uses:
                 return  # end_turn, or a text-only answer
+            self._tool_turn = True
             if response.stop_reason == "max_tokens":
                 # A truncated tool input can parse as a valid-looking partial object; don't run it.
                 results = [
@@ -155,13 +200,21 @@ class OrderingAgent:
                     text, is_error = await asyncio.to_thread(
                         run_tool, self.session, block.name, block.input)
                     log.info("tool %s(%s) -> %s", block.name, block.input, text)
+                    if self.on_tool:
+                        try:
+                            self.on_tool(block.name, block.input, text, is_error)
+                        except Exception:
+                            log.exception("on_tool hook failed")
                     results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": text,
                          "is_error": is_error}
                     )
             # All results for one assistant turn go back in a single user message.
             self.messages.append({"role": "user", "content": results})
+            self._tool_turn = False
 
+            if self._muted:
+                return  # interrupted: the tools ran; the next turn tells the caller
             if self.session.end_requested:
                 return  # the goodbye has been said; no need for another model turn
 

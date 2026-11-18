@@ -32,6 +32,8 @@ class _Stream:
             for b in self._msg.content:
                 if b.type == "text":
                     yield SimpleNamespace(type="text", text=b.text)
+                elif b.type == "tool_use":
+                    yield SimpleNamespace(type="content_block_start", content_block=b)
         return gen()
 
     async def get_final_message(self):

@@ -55,7 +55,7 @@ flowchart LR
 | Stripe webhook | `server.py` `/stripe/webhook`, `/paid` | Verifies Stripe's signature and updates payment and order status; `/paid` is the page shown after paying. |
 | Storage | `ordering_agent/storage.py` | Saves placed orders (SQLite) with order status and payment status. Adds new columns to older databases on startup. |
 | Terminal client | `ordering_agent/cli.py` | Same agent without a phone, for testing. |
-| Orders dashboard | `server.py` `/dashboard`, `/orders`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. The page holds no data and reads `/orders` with the admin token. |
+| Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
 
 ## 3. Call flow
 
@@ -98,9 +98,20 @@ sequenceDiagram
   (`pay_within_minutes`, 30 minutes to 24 hours, Stripe's limits), the order is
   `cancelled` and the caller gets a text saying so.
 
-**Interruptions:** when the caller talks over the agent, Twilio sends `interrupt`. The
-server cancels the reply in progress, and the agent's next turn is told what the caller
-actually heard.
+**Interruptions:** when the caller talks over the agent, Twilio sends `interrupt` (or
+a new prompt arrives). If the reply is only talking, the server cancels it. If the model
+has started a tool call (for example `place_order`, which also calls Stripe and Twilio),
+cancelling would lose the order or leave a tool call without its result in the history,
+so instead the reply is muted: the tool finishes, its result is recorded, nothing more
+is spoken, and the server waits (up to 30 s) before handling what the caller said.
+Either way the agent's next turn is told what the caller actually heard, and that any
+tool results after that point haven't been announced.
+
+**Transcripts:** every call gets a row in `calls` and a line in `call_events` for each
+thing that happened, in order: the greeting, what the caller said (as Twilio heard it),
+what the agent said (marked when cut off), each tool call with its input and result,
+interruptions and the call's end. Staff read them on the dashboard's Calls tab. This
+is how to find out why a call didn't produce an order.
 
 ## 4. Key design decisions
 
@@ -146,6 +157,9 @@ actually heard.
   order summary as JSON, order status (`confirmed` / `awaiting_payment` / `cancelled`),
   payment status (`not_requested` / `unpaid` / `paid` / `expired`), Stripe Checkout
   Session ID and URL, paid time.
+- **Call row:** Twilio call SID, start and end time, caller phone, order number (if any).
+- **Call event:** call SID, time, role (`caller` / `agent` / `tool` / `event`), text
+  (at most 4,000 characters).
 - **Phone numbers** are stored in E.164 form (`+15551234567`).
 
 ## 7. Agent tools
@@ -175,8 +189,8 @@ customers pay at pickup. The pay-first rule is per restaurant, in `data/menu.jso
 
 - `/voice` validates Twilio's request signature when `TWILIO_AUTH_TOKEN` is set.
 - `/ws` rejects a bad signature, but doesn't yet require one (open issue).
-- `/orders` and `/dashboard` (customer names and phone numbers) are off unless
-  `ORDERS_API_TOKEN` is set. The dashboard page has no data in it; it sends the token
+- `/orders`, `/calls` and `/dashboard` (customer names, phone numbers, call
+  transcripts) are off unless `ORDERS_API_TOKEN` is set. The dashboard page has no data in it; it sends the token
   (kept in the browser's local storage) as a Bearer header, compared in constant time.
 - The phone number defaults to caller ID from Twilio. The caller can give a different
   number for the text (`set_customer_phone`); the agent reads back the last four digits
@@ -196,7 +210,9 @@ customers pay at pickup. The pay-first rule is per restaurant, in `data/menu.jso
 | Unparseable streamed tool input | Turn retried up to twice, then the error line. |
 | Runaway tool loop | Capped at 8 model rounds per caller turn. |
 | Invalid tool input or rule violation | Error returned to the model, which asks the caller. |
-| Caller hangs up | WebSocket closes, reply in progress is cancelled. |
+| Caller hangs up | WebSocket closes. A reply that is only talking is cancelled; one mid tool call finishes first, so a confirmed order is still saved. The call's end is recorded. |
+| Caller interrupts mid tool call | The tool finishes silently, then the agent answers the new speech knowing what wasn't heard. If it takes over 30 s it's cancelled. |
+| Transcript write fails | Logged; the call carries on. |
 | Stripe or SMS fails at `place_order` | The order is still saved. The agent tells the caller the text didn't go through and they can pay at pickup (pay-first restaurants: the order starts when they pay at the counter). |
 | Text after payment fails | Logged; payment status is still updated. |
 
@@ -206,7 +222,9 @@ customers pay at pickup. The pay-first rule is per restaurant, in `data/menu.jso
 API key or network. Coverage: order rules, tool validation, the agent loop, TwiML and
 voice settings, signature rejection, a full phone order over the WebSocket, phone
 number checks, both payment rules (optional and pay-first), link/SMS failure, Stripe
-webhook signature checks and duplicate events (with fake Stripe and SMS).
+webhook signature checks and duplicate events (with fake Stripe and SMS), an
+interruption during `place_order` (order still saved, history stays valid), and call
+transcripts through `/calls`.
 
 ## 12. Open issues and next steps
 
@@ -227,6 +245,10 @@ webhook signature checks and duplicate events (with fake Stripe and SMS).
 - Refunds and order changes after payment are handled manually in Stripe.
 - Before scaling past one Fly machine, move orders to Postgres (SQLite is on one volume),
   and set up volume snapshots/backups for `orders.db`.
+- Transcripts are kept forever and include names and phone numbers; add a retention
+  period (delete after N days) before real customers call.
+- The first live order that wasn't saved (call `CA277d47…`, before transcripts) is still
+  unexplained; the next failed call will have a transcript to check.
 - Possible features: delivery, POS integration, kitchen display.
 
 ## 13. Change log
@@ -240,4 +262,5 @@ webhook signature checks and duplicate events (with fake Stripe and SMS).
 | 2026-11-18 | Pay by text: Stripe Checkout link per order sent by SMS with the order details, Stripe webhook for paid/expired, pay-first rule per restaurant, `set_customer_phone` tool, order and payment status in storage. |
 | 2026-11-18 | Orders dashboard at `/dashboard` (reads `/orders`, which now takes `limit`). |
 | 2026-11-18 | Hosting on Fly.io: Dockerfile, fly.toml, one always-on machine with a volume for orders. |
+| 2026-11-18 | Call transcripts (`calls`, `call_events` tables, `/calls` API, dashboard Calls tab). Interruptions during a tool call no longer cancel it, so a confirmed order can't be lost to the caller talking over the agent. |
 | 2026-11-18 | Restaurant named Hyderabad House. Agent no longer tells callers to phone the restaurant; unpriced desserts/drinks/specials are offered at the counter instead. |

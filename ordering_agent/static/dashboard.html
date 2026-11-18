@@ -63,7 +63,24 @@
   .login input { width: 100%; padding: 8px 10px; margin: 10px 0; border-radius: 8px; border: 1px solid var(--line);
                  background: var(--bg); color: var(--text); font: inherit; }
   .login button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .tab { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600; padding: 8px 12px;
+         cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .call { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .call > button { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; padding: 12px 16px;
+                   display: grid; grid-template-columns: 130px 1fr auto; gap: 4px 16px; align-items: center; }
+  .call > button:focus-visible { outline: 2px solid var(--accent); border-radius: 10px; }
+  .transcript { border-top: 1px solid var(--line); padding: 12px 16px 16px; display: grid; gap: 6px; }
+  .line { display: grid; grid-template-columns: 70px 1fr; gap: 10px; font-size: 14px; }
+  .line .role { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; padding-top: 2px; }
+  .line.caller .text { font-weight: 600; }
+  .line.tool .text, .line.event .text { color: var(--muted); font-size: 13px; font-family: ui-monospace, monospace;
+                                        overflow-wrap: anywhere; }
+  .line.event .text { font-family: inherit; font-style: italic; }
   @media (max-width: 640px) {
+    .call > button { grid-template-columns: 1fr; }
+    .line { grid-template-columns: 1fr; gap: 0; }
     header, main { padding-left: 16px; padding-right: 16px; }
     .order { grid-template-columns: 1fr; }
     .right { align-items: flex-start; text-align: left; }
@@ -91,6 +108,8 @@
   const app = document.getElementById("app");
   const statusEl = document.getElementById("status");
   let filter = "all", query = "", orders = [], seen = null, timer = null;
+  let view = "orders", calls = [], openCall = null;
+  const transcripts = new Map();  // call_id -> events
 
   const store = {
     get() { try { return localStorage.getItem(KEY) || ""; } catch { return ""; } },
@@ -144,13 +163,23 @@
     input.focus();
   }
 
+  const api = path => fetch(path, { headers: { Authorization: "Bearer " + token } });
+
+  async function loadTranscript(id) {
+    const r = await api("calls/" + encodeURIComponent(id));
+    if (r.ok) transcripts.set(id, (await r.json()).events);
+  }
+
   async function load() {
     try {
-      const r = await fetch("orders?limit=200", { headers: { Authorization: "Bearer " + token } });
+      const [r, rc] = await Promise.all([api("orders?limit=200"), api("calls?limit=200")]);
       if (r.status === 401) { store.clear(); return showLogin("That token didn't work."); }
       if (r.status === 404) { return showLogin("The orders API is off. Set ORDERS_API_TOKEN on the server and restart it."); }
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
+      calls = rc.ok ? await rc.json() : [];
+      const live = calls.find(c => c.call_id === openCall);
+      if (openCall && (!transcripts.has(openCall) || (live && !live.ended_at))) await loadTranscript(openCall);
       const ids = new Set(data.map(o => o.order_number));
       const fresh = seen ? data.filter(o => !seen.has(o.order_number)).map(o => o.order_number) : [];
       seen = ids;
@@ -164,6 +193,12 @@
   }
 
   function render(fresh = new Set()) {
+    const tabs = el("div", { class: "tabs", role: "tablist" },
+      [["orders", "Orders"], ["calls", "Calls"]].map(([k, label]) => el("button", {
+        class: "tab", role: "tab", "aria-selected": String(view === k),
+        onclick: () => { view = k; render(); },
+      }, label + (k === "calls" && calls.length ? ` (${calls.length})` : ""))));
+    if (view === "calls") return app.replaceChildren(tabs, callList());
     const today = orders.filter(o => isToday(o.created_at) && o.status !== "cancelled");
     const tiles = el("section", { class: "tiles" },
       tile("Orders today", today.length),
@@ -198,9 +233,42 @@
         : [el("div", { class: "empty" }, orders.length ? "No orders match." : "No phone orders yet. Call the number to place one.")]));
     }
     renderList();
-    app.replaceChildren(tiles, controls, list);
+    app.replaceChildren(tabs, tiles, controls, list);
     if (fresh.size) document.title = `(${fresh.size} new) Phone Orders`;
   }
+
+  const fmtDuration = c => {
+    if (!c.ended_at) return "In progress";
+    const s = Math.round(c.ended_at - c.started_at);
+    return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+  };
+  const ROLE = { caller: "Caller", agent: "Agent", tool: "Tool", event: "" };
+
+  function callList() {
+    if (!calls.length) return el("div", { class: "empty" }, "No calls recorded yet.");
+    return el("section", { class: "orders" }, calls.map(c => {
+      const outcome = c.order_number ? badge(["Order #" + c.order_number, "ok"])
+        : c.ended_at ? badge(["No order", "warn"]) : badge(["Live", ""]);
+      const open = openCall === c.call_id;
+      const events = transcripts.get(c.call_id);
+      return el("article", { class: "call" },
+        el("button", { "aria-expanded": String(open), onclick: async () => {
+            openCall = open ? null : c.call_id;
+            if (openCall && !transcripts.has(openCall)) { render(); await loadTranscript(openCall); }
+            render();
+          } },
+          el("div", {}, el("div", { class: "who" }, fmtTime(c.started_at)), el("div", { class: "when" }, fmtDuration(c))),
+          el("div", {}, el("span", {}, fmtPhone(c.caller_phone) || "Unknown caller"),
+            el("span", { class: "phone" }, `${c.caller_turns} caller turn${c.caller_turns === 1 ? "" : "s"}`)),
+          el("div", { class: "badges" }, outcome)),
+        open ? el("div", { class: "transcript" }, !events ? el("div", { class: "sub" }, "Loading transcript…")
+          : events.length ? events.map(e => el("div", { class: "line " + e.role },
+              el("div", { class: "role" }, ROLE[e.role] ?? e.role), el("div", { class: "text" }, e.text)))
+          : el("div", { class: "sub" }, "Nothing was recorded for this call.")) : null);
+    }));
+  }
+
+  const showCall = id => { view = "calls"; openCall = id; transcripts.delete(id); load(); };
 
   const tile = (label, value) => el("div", { class: "tile" },
     el("div", { class: "label" }, label), el("div", { class: "value" }, value));
@@ -220,7 +288,9 @@
         el("div", { class: "sub" }, `Subtotal ${money(o.subtotal)} · Tax ${money(o.tax)}`),
         el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status || "", ""]), badge(pay)),
         o.payment_url && o.payment_status === "unpaid"
-          ? el("a", { href: o.payment_url, target: "_blank", rel: "noopener", class: "sub" }, "Payment link") : null));
+          ? el("a", { href: o.payment_url, target: "_blank", rel: "noopener", class: "sub" }, "Payment link") : null,
+        o.call_id && calls.some(c => c.call_id === o.call_id)
+          ? el("a", { href: "#", class: "sub", onclick: e => { e.preventDefault(); showCall(o.call_id); } }, "Transcript") : null));
   }
 
   function start() {

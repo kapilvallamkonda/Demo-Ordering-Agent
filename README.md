@@ -21,7 +21,10 @@ Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──
   tool round-trip. **Prices and totals come only from code** (`ordering_agent/order.py`).
   The model can't invent items, skip required options, or miscompute a total.
 - **Interruptions:** if the caller talks over the agent, the in-flight reply is cancelled
-  and the agent is told what the caller actually heard.
+  and the agent is told what the caller actually heard. If the agent was in the middle of
+  a tool call (such as placing the order), that call finishes silently first, so it isn't lost.
+- **Call transcripts:** every call is recorded (caller, agent, tool calls, interruptions)
+  and readable on the dashboard's Calls tab.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
@@ -94,7 +97,9 @@ Set `ORDERS_API_TOKEN` to a long random string, restart, and open `/dashboard`
 (e.g. `http://127.0.0.1:8000/dashboard`). Enter the token once; the browser remembers it.
 The page shows today's order count and sales, and every order with items, total, order
 status and payment status. You can filter and search, and it refreshes every 10 seconds.
-The same data is at `GET /orders?limit=50` with `Authorization: Bearer <token>`.
+The Calls tab lists every call, including ones that didn't end in an order; click one to
+read its transcript. The same data is at `GET /orders?limit=50`, `GET /calls?limit=50`
+and `GET /calls/<CallSid>`, all with `Authorization: Bearer <token>`.
 
 ### 5. Host it on Fly.io
 
@@ -143,7 +148,7 @@ They include a full phone order over the WebSocket.
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
 | `ORDERS_DB` | `data/orders.db` | SQLite file for placed orders. |
 | `MENU_PATH` | `data/menu.json` | Menu file. |
-| `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page and `GET /orders`. |
+| `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
 
 Voice settings are read on every incoming call, so changing them only needs a server
 restart, no code change. Speech costs are billed through your Twilio account. Valid provider

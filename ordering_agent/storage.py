@@ -1,4 +1,4 @@
-"""Persistence for placed orders.
+"""Persistence for placed orders and call transcripts.
 
 SQLite keeps the demo dependency-free. For multiple server instances, swap this
 for a shared database (Postgres, etc.) or POST orders to your POS. Only placed
@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 
 from .order import Order
+
+TRANSCRIPT_MAX_CHARS = 4000  # per transcript line; tool results can be long
 
 # Order status: "confirmed" (kitchen can cook), "awaiting_payment" (restaurant requires
 # payment first), "cancelled" (payment link expired while awaiting payment).
@@ -50,6 +52,26 @@ class OrderStore:
             if col not in have:  # migrate databases created before payments existed
                 self._conn.execute(f"ALTER TABLE orders ADD COLUMN {col} {decl}")
         self._conn.execute("CREATE INDEX IF NOT EXISTS orders_payment_id ON orders(payment_id)")
+        # One row per phone call, placed order or not, plus what was said on it.
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS calls (
+                call_id TEXT PRIMARY KEY,
+                started_at REAL NOT NULL,
+                ended_at REAL,
+                caller_phone TEXT,
+                order_number INTEGER
+            )"""
+        )
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS call_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                call_id TEXT NOT NULL,
+                at REAL NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT NOT NULL
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS call_events_call ON call_events(call_id, id)")
         self._conn.commit()
 
     def save(self, order: Order, call_id: str | None = None, status: str = "confirmed",
@@ -123,3 +145,43 @@ class OrderStore:
              "status": r[4], "payment_status": r[5], "payment_url": r[6]}
             for r in rows
         ]
+
+    # ---- calls and transcripts ----------------------------------------------------
+
+    def start_call(self, call_id: str, caller_phone: str | None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO calls (call_id, started_at, caller_phone) VALUES (?, ?, ?)",
+                (call_id, time.time(), caller_phone),
+            )
+            self._conn.commit()
+
+    def end_call(self, call_id: str, order_number: int | None) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE calls SET ended_at = ?, order_number = ? WHERE call_id = ?",
+                               (time.time(), order_number, call_id))
+            self._conn.commit()
+
+    def log_event(self, call_id: str, role: str, text: str) -> None:
+        """Append one transcript line. role: caller, agent, tool or event."""
+        with self._lock:
+            self._conn.execute("INSERT INTO call_events (call_id, at, role, text) VALUES (?, ?, ?, ?)",
+                               (call_id, time.time(), role, text[:TRANSCRIPT_MAX_CHARS]))
+            self._conn.commit()
+
+    def recent_calls(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.call_id, c.started_at, c.ended_at, c.caller_phone, c.order_number,"
+                " (SELECT COUNT(*) FROM call_events e WHERE e.call_id = c.call_id AND e.role = 'caller')"
+                " FROM calls c ORDER BY c.started_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [{"call_id": r[0], "started_at": r[1], "ended_at": r[2], "caller_phone": r[3],
+                 "order_number": r[4], "caller_turns": r[5]} for r in rows]
+
+    def transcript(self, call_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT at, role, text FROM call_events WHERE call_id = ? ORDER BY id", (call_id,)
+            ).fetchall()
+        return [{"at": r[0], "role": r[1], "text": r[2]} for r in rows]
