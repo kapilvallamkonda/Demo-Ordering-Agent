@@ -9,6 +9,7 @@ from ordering_agent.agent import OrderingAgent
 from ordering_agent.menu import load_menu
 from ordering_agent.storage import OrderStore
 
+from .conftest import FIXTURE_MENU
 from .fakes import FakeClient, message, text_block, tool_block
 
 
@@ -23,7 +24,7 @@ def test_agent_runs_tool_loop_and_streams_text():
                 stop_reason="tool_use"),
         message(text_block("Ten BBQ wings, twelve dollars. Anything else?")),
     ])
-    agent = OrderingAgent(load_menu(), client=client, caller_phone="+15551234567")
+    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client, caller_phone="+15551234567")
     out = asyncio.run(collect(agent.respond("Ten BBQ wings please")))
 
     assert out == "Sure, adding that. Ten BBQ wings, twelve dollars. Anything else?"
@@ -46,7 +47,7 @@ def test_agent_reports_tool_errors_to_model():
         message(tool_block("add_item", {"item_id": "margherita"}), stop_reason="tool_use"),
         message(text_block("What size would you like?")),
     ])
-    agent = OrderingAgent(load_menu(), client=client)
+    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client)
     asyncio.run(collect(agent.respond("a margherita")))
     result = client.requests[1]["messages"][-1]["content"][0]
     assert result["is_error"] is True and "size" in result["content"]
@@ -55,14 +56,14 @@ def test_agent_reports_tool_errors_to_model():
 
 def test_refusal_gives_spoken_fallback():
     client = FakeClient([message(stop_reason="refusal")])
-    agent = OrderingAgent(load_menu(), client=client)
+    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client)
     out = asyncio.run(collect(agent.respond("something off topic")))
     assert "menu" in out
 
 
 def test_interrupt_note_is_passed_to_next_turn():
     client = FakeClient([message(text_block("ok"))])
-    agent = OrderingAgent(load_menu(), client=client)
+    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client)
     agent.note_interrupted("Our specials today are")
     asyncio.run(collect(agent.respond("Just a soda")))
     first = client.requests[0]["messages"][0]["content"]
@@ -72,6 +73,7 @@ def test_interrupt_note_is_passed_to_next_turn():
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("MENU_PATH", str(FIXTURE_MENU))
     monkeypatch.setattr(server, "TWILIO_AUTH_TOKEN", "")
     fake = FakeClient([])
     server.app.state.client = fake
@@ -154,3 +156,17 @@ def test_bad_extra_attrs_json_is_ignored(app_client, monkeypatch):
     c, _ = app_client
     monkeypatch.setenv("RELAY_EXTRA_ATTRS", "{not json")
     assert c.post("/voice", data={}).status_code == 200
+
+
+def test_dashboard_and_orders_need_token(app_client, monkeypatch):
+    c, _ = app_client
+    monkeypatch.setattr(server, "ORDERS_API_TOKEN", "")
+    assert c.get("/dashboard").status_code == 404
+    assert c.get("/orders").status_code == 404
+    monkeypatch.setattr(server, "ORDERS_API_TOKEN", "tok")
+    page = c.get("/dashboard")
+    assert page.status_code == 200 and "Phone Orders" in page.text
+    assert c.get("/orders").status_code == 401
+    assert c.get("/orders", headers={"authorization": "Bearer nope"}).status_code == 401
+    r = c.get("/orders?limit=5", headers={"authorization": "Bearer tok"})
+    assert r.status_code == 200 and r.json() == []

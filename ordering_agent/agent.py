@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -13,7 +14,8 @@ from collections.abc import AsyncIterator
 import anthropic
 
 from .menu import Menu
-from .order import Order
+from .order import Order, OrderError, normalize_phone
+from .payments import PaymentService
 from .prompts import build_greeting, build_system_prompt
 from .storage import OrderStore
 from .tools import TOOLS, CallSession, run_tool
@@ -40,18 +42,23 @@ class OrderingAgent:
         store: OrderStore | None = None,
         call_id: str | None = None,
         caller_phone: str | None = None,
+        payments: PaymentService | None = None,
     ):
         self.client = client or anthropic.AsyncAnthropic()
         self.menu = menu
         self.greeting = build_greeting(menu)
-        self.session = CallSession(order=Order(menu=menu), store=store, call_id=call_id)
+        self.session = CallSession(order=Order(menu=menu), store=store, call_id=call_id,
+                                   payments=payments)
         if caller_phone:
-            self.session.order.customer_phone = caller_phone
+            try:
+                self.session.order.customer_phone = normalize_phone(caller_phone)
+            except OrderError:
+                pass  # hidden or odd caller ID; the agent asks for a number if it needs one
         # The system prompt and tools are identical across calls, so they get cached.
         self._system = [
             {
                 "type": "text",
-                "text": build_system_prompt(menu)
+                "text": build_system_prompt(menu, payment_links=payments is not None)
                 + f'\nThe call opened with you saying: "{self.greeting}"',
             }
         ]
@@ -144,7 +151,9 @@ class OrderingAgent:
             else:
                 results = []
                 for block in tool_uses:
-                    text, is_error = run_tool(self.session, block.name, block.input)
+                    # Tools can call out to Stripe/Twilio; keep the event loop free for other calls.
+                    text, is_error = await asyncio.to_thread(
+                        run_tool, self.session, block.name, block.input)
                     log.info("tool %s(%s) -> %s", block.name, block.input, text)
                     results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": text,

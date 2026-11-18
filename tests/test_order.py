@@ -1,6 +1,9 @@
+import json
 import pytest
 
-from ordering_agent.menu import load_menu
+from ordering_agent.menu import DEFAULT_MENU_PATH, load_menu
+
+from .conftest import FIXTURE_MENU
 from ordering_agent.order import Order, OrderError
 from ordering_agent.storage import OrderStore
 from ordering_agent.tools import CallSession, run_tool
@@ -8,7 +11,7 @@ from ordering_agent.tools import CallSession, run_tool
 
 @pytest.fixture
 def menu():
-    return load_menu()
+    return load_menu(FIXTURE_MENU)
 
 
 def test_add_item_prices_options_and_extras(menu):
@@ -77,5 +80,17 @@ def test_tools_validate_types_and_place_saves(menu):
 
 
 def test_menu_prompt_text_is_deterministic(menu):
-    assert menu.to_prompt_text() == load_menu().to_prompt_text()
+    assert menu.to_prompt_text() == load_menu(FIXTURE_MENU).to_prompt_text()
     assert "margherita | Margherita Pizza" in menu.to_prompt_text()
+
+
+def test_real_menu_loads_with_unique_ids():
+    raw = json.loads(DEFAULT_MENU_PATH.read_text())
+    ids = [it["id"] for it in raw["items"]]
+    assert len(ids) == len(set(ids))
+    menu = load_menu()
+    assert len(menu.items) == len(ids)
+    for item in menu.items.values():
+        assert item.price > 0
+        for grp in item.options.values():
+            assert grp.choices and min(grp.choices.values()) >= 0

@@ -1,0 +1,12 @@
+# Never ship secrets or local data in the image; secrets are set with `fly secrets`.
+.env
+.env.*
+!.env.example
+data/*.db
+.venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+docs/

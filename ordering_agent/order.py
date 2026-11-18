@@ -7,6 +7,7 @@ that isn't on the menu, priced wrong, or missing a required choice.
 from __future__ import annotations
 
 import itertools
+import re
 from dataclasses import dataclass, field
 
 from .menu import Menu
@@ -16,6 +17,22 @@ MAX_QUANTITY = 50
 
 class OrderError(ValueError):
     """A request the order can't satisfy; the message is shown to the model."""
+
+
+def normalize_phone(raw: str) -> str:
+    """Return a phone number in E.164 form (+15551234567), or raise OrderError.
+
+    Bare 10-digit numbers are treated as US/Canada.
+    """
+    raw = (raw or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if raw.startswith("+") and 8 <= len(digits) <= 15:
+        return "+" + digits
+    if len(digits) == 10:
+        return "+1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    raise OrderError(f"'{raw}' doesn't look like a full phone number. Ask for all ten digits.")
 
 
 @dataclass
@@ -132,7 +149,11 @@ class Order:
             raise OrderError("Customer name can't be empty.")
         self.customer_name = name[:80]
         if phone:
-            self.customer_phone = phone.strip()[:32]
+            self.set_phone(phone)
+
+    def set_phone(self, phone: str) -> None:
+        self._ensure_open()
+        self.customer_phone = normalize_phone(phone)
 
     def mark_placed(self) -> None:
         self._ensure_open()

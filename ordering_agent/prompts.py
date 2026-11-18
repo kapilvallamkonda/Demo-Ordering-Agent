@@ -25,20 +25,46 @@ and totals, so never compute totals yourself.
 first), and ask them to confirm. Only after a clear yes, call place_order.
 - After placing, give the order number and pickup time, ask if there's anything else, and \
 when they're done say goodbye and call end_call.
-- If the caller wants something you can't do (delivery, reservations, complaints, \
-payment by phone), say politely that you can only take pickup orders on this line and \
-suggest they speak with the restaurant directly.
+{payment}
+- If the caller wants something you can't do (delivery, reservations, complaints), say \
+politely that you can only take pickup orders on this line and that staff can help them \
+in person. Never tell the caller to call the restaurant; this call is the restaurant.
 - Stay on the topic of ordering from this restaurant.
 
 {menu}
 """
 
 
-def build_system_prompt(menu: Menu) -> str:
+_PAY_BY_TEXT = """\
+- Payment: never ask for or accept card numbers or other payment details over the phone. \
+If the caller offers them, stop them politely. After the order is placed, we text the order \
+details and a secure payment link to their phone. {rule}
+- Before placing the order, confirm the mobile number for the text. If view_order shows a \
+customer_phone, read back its last four digits ("the number ending in 1234"). If there is \
+none, or they want a different number, ask for it and call set_customer_phone.
+- After placing, tell them the text is on its way, using the place_order result. If it \
+says the link wasn't sent, tell them what it says."""
+
+_PAY_AT_PICKUP = """\
+- Payment is at pickup. Never ask for or accept card numbers or other payment details \
+over the phone."""
+
+
+def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
     r = menu.restaurant
+    if payment_links:
+        rule = (f"This restaurant starts cooking only after the link is paid; the link is good for "
+                f"{menu.pay_within_minutes} minutes, and unpaid orders are cancelled. Tell the "
+                "caller this before they confirm."
+                if menu.payment_required else
+                "Paying by the link is optional; they can also pay at pickup.")
+        payment = _PAY_BY_TEXT.format(rule=rule)
+    else:
+        payment = _PAY_AT_PICKUP
     return _INSTRUCTIONS.format(
         name=r.get("name", "the restaurant"),
         order_types=" and ".join(r.get("order_types", ["pickup"])),
+        payment=payment,
         menu=menu.to_prompt_text(),
     )
 

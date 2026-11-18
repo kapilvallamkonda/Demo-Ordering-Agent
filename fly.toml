@@ -1,0 +1,38 @@
+# Fly.io deployment. One always-on machine: calls must be answered instantly, and the
+# SQLite orders database lives on a single volume, so don't scale past one machine
+# without moving orders to a shared database (see docs/DESIGN.md).
+app = "APP_NAME_PLACEHOLDER"
+primary_region = "ord"
+
+[build]
+
+[env]
+  ORDERS_DB = "/data/orders.db"
+  LOG_LEVEL = "INFO"
+
+[mounts]
+  source = "orders_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

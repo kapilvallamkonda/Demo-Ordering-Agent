@@ -8,11 +8,15 @@ the business rules.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from .order import Order, OrderError
+from .payments import PaymentService
 from .storage import OrderStore
+
+log = logging.getLogger("ordering_agent.tools")
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -79,9 +83,17 @@ TOOLS: list[dict] = [
         ["name"],
     ),
     _tool(
+        "set_customer_phone",
+        "Record the mobile number to text the order details and payment link to. Use when the "
+        "caller wants a different number than the one they're calling from, or caller ID is missing.",
+        {"phone": {"type": "string", "description": "The number as the caller said it, all digits."}},
+        ["phone"],
+    ),
+    _tool(
         "place_order",
-        "Submit the order to the kitchen. Only call after reading the full order and total back "
-        "to the caller and hearing them confirm it.",
+        "Submit the order. Only call after reading the full order and total back to the caller "
+        "and hearing them confirm it. If payment links are on, this texts the order details and "
+        "a secure payment link to the customer's phone; the result says whether it was sent.",
         {
             "caller_confirmed": {
                 "type": "boolean",
@@ -106,9 +118,52 @@ class CallSession:
     order: Order
     store: OrderStore | None = None
     call_id: str | None = None
+    payments: PaymentService | None = None
     order_number: int | None = None
     end_requested: bool = False
     log: list[dict] = field(default_factory=list)
+
+
+def _place_order(session: CallSession) -> dict:
+    order = session.order
+    payments = session.payments if session.store is not None else None
+    if payments and not order.customer_phone:
+        raise OrderError("Ask for a mobile number to text the order details and payment link to, "
+                         "then call set_customer_phone.")
+    order.mark_placed()
+    menu = order.menu
+    required = bool(payments) and menu.payment_required
+    if session.store is not None:
+        session.order_number = session.store.save(
+            order, call_id=session.call_id,
+            status="awaiting_payment" if required else "confirmed",
+            payment_status="unpaid" if payments else "not_requested",
+        )
+    result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
+                    "ready_in_minutes": menu.restaurant.get("pickup_minutes")}
+    if not payments:
+        result["payment"] = "pay at pickup"
+        return result
+    try:
+        link = payments.request_payment(order, session.order_number)
+    except Exception:
+        log.exception("payment link for order %s failed", session.order_number)
+        result["payment"] = {
+            "link_sent": False,
+            "tell_caller": "The text with the payment link couldn't be sent. They can pay at pickup"
+            + ("; the kitchen will start the order once they pay at the counter." if required else "."),
+        }
+        return result
+    session.store.set_payment_link(session.order_number, link.id, link.url)
+    result["payment"] = {
+        "link_sent": True,
+        "texted_to_number_ending": order.customer_phone[-4:],
+        "required_before_cooking": required,
+        "link_valid_minutes": menu.pay_within_minutes,
+    }
+    if required:
+        result["ready_in_minutes"] = f"{menu.restaurant.get('pickup_minutes')} after payment"
+    return result
 
 
 class _BadInput(Exception):
@@ -166,15 +221,13 @@ def run_tool(session: CallSession, name: str, args: Any) -> tuple[str, bool]:
         elif name == "set_customer_name":
             order.set_customer(_req(args, "name", str))
             result = {"customer_name": order.customer_name}
+        elif name == "set_customer_phone":
+            order.set_phone(_req(args, "phone", str))
+            result = {"customer_phone": order.customer_phone}
         elif name == "place_order":
             if _req(args, "caller_confirmed", bool) is not True:
                 raise OrderError("Read the order and total back and get the caller's confirmation first.")
-            order.mark_placed()
-            if session.store is not None:
-                session.order_number = session.store.save(order, call_id=session.call_id)
-            pickup = order.menu.restaurant.get("pickup_minutes")
-            result = {"placed": True, "order_number": session.order_number, "total": order.total,
-                      "ready_in_minutes": pickup}
+            result = _place_order(session)
         elif name == "end_call":
             session.end_requested = True
             result = {"ok": True}

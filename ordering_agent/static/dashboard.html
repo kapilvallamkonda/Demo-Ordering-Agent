@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Orders</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
+    --accent: #b4441f; --ok: #2f7d4f; --ok-bg: #e6f3eb; --warn: #9a6a00; --warn-bg: #fbf1d9;
+    --bad: #a3322a; --bad-bg: #f9e3e1; --neutral-bg: #efede8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #201f1c; --text: #ecebe7; --muted: #a29f97; --line: #34322e;
+      --accent: #e0774f; --ok: #6cc591; --ok-bg: #1f3428; --warn: #e3b94f; --warn-bg: #3a3020;
+      --bad: #ee8a80; --bad-bg: #3d2422; --neutral-bg: #2b2a26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 20px 24px 40px; max-width: 1200px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { color: var(--muted); font-size: 13px; }
+  .tile .value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .chip { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px;
+          padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--panel); border-color: var(--text); }
+  input[type=search] { flex: 1; min-width: 180px; max-width: 320px; padding: 6px 10px; border-radius: 8px;
+                       border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+  button.plain { border: 1px solid var(--line); background: var(--panel); color: var(--text);
+                 border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .orders { display: grid; gap: 10px; }
+  .order { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+           display: grid; grid-template-columns: 90px 1fr auto; gap: 4px 16px; }
+  .order.new { box-shadow: 0 0 0 2px var(--accent); }
+  .num { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .when { color: var(--muted); font-size: 13px; }
+  .who { font-weight: 600; }
+  .phone { color: var(--muted); font-size: 13px; margin-left: 6px; }
+  ul.items { margin: 6px 0 0; padding-left: 18px; }
+  ul.items li { margin: 1px 0; }
+  .right { text-align: right; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .total { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--neutral-bg); color: var(--muted); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  .empty, .msg { color: var(--muted); padding: 30px; text-align: center; background: var(--panel);
+                 border: 1px dashed var(--line); border-radius: 10px; }
+  .msg.err { color: var(--bad); }
+  a { color: var(--accent); }
+  .login { max-width: 380px; margin: 60px auto; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 22px; }
+  .login input { width: 100%; padding: 8px 10px; margin: 10px 0; border-radius: 8px; border: 1px solid var(--line);
+                 background: var(--bg); color: var(--text); font: inherit; }
+  .login button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  @media (max-width: 640px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .order { grid-template-columns: 1fr; }
+    .right { align-items: flex-start; text-align: left; }
+    .badges { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="title">Phone Orders</h1>
+    <div class="sub" id="status">Loading…</div>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="plain" id="refresh">Refresh</button>
+    <button class="plain" id="logout">Change token</button>
+  </div>
+</header>
+<main id="app"></main>
+
+<script>
+(() => {
+  const KEY = "orders_dashboard_token";
+  const REFRESH_MS = 10000;
+  const app = document.getElementById("app");
+  const statusEl = document.getElementById("status");
+  let filter = "all", query = "", orders = [], seen = null, timer = null;
+
+  const store = {
+    get() { try { return localStorage.getItem(KEY) || ""; } catch { return ""; } },
+    set(v) { try { localStorage.setItem(KEY, v); } catch {} },
+    clear() { try { localStorage.removeItem(KEY); } catch {} },
+  };
+  let token = store.get();
+
+  const money = n => "$" + Number(n || 0).toFixed(2);
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+    return e;
+  };
+  const fmtPhone = p => {
+    const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(p || "");
+    return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (p || "");
+  };
+  const fmtTime = ts => {
+    const d = new Date(ts * 1000), now = new Date();
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return d.toDateString() === now.toDateString() ? time
+      : d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + time;
+  };
+  const isToday = ts => new Date(ts * 1000).toDateString() === new Date().toDateString();
+
+  const STATUS = {
+    confirmed: ["Confirmed", "ok"], awaiting_payment: ["Awaiting payment", "warn"], cancelled: ["Cancelled", "bad"],
+  };
+  const PAY = {
+    paid: ["Paid", "ok"], unpaid: ["Unpaid", "warn"], expired: ["Link expired", "bad"],
+    not_requested: ["Pay at pickup", ""],
+  };
+  const badge = ([label, cls]) => el("span", { class: "badge " + cls }, label);
+
+  function showLogin(message) {
+    clearInterval(timer);
+    statusEl.textContent = "Sign in to view orders";
+    const input = el("input", { type: "password", placeholder: "ORDERS_API_TOKEN", autocomplete: "off" });
+    const go = () => { token = input.value.trim(); if (token) { store.set(token); start(); } };
+    input.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+    app.replaceChildren(el("div", { class: "login" },
+      el("strong", {}, "Orders dashboard"),
+      el("div", { class: "sub" }, "Enter the ORDERS_API_TOKEN from the server's .env file."),
+      message ? el("div", { class: "msg err", style: "padding:8px;margin-top:10px" }, message) : null,
+      input, el("button", { onclick: go }, "View orders")));
+    input.focus();
+  }
+
+  async function load() {
+    try {
+      const r = await fetch("orders?limit=200", { headers: { Authorization: "Bearer " + token } });
+      if (r.status === 401) { store.clear(); return showLogin("That token didn't work."); }
+      if (r.status === 404) { return showLogin("The orders API is off. Set ORDERS_API_TOKEN on the server and restart it."); }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const ids = new Set(data.map(o => o.order_number));
+      const fresh = seen ? data.filter(o => !seen.has(o.order_number)).map(o => o.order_number) : [];
+      seen = ids;
+      orders = data;
+      render(new Set(fresh));
+      statusEl.textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })
+        + " · refreshes every " + REFRESH_MS / 1000 + "s";
+    } catch (e) {
+      statusEl.textContent = "Couldn't reach the server (" + e.message + "). Retrying…";
+    }
+  }
+
+  function render(fresh = new Set()) {
+    const today = orders.filter(o => isToday(o.created_at) && o.status !== "cancelled");
+    const tiles = el("section", { class: "tiles" },
+      tile("Orders today", today.length),
+      tile("Sales today", money(today.reduce((s, o) => s + o.total, 0))),
+      tile("Paid today", money(today.filter(o => o.payment_status === "paid").reduce((s, o) => s + o.total, 0))),
+      tile("Awaiting payment", orders.filter(o => o.status === "awaiting_payment").length));
+
+    const filters = [["all", "All"], ["today", "Today"], ["unpaid", "Unpaid"], ["paid", "Paid"], ["cancelled", "Cancelled"]];
+    const search = el("input", { type: "search", placeholder: "Search name, phone, item, #", value: query });
+    search.addEventListener("input", () => { query = search.value; renderList(); });
+    const controls = el("div", { class: "controls" },
+      filters.map(([k, label]) => el("button", {
+        class: "chip", "aria-pressed": String(filter === k),
+        onclick: () => { filter = k; render(); },
+      }, label)), search);
+
+    const list = el("section", { class: "orders" });
+    function renderList() {
+      const q = query.trim().toLowerCase();
+      const shown = orders.filter(o => {
+        if (filter === "today" && !isToday(o.created_at)) return false;
+        if (filter === "unpaid" && !(o.payment_status === "unpaid" || o.payment_status === "not_requested")) return false;
+        if (filter === "paid" && o.payment_status !== "paid") return false;
+        if (filter === "cancelled" && o.status !== "cancelled") return false;
+        if (filter !== "cancelled" && filter !== "all" && o.status === "cancelled") return false;
+        if (!q) return true;
+        const hay = [o.order_number, o.customer_name, o.customer_phone, fmtPhone(o.customer_phone),
+                     ...(o.lines || []).map(l => l.description)].join(" ").toLowerCase();
+        return hay.includes(q.replace(/^#/, ""));
+      });
+      list.replaceChildren(...(shown.length ? shown.map(o => card(o, fresh.has(o.order_number)))
+        : [el("div", { class: "empty" }, orders.length ? "No orders match." : "No phone orders yet. Call the number to place one.")]));
+    }
+    renderList();
+    app.replaceChildren(tiles, controls, list);
+    if (fresh.size) document.title = `(${fresh.size} new) Phone Orders`;
+  }
+
+  const tile = (label, value) => el("div", { class: "tile" },
+    el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+
+  function card(o, isNew) {
+    const lines = (o.lines || []).map(l => el("li", {},
+      l.description.replace(/ \| /g, " · "), " ", el("span", { class: "sub" }, money(l.line_total))));
+    const pay = PAY[o.payment_status] || [o.payment_status || "", ""];
+    return el("article", { class: "order" + (isNew ? " new" : "") },
+      el("div", {}, el("div", { class: "num" }, "#" + o.order_number), el("div", { class: "when" }, fmtTime(o.created_at))),
+      el("div", {},
+        el("span", { class: "who" }, o.customer_name || "No name"),
+        o.customer_phone ? el("span", { class: "phone" }, fmtPhone(o.customer_phone)) : null,
+        el("ul", { class: "items" }, lines)),
+      el("div", { class: "right" },
+        el("div", { class: "total" }, money(o.total)),
+        el("div", { class: "sub" }, `Subtotal ${money(o.subtotal)} · Tax ${money(o.tax)}`),
+        el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status || "", ""]), badge(pay)),
+        o.payment_url && o.payment_status === "unpaid"
+          ? el("a", { href: o.payment_url, target: "_blank", rel: "noopener", class: "sub" }, "Payment link") : null));
+  }
+
+  function start() {
+    clearInterval(timer);
+    app.replaceChildren(el("div", { class: "msg" }, "Loading orders…"));
+    load();
+    timer = setInterval(load, REFRESH_MS);
+  }
+
+  document.getElementById("refresh").addEventListener("click", () => token ? load() : showLogin());
+  document.getElementById("logout").addEventListener("click", () => { store.clear(); token = ""; showLogin(); });
+  window.addEventListener("focus", () => { document.title = "Phone Orders"; });
+  token ? start() : showLogin();
+})();
+</script>
+</body>
+</html>

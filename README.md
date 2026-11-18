@@ -29,14 +29,17 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
 | Path | What it is |
 |---|---|
-| `data/menu.json` | The restaurant and its menu. Edit this to make it yours. |
+| `data/menu.json` | The restaurant and its menu (an Indian restaurant's menu, about 190 items). Edit this to make it yours. Optional `restaurant.notes` lines are added to the prompt. |
+| `tests/fixtures/menu.json` | Small fixed menu the tests use, so they don't depend on the real menu. |
 | `ordering_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
 | `ordering_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
 | `ordering_agent/prompts.py` | The phone-voice system prompt. |
 | `ordering_agent/agent.py` | Streaming tool-use loop: one `OrderingAgent` per call. |
 | `ordering_agent/server.py` | FastAPI app: `/voice` (Twilio webhook) and `/ws` (ConversationRelay). |
 | `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
-| `ordering_agent/storage.py` | Saves placed orders (SQLite). |
+| `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
+| `ordering_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
+| `ordering_agent/storage.py` | Saves placed orders (SQLite) with order and payment status. |
 
 ## Setup
 
@@ -63,8 +66,52 @@ python -m ordering_agent.cli
 4. Set `TWILIO_AUTH_TOKEN` so the server validates Twilio's request signatures.
 5. Call the number.
 
-Placed orders land in `data/orders.db`. To see them over HTTP, set `ORDERS_API_TOKEN` and
-`GET /orders` with `Authorization: Bearer <token>`.
+### 3. Payment links by text (optional)
+
+After an order is placed, the agent texts the caller the order details and a secure
+Stripe payment link, so no one reads card numbers over the phone.
+
+1. Get your Stripe secret key (use a `sk_test_...` key to try it) and set `STRIPE_SECRET_KEY`.
+2. Set `TWILIO_ACCOUNT_SID` and `TWILIO_SMS_FROM` (your Twilio number, e.g. `+19135551234`).
+   Texting US numbers from a local number requires A2P 10DLC registration in the
+   Twilio Console, or carriers block the messages.
+3. In Stripe, add a webhook endpoint `https://<your-host>/stripe/webhook` for
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed` and `checkout.session.expired`, and set
+   `STRIPE_WEBHOOK_SECRET` to its signing secret.
+4. Choose the restaurant's rule in `data/menu.json`:
+   `"payment": {"required_before_cooking": false, "pay_within_minutes": 30}`.
+   With `true`, orders wait as `awaiting_payment` until paid and are cancelled if the
+   link expires.
+
+Without `STRIPE_SECRET_KEY`, customers pay at pickup.
+
+Placed orders land in `data/orders.db`.
+
+### 4. Orders dashboard
+
+Set `ORDERS_API_TOKEN` to a long random string, restart, and open `/dashboard`
+(e.g. `http://127.0.0.1:8000/dashboard`). Enter the token once; the browser remembers it.
+The page shows today's order count and sales, and every order with items, total, order
+status and payment status. You can filter and search, and it refreshes every 10 seconds.
+The same data is at `GET /orders?limit=50` with `Authorization: Bearer <token>`.
+
+### 5. Host it on Fly.io
+
+The repo has a `Dockerfile` and `fly.toml`: one always-on machine (calls must be answered
+instantly) with a volume at `/data` for the orders database.
+
+```bash
+fly apps create <app-name>                      # then put the name in fly.toml
+fly volumes create orders_data --region ord --size 1 --app <app-name>
+fly secrets set ANTHROPIC_API_KEY=... TWILIO_AUTH_TOKEN=... ORDERS_API_TOKEN=... \
+    PUBLIC_BASE_URL=https://<app-name>.fly.dev   # plus Stripe/Twilio SMS settings if used
+fly deploy
+```
+
+Then point the Twilio number's voice webhook (and the Stripe webhook) at
+`https://<app-name>.fly.dev`. The dashboard is at `https://<app-name>.fly.dev/dashboard`.
+Logs: `fly logs`. Keep it to one machine while orders are in SQLite.
 
 ### Tests
 
@@ -88,11 +135,15 @@ They include a full phone order over the WebSocket.
 | `STT_PROVIDER` | Twilio default | Speech-to-text engine (`transcriptionProvider`), e.g. Google, Deepgram. |
 | `STT_MODEL` | Twilio default | Speech-to-text model (`speechModel`). |
 | `RELAY_EXTRA_ATTRS` | unset | JSON object of any other `<ConversationRelay>` attributes. |
-| `TWILIO_AUTH_TOKEN` | unset | Enables Twilio signature validation. |
+| `TWILIO_AUTH_TOKEN` | unset | Enables Twilio signature validation; also used to send texts. |
+| `TWILIO_ACCOUNT_SID` | unset | Twilio account, for sending payment-link texts. |
+| `TWILIO_SMS_FROM` | unset | Twilio number the texts come from (E.164). |
+| `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
+| `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
 | `ORDERS_DB` | `data/orders.db` | SQLite file for placed orders. |
 | `MENU_PATH` | `data/menu.json` | Menu file. |
-| `ORDERS_API_TOKEN` | unset | Enables `GET /orders`. |
+| `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page and `GET /orders`. |
 
 Voice settings are read on every incoming call, so changing them only needs a server
 restart, no code change. Speech costs are billed through your Twilio account. Valid provider
@@ -115,7 +166,8 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
 
 ## Known limitations / next steps
 
-- Pickup only; no payment, delivery or reservations (the agent says so politely).
+- Pickup only; no delivery or reservations (the agent says so politely). Refunds are
+  done in Stripe.
 - Hang-up timing after the goodbye is estimated from the word count (`server.py`). Tune it
   after real calls.
 - `/ws` rejects a bad Twilio signature, but doesn't yet require one to be present.

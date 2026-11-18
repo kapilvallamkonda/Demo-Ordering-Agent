@@ -36,6 +36,17 @@ class Menu:
     def tax_rate(self) -> float:
         return float(self.restaurant.get("tax_rate", 0.0))
 
+    @property
+    def payment_required(self) -> bool:
+        """Restaurant rule: the order is only cooked after the payment link is paid."""
+        return bool(self.restaurant.get("payment", {}).get("required_before_cooking", False))
+
+    @property
+    def pay_within_minutes(self) -> int:
+        """How long the payment link stays valid. Stripe allows 30 minutes to 24 hours."""
+        minutes = int(self.restaurant.get("payment", {}).get("pay_within_minutes", 30))
+        return max(30, min(minutes, 24 * 60))
+
     def get(self, item_id: str) -> MenuItem | None:
         return self.items.get(item_id)
 
@@ -51,6 +62,12 @@ class Menu:
             f"Hours: {r.get('hours')}",
             f"Order types: {', '.join(r.get('order_types', []))}",
             f"Typical pickup time: {r.get('pickup_minutes')} minutes",
+        ]
+        notes = r.get("notes") or []
+        if notes:
+            lines.append("Notes:")
+            lines.extend(f"- {n}" for n in notes)
+        lines += [
             "",
             "MENU (item_id | name | base price | description)",
         ]

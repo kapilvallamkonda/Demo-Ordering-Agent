@@ -15,19 +15,23 @@ instances of this server as you like behind a load balancer.
 from __future__ import annotations
 
 import asyncio
+import hmac
+import html
 import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
 import anthropic
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
 from .agent import OrderingAgent
 from .menu import DEFAULT_MENU_PATH, load_menu
+from .payments import handle_stripe_event, payment_service_from_env
 from .storage import OrderStore
 
 log = logging.getLogger("ordering_agent.server")
@@ -36,6 +40,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 ORDERS_API_TOKEN = os.environ.get("ORDERS_API_TOKEN", "")
+DASHBOARD_HTML = Path(__file__).parent / "static" / "dashboard.html"
 WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish before hanging up
 
 # Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
@@ -81,6 +86,10 @@ async def lifespan(app: FastAPI):
     app.state.store = OrderStore(os.environ.get("ORDERS_DB", "data/orders.db"))
     # One client shared by every call, so connections get pooled.
     app.state.client = getattr(app.state, "client", None) or anthropic.AsyncAnthropic()
+    # Pay-by-text links; None means customers pay at pickup.
+    if not hasattr(app.state, "payments"):
+        app.state.payments = payment_service_from_env(PUBLIC_BASE_URL)
+    log.info("payment links %s", "on" if app.state.payments else "off (pay at pickup)")
     yield
 
 
@@ -132,13 +141,55 @@ async def voice(request: Request) -> Response:
 
 
 @app.get("/orders")
-async def orders(request: Request) -> list[dict]:
-    """Recent placed orders (demo kitchen view). Disabled unless ORDERS_API_TOKEN is set."""
+async def orders(request: Request, limit: int = 20) -> list[dict]:
+    """Recent placed orders, newest first. Disabled unless ORDERS_API_TOKEN is set."""
     if not ORDERS_API_TOKEN:
         raise HTTPException(status_code=404)
-    if request.headers.get("authorization") != f"Bearer {ORDERS_API_TOKEN}":
+    if not hmac.compare_digest(request.headers.get("authorization", ""), f"Bearer {ORDERS_API_TOKEN}"):
         raise HTTPException(status_code=401)
-    return request.app.state.store.recent()
+    return request.app.state.store.recent(max(1, min(limit, 500)))
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard() -> str:
+    """Orders dashboard. The page holds no data; it asks for ORDERS_API_TOKEN and reads /orders."""
+    if not ORDERS_API_TOKEN:
+        raise HTTPException(status_code=404)
+    return DASHBOARD_HTML.read_text()
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request) -> dict:
+    """Stripe tells us a payment link was paid or expired."""
+    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=404)
+    import stripe
+
+    payload = await request.body()
+    try:
+        stripe.Webhook.construct_event(payload, request.headers.get("stripe-signature", ""), secret)
+    except Exception:
+        log.warning("rejected Stripe webhook with bad signature")
+        raise HTTPException(status_code=400, detail="invalid signature")
+    state = request.app.state
+    payments = state.payments
+    outcome = await asyncio.to_thread(
+        handle_stripe_event, json.loads(payload), state.store, state.menu,
+        payments.sms if payments else None,
+    )
+    return {"ok": True, "result": outcome}
+
+
+@app.get("/paid", response_class=HTMLResponse)
+async def paid_page(request: Request, order: int = 0, cancelled: int = 0) -> str:
+    """Where Stripe sends the customer after the payment page."""
+    name = html.escape(request.app.state.menu.restaurant.get("name", "the restaurant"))
+    msg = ("Payment cancelled. You can use the link in your text again, or pay at pickup."
+           if cancelled else f"Thank you! Your payment for order #{order} was received.")
+    return (f"<!doctype html><meta name=viewport content='width=device-width'>"
+            f"<title>{name}</title><body style='font-family:sans-serif;padding:24px'>"
+            f"<h2>{name}</h2><p>{msg}</p></body>")
 
 
 class RelayCall:
@@ -180,6 +231,7 @@ class RelayCall:
                 store=app_state.store,
                 call_id=msg.get("callSid"),
                 caller_phone=msg.get("from"),
+                payments=app_state.payments,
             )
             log.info("call %s started", msg.get("callSid"))
         elif kind == "prompt":
