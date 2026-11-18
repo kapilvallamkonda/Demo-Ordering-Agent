@@ -38,6 +38,42 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 ORDERS_API_TOKEN = os.environ.get("ORDERS_API_TOKEN", "")
 WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish before hanging up
 
+# Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
+# so Twilio's defaults apply.
+VOICE_ENV_TO_ATTR = {
+    "TTS_PROVIDER": "ttsProvider",  # text-to-speech engine, e.g. ElevenLabs, Google, Amazon
+    "TTS_VOICE": "voice",  # a voice ID/name valid for that provider
+    "VOICE_LANGUAGE": "language",  # e.g. en-US
+    "STT_PROVIDER": "transcriptionProvider",  # speech-to-text engine, e.g. Google, Deepgram
+    "STT_MODEL": "speechModel",  # speech-to-text model for that provider
+}
+
+
+def relay_voice_attrs() -> dict[str, str]:
+    """Voice attributes for <ConversationRelay>, read from the environment on each call.
+
+    RELAY_EXTRA_ATTRS takes a JSON object of any other ConversationRelay attributes,
+    e.g. '{"interruptible": "speech"}', so new Twilio options need no code change.
+    """
+    attrs = {attr: os.environ[env].strip() for env, attr in VOICE_ENV_TO_ATTR.items()
+             if os.environ.get(env, "").strip()}
+    extra = os.environ.get("RELAY_EXTRA_ATTRS", "").strip()
+    if extra:
+        try:
+            parsed = json.loads(extra)
+        except json.JSONDecodeError:
+            log.error("RELAY_EXTRA_ATTRS is not valid JSON; ignoring it")
+            parsed = {}
+        if not isinstance(parsed, dict):
+            log.error("RELAY_EXTRA_ATTRS must be a JSON object; ignoring it")
+            parsed = {}
+        for name, value in parsed.items():
+            if name in {"url", "welcomeGreeting"} or not str(name).isidentifier():
+                log.error("RELAY_EXTRA_ATTRS: skipping attribute %r", name)
+                continue
+            attrs[name] = str(value)
+    return attrs
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,12 +122,11 @@ async def voice(request: Request) -> Response:
             raise HTTPException(status_code=403, detail="invalid signature")
 
     greeting = OrderingAgent(request.app.state.menu, client=request.app.state.client).greeting
+    attrs = {"url": _ws_url(_public_base(request)), "welcomeGreeting": greeting, **relay_voice_attrs()}
+    rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response><Connect>"
-        f"<ConversationRelay url={quoteattr(_ws_url(_public_base(request)))}"
-        f" welcomeGreeting={quoteattr(greeting)} />"
-        "</Connect></Response>"
+        f"<Response><Connect><ConversationRelay {rendered} /></Connect></Response>"
     )
     return Response(content=twiml, media_type="application/xml")
 

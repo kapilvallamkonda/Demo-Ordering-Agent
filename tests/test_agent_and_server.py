@@ -131,3 +131,26 @@ def test_full_phone_order_over_websocket(app_client, monkeypatch):
     assert orders[0]["customer_name"] == "Lee"
     assert orders[0]["customer_phone"] == "+15550001111"
     assert orders[0]["total"] == 17.28
+
+
+def test_voice_settings_from_env(app_client, monkeypatch):
+    c, _ = app_client
+    r = c.post("/voice", data={})
+    assert "ttsProvider" not in r.text and "voice=" not in r.text  # Twilio defaults
+
+    monkeypatch.setenv("TTS_PROVIDER", "ElevenLabs")
+    monkeypatch.setenv("TTS_VOICE", "abc123")
+    monkeypatch.setenv("VOICE_LANGUAGE", "en-US")
+    monkeypatch.setenv("STT_PROVIDER", "Deepgram")
+    monkeypatch.setenv("RELAY_EXTRA_ATTRS", '{"interruptible": "speech", "url": "evil", "bad name": "x"}')
+    r = c.post("/voice", data={})
+    for attr in ['ttsProvider="ElevenLabs"', 'voice="abc123"', 'language="en-US"',
+                 'transcriptionProvider="Deepgram"', 'interruptible="speech"']:
+        assert attr in r.text
+    assert "evil" not in r.text and "bad name" not in r.text
+
+
+def test_bad_extra_attrs_json_is_ignored(app_client, monkeypatch):
+    c, _ = app_client
+    monkeypatch.setenv("RELAY_EXTRA_ATTRS", "{not json")
+    assert c.post("/voice", data={}).status_code == 200
