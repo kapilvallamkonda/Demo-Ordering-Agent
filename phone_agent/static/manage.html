@@ -13,6 +13,7 @@
 <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <style>
   :root {
+    color-scheme: light dark;
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
     --accent: #b4441f; --accent-text: #ffffff; --ok: #2f7d4f; --ok-bg: #e6f3eb; --warn: #8a5f00; --warn-bg: #fbf1d9;
     --bad: #a3322a; --bad-bg: #f9e3e1; --neutral-bg: #efede8; --shadow: 0 8px 30px rgba(0,0,0,.12);
@@ -62,7 +63,8 @@
   .note.info { background: var(--neutral-bg); color: var(--muted); }
   .note ul { margin: 4px 0 0; padding-left: 18px; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-  input[type=search], input[type=text], input[type=email], input[type=password], input[type=number], textarea, select {
+  input[type=search], input[type=text], input[type=email], input[type=password], input[type=number],
+  input[type=url], input[type=tel], textarea, select {
     border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0; }
   input:focus, textarea:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   input[type=search] { flex: 1; min-width: 160px; max-width: 340px; }
