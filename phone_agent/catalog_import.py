@@ -140,8 +140,49 @@ def build_content(files: list[tuple[str, bytes]], prompt: str) -> list[dict]:
     return content
 
 
-async def read_catalog(client, files: list[tuple[str, bytes]], template, settings: dict) -> dict:
-    """Returns {"items": [...catalog items...], "business": {...}, "notes": [...], "unreadable": [...]}."""
+class Progress:
+    """Follows the answer as it streams in, so the owner can watch the menu being read.
+
+    Structured output writes each item's properties in schema order, so every item starts
+    with `"name": "...", "category": "..."`; option choices and extras have names but no
+    category after them. Only complete strings match, so a chunk ending mid-item is
+    picked up on the next one."""
+
+    _ITEM = re.compile(r'"name"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"category"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+    def __init__(self):
+        self.text = ""
+        self._pos = 0
+        self.items = 0
+        self.sections: dict[str, int] = {}  # in the order they were read
+        self.current: str | None = None
+        self.last_item: str | None = None
+
+    def feed(self, delta: str) -> None:
+        self.text += delta
+        for m in self._ITEM.finditer(self.text, self._pos):
+            self._pos = m.end()
+            name, category = _unquote(m.group(1)), _unquote(m.group(2))
+            self.items += 1
+            self.sections[category] = self.sections.get(category, 0) + 1
+            self.current, self.last_item = category, name
+
+    def snapshot(self) -> dict:
+        return {"items": self.items, "current": self.current, "last_item": self.last_item,
+                "sections": [{"name": k, "items": v} for k, v in self.sections.items()]}
+
+
+def _unquote(s: str) -> str:
+    try:
+        return json.loads(f'"{s}"')
+    except json.JSONDecodeError:
+        return s
+
+
+async def read_catalog(client, files: list[tuple[str, bytes]], template, settings: dict,
+                       progress: Progress | None = None) -> dict:
+    """Returns {"items": [...catalog items...], "business": {...}, "notes": [...], "unreadable": [...]}.
+    Pass a Progress to follow along while it reads."""
     words = template.words
     prompt = PROMPT.format(catalog=words["catalog"], business=words["business"], item=words["item"],
                            name=settings.get("name") or "the business",
@@ -156,6 +197,10 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
             output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
             messages=[{"role": "user", "content": content}],
         ) as stream:
+            if progress is not None:
+                async for event in stream:
+                    if event.type == "text":
+                        progress.feed(event.text)
             message = await stream.get_final_message()
     except Exception as e:  # the SDK's typed errors; the owner just needs to retry
         log.exception("catalog import call failed")

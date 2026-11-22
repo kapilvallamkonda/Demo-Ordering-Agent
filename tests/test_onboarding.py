@@ -1,6 +1,9 @@
 """Self-serve: Google sign-in, creating a business, reading a menu, test chat, going live, team."""
 
+import asyncio
 import json
+import threading
+import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -190,16 +193,34 @@ EXTRACTED = {
 }
 
 
+def start_import(c, business_id, revision, **kw):
+    return c.post(f"/api/manage/businesses/{business_id}/import", params={"revision": revision}, headers=W, **kw)
+
+
+def wait_import(c, business_id, r):
+    """Poll a started import until it finishes; returns the last status."""
+    assert r.status_code == 200, r.text
+    job = r.json()["job"]
+    for _ in range(200):
+        out = c.get(f"/api/manage/businesses/{business_id}/import/{job}").json()
+        if out["state"] != "running":
+            return out
+        time.sleep(0.02)
+    raise AssertionError("import never finished")
+
+
 def test_import_reads_photos_into_the_draft(app):
     c, store, fake, _ = app
     sign_in(c, store)
     b = new_business(c)
     fake.script = [message(text_block(json.dumps(EXTRACTED)))]
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": b["draft"]["revision"]},
-               files=[("files", ("menu.jpg", b"\xff\xd8fakejpeg", "image/jpeg"))], headers=W)
-    assert r.status_code == 200, r.text
-    out = r.json()
+    out = wait_import(c, b["id"], start_import(c, b["id"], b["draft"]["revision"],
+                                               files=[("files", ("menu.jpg", b"\xff\xd8fakejpeg", "image/jpeg"))]))
+    assert out["state"] == "done", out
     assert out["added"] == 2 and out["unreadable"] == ["bottom of page 2"]
+    # Progress followed the answer as it streamed: items and sections in the order read.
+    assert out["items"] == 2 and out["last_item"] == "Cake"
+    assert out["sections"] == [{"name": "Pastry", "items": 1}, {"name": "Cakes", "items": 1}]
     items = {i["id"]: i for i in out["catalog"]["items"]}
     assert items["croissant"]["extras"] == {"jam": 0.5}
     assert items["cake"]["options"] == {"size": {"choices": {"6 inch": 0, "8 inch": 10}, "required": True}}
@@ -211,10 +232,46 @@ def test_import_reads_photos_into_the_draft(app):
     content = call["messages"][0]["content"]
     assert content[0]["type"] == "image" and content[0]["source"]["media_type"] == "image/jpeg"
     assert call["output_config"]["format"]["type"] == "json_schema"
-    # Unsupported file type.
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": out["draft"]["revision"]},
-               files=[("files", ("menu.heic", b"x", "image/heic"))], headers=W)
-    assert r.status_code == 400 and "JPEG" in r.json()["detail"]
+    # Unsupported file type: the job ends with a message for the owner.
+    out = wait_import(c, b["id"], start_import(c, b["id"], out["draft"]["revision"],
+                                               files=[("files", ("menu.heic", b"x", "image/heic"))]))
+    assert out["state"] == "error" and "JPEG" in out["error"]
+
+
+def test_import_merges_into_edits_made_while_reading(app):
+    c, store, fake, _ = app
+    sign_in(c, store)
+    b = new_business(c)
+    gate = threading.Event()
+    fake.script = [message(text_block(json.dumps(EXTRACTED)))]
+    real = fake._stream
+
+    def slow(**params):  # hold the answer until the owner has edited
+        stream = real(**params)
+        orig = stream.get_final_message
+
+        async def final():
+            while not gate.is_set():
+                await asyncio.sleep(0.01)
+            return await orig()
+        stream.get_final_message = final
+        return stream
+
+    fake.beta.messages.stream = slow
+    r = start_import(c, b["id"], b["draft"]["revision"], files=[("files", ("m.jpg", b"jpg", "image/jpeg"))])
+    job = r.json()["job"]
+    # A second reading for the same business waits for the first.
+    again = start_import(c, b["id"], b["draft"]["revision"], files=[("files", ("m.jpg", b"jpg", "image/jpeg"))])
+    assert again.status_code == 409
+    ed = c.get(f"/api/manage/businesses/{b['id']}/editor").json()
+    cat = ed["catalog"]
+    cat["items"] = [{"id": "tea", "name": "Tea", "category": "Drinks", "price": 2.0, "description": ""}]
+    assert c.put(f"/api/manage/businesses/{b['id']}/draft", json={"catalog": cat, "revision": ed["draft"]["revision"]},
+                 headers=W).status_code == 200
+    gate.set()
+    out = wait_import(c, b["id"], r)
+    assert out["state"] == "done" and {i["id"] for i in out["catalog"]["items"]} == {"tea", "croissant", "cake"}
+    assert job
 
 
 MENU_PAGE = """<html><head><title>Rosa's</title><script>var price = "$999.99";</script></head><body>
@@ -242,26 +299,21 @@ def test_import_reads_a_menu_link(app):
 
     server.app.state.menu_resolve = resolve
     fake.script = [message(text_block(json.dumps(EXTRACTED)))]
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": b["draft"]["revision"]},
-               data={"url": "rosas.example/menu"}, headers=W)
-    assert r.status_code == 200, r.text
-    assert r.json()["added"] == 2
+    out = wait_import(c, b["id"], start_import(c, b["id"], b["draft"]["revision"], data={"url": "rosas.example/menu"}))
+    assert out["state"] == "done" and out["added"] == 2, out
     assert seen == ["https://rosas.example/menu", "https://rosas.example/food-menu"]  # https added, redirect followed
     doc = fake.requests[-1]["messages"][0]["content"][0]
     assert doc["type"] == "document" and doc["source"]["type"] == "text"
     assert "Croissant $3.50" in doc["source"]["data"] and "$999.99" not in doc["source"]["data"]  # no scripts
-    rev = r.json()["draft"]["revision"]
+    rev = out["draft"]["revision"]
     # A link to a private address is refused before anything is fetched.
     n = len(seen)
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev},
-               data={"url": "https://inside.example/menu"}, headers=W)
-    assert r.status_code == 400 and "public" in r.json()["detail"] and len(seen) == n
+    out = wait_import(c, b["id"], start_import(c, b["id"], rev, data={"url": "https://inside.example/menu"}))
+    assert out["state"] == "error" and "public" in out["error"] and len(seen) == n
     # Link and files together, or neither.
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev}, data={"url": "rosas.example"},
-               files=[("files", ("m.png", b"png", "image/png"))], headers=W)
+    r = start_import(c, b["id"], rev, data={"url": "rosas.example"}, files=[("files", ("m.png", b"png", "image/png"))])
     assert r.status_code == 400
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev}, data={"url": " "}, headers=W)
-    assert r.status_code == 400
+    assert start_import(c, b["id"], rev, data={"url": " "}).status_code == 400
 
 
 def test_import_limits_per_day(app, monkeypatch):
@@ -270,12 +322,9 @@ def test_import_limits_per_day(app, monkeypatch):
     b = new_business(c)
     monkeypatch.setenv("IMPORTS_PER_BUSINESS_PER_DAY", "1")
     fake.script = [message(text_block(json.dumps({**EXTRACTED, "items": []})))]
-    rev = b["draft"]["revision"]
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev},
-               files=[("files", ("m.png", b"png", "image/png"))], headers=W)
-    assert r.status_code == 200
-    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": r.json()["draft"]["revision"]},
-               files=[("files", ("m.png", b"png", "image/png"))], headers=W)
+    out = wait_import(c, b["id"], start_import(c, b["id"], b["draft"]["revision"],
+                                               files=[("files", ("m.png", b"png", "image/png"))]))
+    r = start_import(c, b["id"], out["draft"]["revision"], files=[("files", ("m.png", b"png", "image/png"))])
     assert r.status_code == 429
 
 

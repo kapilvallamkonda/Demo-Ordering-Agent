@@ -130,6 +130,22 @@
                 font-weight: 600; text-decoration: none; color: var(--text); }
   .gicon { display: inline-flex; background: #fff; border-radius: 50%; padding: 3px; }
   .btn.big { padding: 11px 20px; font-size: 15px; }
+  .readprog { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .readprog .row.between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .readprog .mono { font: 13px ui-monospace, Menlo, monospace; }
+  .pbar { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; position: relative; }
+  .pbar span { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 4px; background: var(--accent);
+               animation: pslide 1.4s ease-in-out infinite; }
+  @keyframes pslide { from { left: -35%; } to { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .pbar span { animation: none; width: 100%; opacity: .5; } }
+  .secs { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; font-size: 14px; }
+  .secs li { display: flex; align-items: center; gap: 10px; padding: 5px 14px 5px 2px; border-bottom: 1px solid var(--line); }
+  .secs li:last-child { border-bottom: 0; }
+  .secs .sectick { width: 16px; color: var(--ok, #2f8a4f); text-align: center; flex: none; }
+  .secs li.now { font-weight: 650; }
+  .secs li.now .sectick::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                               background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
   .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin: 4px 0 10px; }
   .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
   details.pwlogin { margin-top: 16px; } details.pwlogin summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 10px; }
@@ -1185,19 +1201,24 @@
       const url = link.value.trim();
       if (url && files.files.length) return toast("Use either the link or files, not both.");
       if (!url && !files.files.length) return toast("Paste a link, or choose at least one photo or PDF.");
-      go.disabled = true;
-      status.replaceChildren(el("div", { class: "note info" }, el("strong", {}, "Reading…"),
-        ` We're turning ${url ? "your page" : files.files.length + " file(s)"} into ${W().items}. Big ${W().catalog}s can take a few minutes; keep this open.`));
+      go.disabled = link.disabled = files.disabled = mode.disabled = true;
+      status.replaceChildren(el("div", { class: "note info" }, url ? "Opening your page…" : "Uploading…"));
+      const bid = S.rid;
       try {
         const form = new FormData();
         if (url) form.append("url", url);
         for (const f of files.files) form.append("files", await shrink(f));
-        const r = await upload(`/businesses/${S.rid}/import?mode=${mode.value}` + (S.revision ? `&revision=${S.revision}` : ""), form);
+        const { job } = await upload(`/businesses/${bid}/import?mode=${mode.value}` + (S.revision ? `&revision=${S.revision}` : ""), form);
+        const r = await followImport(bid, job, status);
+        if (S.rid !== bid) return toast(`Finished reading the ${W().catalog} for another business.`);
         S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = r.draft ? r.draft.revision : null;
         close(); S.tab = "catalog"; render();
         toast(`Added ${r.added} ${W().items}. Check prices, then publish.`);
         if (r.unreadable && r.unreadable.length) ask({ title: "A few things couldn't be read", body: r.unreadable.join(" · "), cancel: null });
-      } catch (e) { status.replaceChildren(el("p", { class: "err" }, e.message)); go.disabled = false; }
+      } catch (e) {
+        status.replaceChildren(el("p", { class: "err" }, e.message));
+        go.disabled = link.disabled = files.disabled = mode.disabled = false;
+      }
     } }, `Read my ${W().catalog}`);
     body.append(...[
       el("p", { class: "sub" }, `Paste the link to your ${W().catalog} on your website, or upload photos or a PDF of it. We'll list every ${W().item} with its price and choices. You review everything before it goes live.`),
@@ -1207,6 +1228,45 @@
       hasItems ? el("div", { class: "field" }, el("span", { class: "lbl" }, `You already have ${S.catalog.items.length} ${W().items}`), mode) : null,
       el("p", { class: "sub" }, "Prices we can't read are marked “estimated” for you to check."),
       go, status].filter(Boolean));
+  }
+
+  // Poll a menu reading until it finishes, drawing its progress into `box`. Keeps going if
+  // the panel is closed; resolves with the editor state, or throws the owner-facing error.
+  async function followImport(bid, job, box) {
+    const t0 = Date.now();
+    const clock = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    for (;;) {
+      let r;
+      try { r = await api("GET", `/businesses/${bid}/import/${job}`); }
+      catch (e) { if (e.status === 404 || e.status === 403) throw e; r = null; }  // a blip: try again
+      if (r && r.state === "done") return r;
+      if (r && r.state === "error") throw new Error(r.error);
+      if (r) box.replaceChildren(importProgress(r, clock(r.elapsed ?? Math.round((Date.now() - t0) / 1000))));
+      const list = box.querySelector(".secs"); if (list) list.scrollTop = list.scrollHeight;
+      await new Promise(res => setTimeout(res, 1200));
+    }
+  }
+
+  function importProgress(r, elapsed) {
+    const n = r.items || 0;
+    const head = r.stage === "fetching" ? "Opening your page…"
+      : r.stage === "saving" ? `Saving ${n} ${W().items} to your ${W().catalog}…`
+      : n === 0 ? `Reading your ${W().catalog}…`
+      : null;
+    const title = head ? el("strong", {}, head)
+      : el("span", {}, "Reading ", el("strong", {}, r.current || "…"), ` · ${n} ${n === 1 ? W().item : W().items} so far`);
+    const secs = r.sections || [];
+    return el("div", { class: "readprog" },
+      el("div", { class: "row between" }, title, el("span", { class: "mono muted" }, elapsed)),
+      el("div", { class: "pbar", role: "progressbar", "aria-label": "Reading", "aria-busy": "true" }, el("span")),
+      secs.length ? el("ol", { class: "secs", "aria-live": "polite" }, secs.map((sec, i) => {
+        const now = i === secs.length - 1 && r.stage === "reading";
+        return el("li", { class: now ? "now" : "" }, el("span", { class: "sectick", "aria-hidden": "true" }, now ? "" : "✓"),
+          el("span", { class: "grow" }, sec.name), el("span", { class: "muted" }, String(sec.items)));
+      })) : el("p", { class: "sub" }, n === 0 && r.stage === "reading"
+        ? "Sections appear here as they're read. Big menus can take a few minutes; you can close this and keep working."
+        : ""),
+      r.last_item && r.stage === "reading" ? el("p", { class: "sub" }, "Just read: ", r.last_item) : null);
   }
 
   async function upload(path, form) {

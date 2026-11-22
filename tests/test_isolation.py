@@ -284,3 +284,29 @@ def test_each_call_has_its_own_order():
     assert len(a.order.lines) == 1 and b.order.lines == []
     assert a.order.customer_phone == "+15025550123" and b.order.customer_phone == ""
     assert isinstance(a.order, Order) and a.order is not b.order
+
+
+def test_import_jobs_are_per_business(tmp_path, monkeypatch):
+    """Menu readings run as in-memory jobs shared by the server: an owner can't see
+    another business's reading, even with its job id."""
+    import json
+
+    from .fakes import message, text_block
+    from .test_onboarding import EXTRACTED, new_business, sign_in, start_import, wait_import
+    from .test_onboarding import app as onboarding_app
+
+    gen = onboarding_app.__wrapped__(tmp_path, monkeypatch)
+    c, store, fake, _ = next(gen)
+    try:
+        sign_in(c, store, "ana@example.com")
+        a = new_business(c, "Ana's")
+        fake.script = [message(text_block(json.dumps(EXTRACTED)))]
+        r = start_import(c, a["id"], a["draft"]["revision"], files=[("files", ("m.jpg", b"jpg", "image/jpeg"))])
+        job = r.json()["job"]
+        assert wait_import(c, a["id"], r)["state"] == "done"
+        sign_in(c, store, "bo@example.com")
+        b = new_business(c, "Bo's")
+        assert c.get(f"/api/manage/businesses/{b['id']}/import/{job}").status_code == 404
+        assert c.get(f"/api/manage/businesses/{a['id']}/import/{job}").status_code == 404  # not their business
+    finally:
+        next(gen, None)

@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (landing page redesign).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (menu reading shows its progress).
 
 ## 1. Goal
 
@@ -185,6 +185,7 @@ reach another:
 | Bad data | A catalog that can't be loaded takes only its own business offline. Catalogs are validated before they're saved. |
 | Capacity | `MAX_CALLS_PER_BUSINESS` (default 20) concurrent calls per business, so one busy business can't use up the server's connections or the shared Claude rate limit. |
 | Background work | POS jobs never sleep in a worker (retries wait on timers), and a business has at most 2 POS jobs running, so a slow or failing POS only delays its own orders. |
+| Menu reading | Readings are async jobs (no worker thread held), one per business at a time, with a daily limit per business; a job id from another business answers 404. |
 | Errors | Lookups and agent start-up are wrapped per call; logs name the business. |
 
 Still shared, and the limits that come with it (section 17): one Anthropic API key and
@@ -638,6 +639,14 @@ A business sets itself up without us, like creating any online account.
    address, hours and notes it could read. Items are added to (or replace) the draft with
    unique ids; unprinted prices are marked `placeholder_price` so the checks ask the owner
    to confirm. Address and hours only fill empty fields.
+   Reading runs as a **background job** (a big menu takes minutes): `POST .../import`
+   returns a job id and the page polls `GET .../import/{job}`. While the answer streams,
+   `catalog_import.Progress` picks out each item's `"name", "category"` pair (structured
+   output writes properties in schema order) so the owner sees the section being read,
+   the count so far, the sections finished and the last item. The result is merged into
+   the draft as it is when reading ends, so edits made meanwhile are kept. One job per
+   business at a time; jobs are in memory (a restart loses a reading in progress, and the
+   owner starts again); another business's job id answers 404.
 5. **Try it**: a typed conversation in the browser with the real agent on the draft
    catalog (`test-chat`), no store, payments or POS, so nothing is saved or texted.
    Sessions live in memory for 30 minutes.
@@ -669,8 +678,7 @@ A business sets itself up without us, like creating any online account.
   business, emails (go-live approved, new team member), new-order notifications (the
   pages poll), US numbers only, menu photos in HEIC from some phones (converted in Safari
   only; other browsers should upload JPEG). Test-chat sessions are in memory (lost on
-  restart, one machine). Reading a menu is one long request (a 376-item menu link took
-  3.5 minutes): it should become a background job the page polls. Menu links: menus drawn
+  restart, one machine), and so are menu-reading jobs. Menu links: menus drawn
   by scripts (many ordering sites) can't be read without a browser; the address check
   can be bypassed by DNS rebinding (checked at resolve time, the client resolves again),
   so pin the connection to the checked address before production.
@@ -756,3 +764,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Product name **Ringcart**, set in one place: `BRAND_NAME` (`phone_agent/brand.py`) fills `{{BRAND}}` in the landing page, `/manage` and the dashboard; new logo mark in place of the phone emoji. Code, repo and Fly app names unchanged. |
 | 2026-11-22 | Read the menu from a link: owners paste their menu's web address instead of uploading photos (`menu_link.py`: public-address check on every hop, size and time caps, visible page text or a linked PDF/image to Claude as before). Tested on a real 376-item restaurant menu page: every price matched. |
 | 2026-11-22 | Landing page redesign (hero with a sample call, why-it-matters band, ten-minute setup timeline, closing call to action; light and dark). `brand.page()` fills other `{{KEY}}` values too: the page's "up to N calls at once" comes from `MAX_CALLS_PER_BUSINESS`, so it can't drift. |
+| 2026-11-22 | Menu reading shows its progress: it runs as a background job the page polls (`POST .../import` returns a job, `GET .../import/{job}`), and the streamed answer is followed (`catalog_import.Progress`) to show the section being read, items so far and finished sections. Results merge into the draft as it is at the end. One job per business; jobs in memory. Tested on the 377-item Mama Bros menu (3.6 minutes). |

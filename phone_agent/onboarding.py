@@ -1,7 +1,8 @@
 """Self-serve: everything a business does in the web app beyond editing its catalog.
 
   create a business   POST /api/manage/businesses
-  read a menu         POST /api/manage/businesses/{id}/import        (photos, PDF or a link -> draft items)
+  read a menu         POST /api/manage/businesses/{id}/import        (photos, PDF or a link -> draft items;
+                      GET .../import/{job} for progress: a background job)
   try the agent       POST /api/manage/businesses/{id}/test-chat     (typed conversation, nothing saved)
   go live             POST /api/manage/businesses/{id}/go-live       (buys a number, or queues a request)
   pause / resume      POST /api/manage/businesses/{id}/pause|resume
@@ -18,6 +19,7 @@ limits waits for the operator to approve it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -30,7 +32,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from .catalog import CatalogError, parse_catalog
 from .catalog_check import check_catalog
 from . import menu_link
-from .catalog_import import ImportError_, merge_items, read_catalog
+from .catalog_import import ImportError_, Progress, merge_items, read_catalog
 from .manage import Who, _business, _check_write, _editor_state, _json, _who
 from .numbers import NumberError
 from .templates import TEMPLATES, get_template
@@ -106,10 +108,17 @@ async def create_business(request: Request) -> dict:
 # ---- read a menu from photos or a PDF --------------------------------------------------------
 
 
+IMPORT_JOB_SECONDS = 900  # finished jobs are kept this long for the page to collect
+
+
 @router.post("/api/manage/businesses/{business_id}/import")
 async def import_catalog(request: Request, business_id: int, files: list[UploadFile] = File(default=[]),
                          url: str = Form(default=""), mode: str = "append", revision: int | None = None) -> dict:
-    """Photos or PDFs (`files`), or a link to the menu (`url`), never both."""
+    """Start reading photos or PDFs (`files`), or a link to the menu (`url`), never both.
+
+    Reading a big menu takes minutes, so it runs as a background job: this returns
+    {"job": id} and the page polls GET .../import/{id} for progress and the result. One job
+    per business at a time; jobs live in memory (lost on restart, like test chats)."""
     who = _who(request)
     _check_write(request)
     row = _business(request, who, business_id)
@@ -122,36 +131,91 @@ async def import_catalog(request: Request, business_id: int, files: list[UploadF
         raise HTTPException(status_code=400, detail="upload files or paste a link, not both")
     if not url.strip() and not files:
         raise HTTPException(status_code=400, detail="add at least one photo or PDF, or paste a link")
+    jobs = _import_jobs(request.app)
+    if any(j["business_id"] == row.id and j["state"] == "running" for j in jobs.values()):
+        raise HTTPException(status_code=409, detail="already reading a menu for this business; wait for it to finish")
     if not store.take_usage(f"business:{row.id}", "import", _today(), limits()["imports_per_day"]):
         raise HTTPException(status_code=429, detail="you've read the most menus allowed today; try again tomorrow")
     uploads = []
     for f in files:
         data = await f.read()
         uploads.append(((f.content_type or "").split(";")[0].strip().lower(), data))
+    job_id = secrets.token_urlsafe(12)
+    job = {"business_id": row.id, "state": "running", "stage": "fetching" if url.strip() else "reading",
+           "started": time.time(), "finished": None, "progress": Progress(), "result": None, "error": None,
+           "source": "a link" if url.strip() else f"{len(uploads)} files"}
+    jobs[job_id] = job
+    job["task"] = asyncio.create_task(_run_import(request.app, row, job, uploads, url.strip(), mode, who))
+    return {"job": job_id}
+
+
+async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, who: Who) -> None:
+    store = app_.state.store
     try:
-        if url.strip():
-            uploads = [await menu_link.fetch(url, getattr(request.app.state, "menu_http", None),
-                                             getattr(request.app.state, "menu_resolve", None) or menu_link.resolve_host)]
-        result = await read_catalog(request.app.state.client, uploads, get_template(catalog.get("template")),
-                                    catalog["settings"])
+        if url:
+            uploads = [await menu_link.fetch(url, getattr(app_.state, "menu_http", None),
+                                             getattr(app_.state, "menu_resolve", None) or menu_link.resolve_host)]
+            job["stage"] = "reading"
+        draft = store.draft(row.id)
+        start_catalog = draft["catalog"] if draft else store.catalog_payload(row.catalog_id)
+        result = await read_catalog(app_.state.client, uploads, get_template(start_catalog.get("template")),
+                                    start_catalog["settings"], job["progress"])
+        job["stage"] = "saving"
+        # Merge into the draft as it is now: the owner may have kept editing while it read.
+        for _ in range(3):
+            row_now = store.business(row.id)
+            draft = store.draft(row.id)
+            catalog = draft["catalog"] if draft else store.catalog_payload(row_now.catalog_id)
+            catalog = {**catalog, "items": merge_items(catalog.get("items", []), result["items"], replace=mode == "replace")}
+            settings = dict(catalog["settings"])
+            for key in ("address", "hours"):  # fill blanks only; never overwrite what the owner typed
+                if result["business"].get(key) and not settings.get(key):
+                    settings[key] = result["business"][key].strip()[:400]
+            notes = list(settings.get("notes") or [])
+            settings["notes"] = (notes + [n.strip()[:400] for n in result["notes"] if n.strip() and n not in notes])[:30]
+            catalog["settings"] = settings
+            base = draft["base_catalog_id"] if draft else row_now.catalog_id
+            if store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label) is not None:
+                break
+        else:
+            raise ImportError_("Someone kept changing this catalog while it was read. Please try again.")
+        log.info("business %s: read %d items from %s", row.slug, len(result["items"]), job["source"])
+        job["result"] = {"added": len(result["items"]), "unreadable": result["unreadable"]}
+        job["state"] = "done"
     except ImportError_ as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    catalog = {**catalog, "items": merge_items(catalog.get("items", []), result["items"], replace=mode == "replace")}
-    settings = dict(catalog["settings"])
-    for key in ("address", "hours"):  # fill blanks only; never overwrite what the owner typed
-        if result["business"].get(key) and not settings.get(key):
-            settings[key] = result["business"][key].strip()[:400]
-    notes = list(settings.get("notes") or [])
-    settings["notes"] = (notes + [n.strip()[:400] for n in result["notes"] if n.strip() and n not in notes])[:30]
-    catalog["settings"] = settings
-    base = draft["base_catalog_id"] if draft else row.catalog_id
-    new_revision = store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label)
-    if new_revision is None:
-        raise HTTPException(status_code=409, detail="someone else changed this catalog; reload first")
-    log.info("business %s: read %d items from %s", row.slug, len(result["items"]),
-             "a link" if url.strip() else f"{len(uploads)} files")
-    return {"added": len(result["items"]), "unreadable": result["unreadable"],
-            **_editor_state(request, store.business(row.id))}
+        job["state"], job["error"] = "error", str(e)
+    except Exception:  # never leave the owner watching a spinner forever
+        log.exception("business %s: menu import failed", row.slug)
+        job["state"], job["error"] = "error", "Reading didn't work this time. Please try again."
+    finally:
+        job["finished"] = time.time()
+        job.pop("task", None)
+
+
+@router.get("/api/manage/businesses/{business_id}/import/{job_id}")
+async def import_status(request: Request, business_id: int, job_id: str) -> dict:
+    who = _who(request)
+    row = _business(request, who, business_id)
+    job = _import_jobs(request.app).get(job_id)
+    if job is None or job["business_id"] != row.id:  # another business's job looks like no job
+        raise HTTPException(status_code=404, detail="that reading has expired; start again")
+    out = {"state": job["state"], "stage": job["stage"], "elapsed": round(time.time() - job["started"]),
+           **job["progress"].snapshot()}
+    if job["state"] == "error":
+        out["error"] = job["error"]
+    elif job["state"] == "done":
+        out.update(job["result"], **_editor_state(request, request.app.state.store.business(row.id)))
+    return out
+
+
+def _import_jobs(app_) -> dict:
+    jobs = getattr(app_.state, "import_jobs", None)
+    if jobs is None:
+        jobs = app_.state.import_jobs = {}
+    now = time.time()
+    for jid in [k for k, j in jobs.items() if j["finished"] and now - j["finished"] > IMPORT_JOB_SECONDS]:
+        jobs.pop(jid, None)
+    return jobs
 
 
 # ---- try the agent in the browser -------------------------------------------------------------
