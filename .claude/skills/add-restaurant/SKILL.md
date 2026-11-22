@@ -1,6 +1,6 @@
 ---
 name: add-restaurant
-description: Onboard a new restaurant onto the phone ordering agent - turn its menu (photos, PDF or text) into a menu file, check it, buy and wire a Twilio number, register it on the Fly.io server, and verify the line answers as that restaurant. Use when the user wants to add, onboard or set up a restaurant, or give a restaurant its own phone line. Also use to republish an existing restaurant's menu.
+description: Onboard a new business (restaurant, or a shop selling products) onto the phone agent - turn its menu or product list (photos, PDF or text) into a catalog file, check it, buy and wire a Twilio number, register it on the Fly.io server, and verify the line answers as that restaurant. Use when the user wants to add, onboard or set up a restaurant, shop or other business, or give one its own phone line. Also use to republish an existing restaurant's menu.
 ---
 
 # Add a restaurant
@@ -8,7 +8,13 @@ description: Onboard a new restaurant onto the phone ordering agent - turn its m
 One server serves every restaurant. A call is routed by the number dialed, so a
 restaurant is live once it has (1) a menu in the database and (2) a Twilio number whose
 voice webhook is our `/voice`, registered on that restaurant. Background:
-`docs/DESIGN.md` section 12, and `ordering_agent/restaurants.py`.
+`docs/DESIGN.md` sections 12 and 15, and `ordering_agent/restaurants.py`.
+
+**Shops and other businesses:** the same steps work for any template. Pick the template
+first (`python -m ordering_agent.restaurants templates`): `restaurant` or `retail`. Start
+the file from `data/templates/<template>.json` (it sets `"template"`). Salons and other
+appointment businesses are coming soon (bookings): tell the user it can't be set up yet.
+"Menu" below means the business's catalog.
 
 Fixed facts (check `fly.toml` and the memory notes if they look stale):
 

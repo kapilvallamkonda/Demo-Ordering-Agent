@@ -14,7 +14,8 @@ from collections import Counter
 
 from .menu import MenuError, parse_menu
 from .prompts import build_greeting
-from .settings_schema import BY_PATH, validate_settings
+from .settings_schema import settings_for, validate_settings
+from .templates import get_template
 
 ID_RE = re.compile(r"^[a-z0-9_]+$")
 NOT_SET = "not available on this line yet"
@@ -32,7 +33,12 @@ def check_menu(raw: dict) -> dict:
     if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
         errors.append("menu must have a restaurant block and a list of items")
         return result
-    errors.extend(validate_settings(raw.get("restaurant")))
+    try:
+        template = get_template(raw.get("template"))
+    except KeyError:
+        template = None  # parse_menu reports it
+    errors.extend(validate_settings(raw.get("restaurant"), template))
+    by_path = {f["path"]: f for f in settings_for(template)}
     try:
         menu = parse_menu(raw)
     except MenuError as e:
@@ -51,13 +57,13 @@ def check_menu(raw: dict) -> dict:
         blockers.append("\"Wait for payment before cooking\" isn't set")
     for key in ("hours", "address"):
         if not r.get(key) or NOT_SET in str(r.get(key)):
-            warnings.append(f"{BY_PATH[key]['label']} not set: the agent will say it doesn't have it")
+            warnings.append(f"{by_path[key]['label']} not set: the agent will say it doesn't have it")
     if not r.get("notes"):
         warnings.append("No notes for the phone agent: add cuisine, spice and allergy guidance")
 
     unconfirmed = r.get("placeholders") or []
     if unconfirmed:
-        names = [BY_PATH[p]["label"] if p in BY_PATH else p for p in unconfirmed]
+        names = [by_path[p]["label"] if p in by_path else p for p in unconfirmed]
         blockers.append("Settings estimated, not yet confirmed: " + ", ".join(names))
     estimated = [it for it in raw["items"] if it.get("placeholder_price")]
     if estimated:
@@ -108,12 +114,13 @@ def check_menu(raw: dict) -> dict:
             warnings.append(f"{n} items are named {name!r}; make the names distinct so callers can tell them apart")
     sold_out = [it["name"] for it in raw["items"] if it.get("available") is False]
     if sold_out:
-        warnings.append(f"{len(sold_out)} items marked sold out: " + ", ".join(sold_out[:12])
+        warnings.append(f"{len(sold_out)} items marked {menu.template.words['unavailable_short'].lower()}: " + ", ".join(sold_out[:12])
                         + (" ..." if len(sold_out) > 12 else ""))
 
     cats = Counter(it.category for it in menu.items.values())
     result["summary"] = {
-        "name": r.get("name"), "items": len(menu.items), "categories": dict(cats),
+        "name": r.get("name"), "template": menu.template_id, "items": len(menu.items),
+        "categories": dict(cats),
         "greeting": build_greeting(menu), "tax_rate": r.get("tax_rate"),
         "pickup_minutes": r.get("pickup_minutes"),
         "pay_before_cooking": (pay or {}).get("required_before_cooking"),

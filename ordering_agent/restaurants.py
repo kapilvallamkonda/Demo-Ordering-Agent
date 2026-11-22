@@ -7,6 +7,7 @@ number that was dialed.
 Admin commands (run on the server, e.g. `fly ssh console -C "python -m ..."`):
 
     python -m ordering_agent.restaurants list
+    python -m ordering_agent.restaurants templates          (kinds of business; starter files)
     python -m ordering_agent.restaurants add SLUG --phone +19135551234 --menu data/restaurants/hyderabad-house.json
     python -m ordering_agent.restaurants set-menu SLUG --menu new-menu.json
     python -m ordering_agent.restaurants set-phone SLUG --phone +19135551234   (or --none)
@@ -99,6 +100,7 @@ class RestaurantDirectory:
             menu = self._menu(row, require_active=False)
             out.append({"id": row.id, "slug": row.slug, "phone_number": row.phone_number,
                         "active": row.active, "name": menu.restaurant.get("name") if menu else None,
+                        "template": menu.template_id if menu else None,
                         "menu_items": len(menu.items) if menu else 0})
         return out
 
@@ -123,6 +125,7 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m ordering_agent.restaurants")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
+    sub.add_parser("templates")
     add = sub.add_parser("add")
     add.add_argument("slug")
     add.add_argument("--menu", required=True)
@@ -154,7 +157,16 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None) -> int:
         if args.cmd == "list":
             for r in directory.listing():
                 print(f"{r['id']:>3}  {r['slug']:<24} {r['phone_number'] or '-':<14} "
-                      f"{'active' if r['active'] else 'inactive':<9} {r['name']} ({r['menu_items']} items)")
+                      f"{'active' if r['active'] else 'inactive':<9} {r['template'] or '-':<11} "
+                      f"{r['name']} ({r['menu_items']} items)")
+        elif args.cmd == "templates":
+            from .templates import TEMPLATES
+
+            starters = Path(__file__).resolve().parent.parent / "data" / "templates"
+            for t in TEMPLATES.values():
+                starter = starters / f"{t.id}.json"
+                print(f"{t.id:<11} {t.status:<12} {t.label}: {t.description}"
+                      + (f"\n{'':<24} starter: {starter.relative_to(starters.parent.parent)}" if starter.exists() else ""))
         elif args.cmd == "add":
             if not SLUG_RE.match(args.slug):
                 raise SystemExit("slug must be lowercase letters, digits and dashes, e.g. hyderabad-house")

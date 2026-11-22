@@ -86,7 +86,8 @@ class Order:
         if item is None:
             raise OrderError(f"Unknown item_id '{item_id}'. Use an item_id from the menu.")
         if not item.available:
-            raise OrderError(f"{item.name} is sold out today. Tell the caller and suggest something similar.")
+            raise OrderError(f"{item.name} is {self.menu.template.words['unavailable']}. "
+                             "Tell the caller and suggest something similar.")
         quantity = _check_quantity(quantity)
         options = dict(options or {})
         extras = list(dict.fromkeys(extras or []))  # dedupe, keep order

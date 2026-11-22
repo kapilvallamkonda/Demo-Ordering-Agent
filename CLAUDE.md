@@ -1,6 +1,7 @@
 # Project notes for Claude
 
-Phone ordering agent for a restaurant: Claude (Messages API) + Twilio ConversationRelay.
+Phone agent for businesses (restaurants, shops; bookings coming soon): Claude (Messages
+API) + Twilio ConversationRelay. Each business has a template (`ordering_agent/templates.py`).
 See `docs/DESIGN.md` for the high-level design.
 
 ## Keep the design doc current

@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .templates import Template, get_template
+
 DEFAULT_MENU_PATH = Path(__file__).resolve().parent.parent / "data" / "restaurants" / "hyderabad-house.json"
 
 
@@ -44,6 +46,11 @@ class Menu:
     slug: str | None = None
     menu_id: int | None = None  # the menu version in the database
     pos_provider: str | None = None  # the POS the item "pos" ids came from ("square", "clover")
+    template_id: str = "restaurant"  # the kind of business (templates.py)
+
+    @property
+    def template(self) -> Template:
+        return get_template(self.template_id)
 
     @property
     def tax_rate(self) -> float:
@@ -69,9 +76,10 @@ class Menu:
         Output is deterministic (stable ordering) so it stays prompt-cache friendly.
         """
         r = self.restaurant
+        words = self.template.words
         unset = "not available on this line yet; say you don't have that information"
         lines = [
-            f"Restaurant: {r.get('name')}",
+            f"{words['business'].capitalize()}: {r.get('name')}",
             f"Address: {r.get('address') or unset}",
             f"Hours: {r.get('hours') or unset}",
             f"Order types: {', '.join(r.get('order_types', []))}",
@@ -83,7 +91,7 @@ class Menu:
             lines.extend(f"- {n}" for n in notes)
         lines += [
             "",
-            "MENU (item_id | name | base price | description)",
+            f"{words['catalog'].upper()} (item_id | name | base price | description)",
         ]
         by_cat: dict[str, list[MenuItem]] = {}
         for item in self.items.values():
@@ -91,7 +99,7 @@ class Menu:
         for cat, items in by_cat.items():
             lines.append(f"\n## {cat}")
             for it in items:
-                sold_out = "" if it.available else " | SOLD OUT today: can't be ordered"
+                sold_out = "" if it.available else f" | {words['unavailable'].upper()}: can't be ordered"
                 lines.append(f"- {it.id} | {it.name} | ${it.price:.2f} | {it.description}{sold_out}")
                 for grp in it.options.values():
                     choices = ", ".join(
@@ -148,6 +156,15 @@ def _parse(raw: dict, restaurant_id: int | None, slug: str | None, menu_id: int 
         )
     if not items:
         raise MenuError("menu has no items")
+    template_id = raw.get("template") or "restaurant"
+    try:
+        template = get_template(template_id)
+    except KeyError:
+        raise MenuError(f"unknown template {template_id!r}")
+    if template.status != "available":
+        raise MenuError(f"the {template.label} template is coming soon "
+                        f"(needs: {', '.join(template.modules)}); it can't be used yet")
     pos = raw.get("pos") or {}
     return Menu(restaurant=raw["restaurant"], items=items, restaurant_id=restaurant_id, slug=slug,
-                menu_id=menu_id, pos_provider=pos.get("provider") if isinstance(pos, dict) else None)
+                menu_id=menu_id, pos_provider=pos.get("provider") if isinstance(pos, dict) else None,
+                template_id=template_id)

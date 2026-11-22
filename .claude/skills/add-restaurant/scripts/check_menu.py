@@ -45,7 +45,7 @@ def check(path: Path) -> int:
             print(f"  {n:>3}  {cat}")
         print(f"Greeting: \"{s['greeting']}\"")
         print(f"Tax {s['tax_rate']}, pickup {s['pickup_minutes']} min, "
-              f"pay before cooking: {s['pay_before_cooking']}")
+              f"pay first: {s['pay_before_cooking']}, template: {s['template']}")
         print()
     for label in ("errors", "blockers", "warnings"):
         for m in result[label]:

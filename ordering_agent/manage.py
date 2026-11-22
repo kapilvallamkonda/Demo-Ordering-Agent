@@ -27,7 +27,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from .accounts import Accounts, LoginLimiter, check_password_rules
 from .menu_check import check_menu
-from .settings_schema import SETTINGS
+from .settings_schema import settings_for
+from .templates import TEMPLATES, get_template
 
 log = logging.getLogger("ordering_agent.manage")
 
@@ -203,9 +204,14 @@ def _editor_state(request: Request, row) -> dict:
     draft = store.draft(row.id)
     menu = draft["menu"] if draft else live
     pos = store.pos_connection(row.id)
+    try:
+        template = get_template((menu or {}).get("template"))
+    except KeyError:
+        template = get_template(None)
     return {
         "restaurant": {"id": row.id, "slug": row.slug, "phone_number": row.phone_number, "active": row.active},
-        "schema": SETTINGS,
+        "schema": settings_for(template),
+        "template": template.public(),
         "menu": menu,
         "live_menu_id": row.menu_id,
         "draft": None if not draft else {
@@ -215,6 +221,13 @@ def _editor_state(request: Request, row) -> dict:
         "check": check_menu(menu) if menu else None,
         "pos_provider": pos["provider"] if pos else None,
     }
+
+
+@router.get("/api/manage/templates")
+async def templates(request: Request) -> list[dict]:
+    """Every kind of business, including ones coming soon (for onboarding screens)."""
+    _who(request)
+    return [t.public() for t in TEMPLATES.values()]
 
 
 @router.get("/api/manage/restaurants/{restaurant_id}/editor")

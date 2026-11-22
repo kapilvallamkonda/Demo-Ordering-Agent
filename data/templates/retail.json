@@ -1,0 +1,26 @@
+{
+  "template": "retail",
+  "restaurant": {
+    "name": "Example Flowers & Gifts",
+    "order_types": ["pickup"],
+    "pickup_minutes": 30,
+    "tax_rate": 0.08,
+    "payment": {"required_before_cooking": false, "pay_within_minutes": 60},
+    "placeholders": ["tax_rate", "pickup_minutes"],
+    "notes": [
+      "Florist and gift shop. Arrangements are made to order; most are ready in about 30 minutes.",
+      "A free card message can be added to any arrangement: put the message in the item's notes.",
+      "Same-day delivery isn't available by phone; pickup only."
+    ]
+  },
+  "items": [
+    {"id": "dozen_roses", "name": "Dozen Roses", "category": "Bouquets", "price": 59.0, "description": "Twelve long-stem roses, wrapped. Bestseller.", "options": {"color": {"choices": {"red": 0.0, "pink": 0.0, "white": 0.0, "mixed": 0.0}, "required": true}}, "extras": {"vase": 12.0, "baby's breath": 6.0}},
+    {"id": "seasonal_bouquet", "name": "Seasonal Bouquet", "category": "Bouquets", "price": 35.0, "description": "Florist's choice of seasonal flowers. Seasonal.", "options": {"size": {"choices": {"standard": 0.0, "deluxe": 15.0, "premium": 30.0}, "required": true}}, "extras": {"vase": 12.0}},
+    {"id": "sunflower_bunch", "name": "Sunflower Bunch", "category": "Bouquets", "price": 25.0, "description": "Five sunflowers. Seasonal."},
+    {"id": "orchid_plant", "name": "Orchid Plant", "category": "Plants", "price": 42.0, "description": "Potted phalaenopsis orchid in a ceramic pot. Gift-wrappable."},
+    {"id": "succulent_trio", "name": "Succulent Trio", "category": "Plants", "price": 28.0, "description": "Three small succulents in a wooden box. Gift-wrappable."},
+    {"id": "greeting_card", "name": "Greeting Card", "category": "Gifts", "price": 5.0, "description": "Blank inside.", "options": {"occasion": {"choices": {"birthday": 0.0, "thank you": 0.0, "sympathy": 0.0, "congratulations": 0.0}, "required": true}}},
+    {"id": "chocolate_box", "name": "Chocolate Box", "category": "Gifts", "price": 18.0, "description": "Twelve assorted chocolates. Contains nuts."},
+    {"id": "balloon", "name": "Mylar Balloon", "category": "Gifts", "price": 7.0, "description": "Helium balloon.", "options": {"design": {"choices": {"happy birthday": 0.0, "get well": 0.0, "congrats": 0.0}, "required": true}}}
+  ]
+}

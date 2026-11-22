@@ -39,10 +39,10 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
 TOOLS: list[dict] = [
     _tool(
         "add_item",
-        "Add a menu item to the caller's order. Only call once the caller has chosen every "
+        "Add an item to the caller's order. Only call once the caller has chosen every "
         "required option. If the tool returns an error, ask the caller to resolve it.",
         {
-            "item_id": {"type": "string", "description": "item_id exactly as listed in the menu."},
+            "item_id": {"type": "string", "description": "item_id exactly as listed."},
             "quantity": {"type": "integer", "minimum": 1, "description": "How many. Defaults to 1."},
             "options": {
                 "type": "object",
@@ -52,11 +52,12 @@ TOOLS: list[dict] = [
             "extras": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Paid extras exactly as named in the menu, e.g. [\"extra cheese\"].",
+                "description": "Paid extras exactly as listed, e.g. [\"extra cheese\"].",
             },
             "notes": {
                 "type": "string",
-                "description": "Free-text kitchen notes, e.g. 'well done', 'no onions'.",
+                "description": "Free-text notes for preparing this item, e.g. 'well done', 'no onions', "
+                "'gift wrap'.",
             },
         },
         ["item_id"],
@@ -112,6 +113,23 @@ TOOLS: list[dict] = [
         [],
     ),
 ]
+
+
+# What each module adds to a call. The agent offers the tools of its template's modules,
+# plus COMMON_TOOLS. "bookings" will add its own (find_available_times, book_appointment ...).
+COMMON_TOOLS = ("end_call",)
+MODULE_TOOLS: dict[str, tuple[str, ...]] = {
+    "orders": ("add_item", "remove_item", "update_quantity", "view_order", "set_customer_name",
+               "set_customer_phone", "place_order"),
+}
+
+
+def tools_for(modules) -> list[dict]:
+    """Tool schemas for a template's modules, in the order of TOOLS."""
+    names = set(COMMON_TOOLS)
+    for m in modules:
+        names.update(MODULE_TOOLS[m])
+    return [t for t in TOOLS if t["name"] in names]
 
 
 @dataclass
@@ -203,6 +221,9 @@ def run_tool(session: CallSession, name: str, args: Any) -> tuple[str, bool]:
     """Execute one tool call. Returns (result_text, is_error). Never raises for bad input."""
     if not isinstance(args, dict):
         return json.dumps({"INVALID_JSON": json.dumps(args)}), True
+    allowed = set(COMMON_TOOLS).union(*(MODULE_TOOLS.get(m, ()) for m in session.order.menu.template.modules))
+    if name not in allowed:
+        return f"Unknown tool '{name}'.", True
     order = session.order
     try:
         if name == "add_item":

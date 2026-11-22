@@ -18,7 +18,7 @@ from .order import Order, OrderError, normalize_phone
 from .payments import PaymentService
 from .prompts import build_greeting, build_system_prompt
 from .storage import OrderStore
-from .tools import TOOLS, CallSession, run_tool
+from .tools import CallSession, run_tool, tools_for
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class OrderingAgent:
         self.client = client or anthropic.AsyncAnthropic()
         self.menu = menu
         self.greeting = build_greeting(menu)
+        self.tools = tools_for(menu.template.modules)  # what this kind of business can do
         self.session = CallSession(order=Order(menu=menu), store=store, call_id=call_id,
                                    payments=payments, pos=pos)
         if caller_phone:
@@ -101,7 +102,7 @@ class OrderingAgent:
             "model": MODEL,
             "max_tokens": 16000,
             "system": self._system,
-            "tools": TOOLS,
+            "tools": self.tools,
             "output_config": {"effort": EFFORT},
             "cache_control": {"type": "ephemeral"},
             # If a safety classifier declines a turn, the API re-runs it on a fallback model

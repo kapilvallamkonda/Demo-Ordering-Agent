@@ -1,8 +1,10 @@
 # Demo-Ordering-Agent
 
-A demo AI agent that takes restaurant pickup orders **over the phone**. Callers dial a
-Twilio number and talk to Claude, which builds the order with tools, reads it back,
-places it and gives an order number.
+A demo AI phone agent for businesses. Callers dial a business's Twilio number and talk
+to Claude, which takes their pickup order with tools, reads it back, places it and
+gives an order number. Each business picks a **template** (restaurant or shop today;
+salons and other appointment-based services are coming soon) and edits its own catalog
+and settings in the web manager at `/manage`.
 
 ```
 Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──TwiML <ConversationRelay>
@@ -44,6 +46,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 | `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
 | `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
 | `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a restaurant's Square or Clover, send each placed order to it, import its menu. Admin commands: `python -m ordering_agent.pos --help`. |
+| `ordering_agent/templates.py` | Kinds of business (restaurant, retail shop; salon coming soon): modules, wording, prompt rules, tags, settings. Add a kind of business here. |
+| `data/templates/<id>.json` | Starter catalogs for each template. |
 | `ordering_agent/manage.py`, `static/manage.html` | Menu manager at `/manage`: restaurant staff sign in and edit their menu and settings (draft, publish, history). |
 | `ordering_agent/accounts.py` | Staff accounts: invite links, passwords, sessions. `python -m ordering_agent.accounts --help`. |
 | `ordering_agent/settings_schema.py` | The restaurant settings staff can edit; the settings form is built from it. Add a setting here. |

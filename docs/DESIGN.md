@@ -1,14 +1,20 @@
-# High-Level Design: Phone Ordering Agent
+# High-Level Design: Phone Agent for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (menu manager).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (business templates).
 
 ## 1. Goal
 
-Let a caller phone a restaurant and place a pickup order by talking to an AI agent.
-The agent answers menu questions, builds the order, reads it back, places it after
-the caller confirms, and gives an order number and pickup time. It then texts the
-order details and a secure payment link to the caller, so card details are never
-shared over the phone.
+Let a caller phone a business and get what they called for by talking to an AI agent.
+Today that's ordering: the agent answers questions about what the business sells,
+builds the order, reads it back, places it after the caller confirms, and gives an
+order number and pickup time. It then texts the order details and a secure payment
+link to the caller, so card details are never shared over the phone.
+
+The agent is generic: a **template** (section 15) says what kind of business it is
+(restaurant, shop; salons and other services are coming soon) and which **modules** it
+uses (orders now; bookings later). The business itself enters its details and
+catalog in the web manager (section 14). Restaurants were first, so examples below
+often use them.
 
 **In scope:** pickup orders, menu questions, changing the order during the call,
 payment by texted Stripe link (or at pickup).
@@ -58,6 +64,7 @@ flowchart LR
 | Storage | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders (order and payment status, per-restaurant order numbers) and call transcripts, in SQLite. All SQL is in this file. Adds new columns to older databases on startup. |
 | POS integrations | `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py`; `server.py` `/pos/<provider>/callback` | Connects a restaurant's Square or Clover account (OAuth, encrypted tokens), sends each placed order to it in the background with retries, records the online payment there, imports the POS menu into a menu file. Section 13. |
 | Terminal client | `ordering_agent/cli.py` | Same agent without a phone, for testing. |
+| Templates | `ordering_agent/templates.py`; starters in `data/templates/` | What kind of business it is: modules (which tools a call gets), words, prompt role and rules, greeting, tags and settings changes. Section 15. |
 | Menu manager | `ordering_agent/manage.py` (`/manage`, `/api/manage/...`), `static/manage.html`, `accounts.py`, `settings_schema.py`, `menu_check.py` | Web page where restaurant staff sign in and edit their own menu (dishes, descriptions, prices, choices, extras, sold out) and settings. Edits autosave to a draft; publishing makes a new menu version used from the next call. History with restore. Section 14. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
 
@@ -129,6 +136,7 @@ is how to find out why a call didn't produce an order.
 | **Confirm before placing** | `place_order` requires `caller_confirmed: true` and the prompt requires a read-back first. |
 | **Model `claude-opus-5-5` at `low` effort** | Short, quick turns for the phone. Effort and fast mode are configurable. |
 | **Pay by texted Stripe Checkout link**, not card details by voice | Customers never read card numbers to an AI or over a phone line, and we never handle card data (Stripe does). The link has the exact items and total. |
+| **Templates and modules, as code** (section 15) | Kinds of business differ in wording, prompt rules and what a call does. A template per kind (with its business rules in code) keeps the agent precise; a fully generic schema would make it vague and validation weak. |
 | **Pay-first is a restaurant setting** | Some restaurants want prepayment to avoid no-shows, others don't. It's a rule in the menu file, enforced in code, and the prompt tells the caller which applies. |
 | **Server-side refusal fallback** (`fallbacks: "default"`) | If a turn is declined, the API retries on a fallback model so the caller isn't left in silence. |
 | **Streamed tool inputs** (`eager_input_streaming`) with our own validation | Lower latency. The API doesn't validate streamed inputs, so `tools.py` checks types and `order.py` checks rules. |
@@ -195,6 +203,9 @@ is how to find out why a call didn't produce an order.
 - **Menu draft:** one per restaurant: the edited menu JSON, the live version it started
   from, a revision number (for conflict checks), who and when last saved. Published
   menu versions record who published them (`created_by`: an email or `operator`).
+- **Template:** the catalog JSON's top-level `template` key (`restaurant` when missing);
+  it's versioned with the catalog. Internally businesses are still `restaurants` rows,
+  catalogs are `menus`, and the settings block is the `restaurant` key (section 15).
 - **Menu item extras:** `available: false` marks a dish sold out (the agent says so and
   `add_item` refuses it); `restaurant.greeting` overrides the opening line.
 - **Call row:** Twilio call SID, restaurant, start and end time, caller phone, order number (if any).
@@ -299,7 +310,10 @@ ids on re-import), and admin commands. Not yet tried against the real sandboxes.
 CSRF header and Origin checks, access to other restaurants, operator token, draft
 revisions and conflicts, publish reaching the next call (greeting, new dish, sold-out
 dish refused), errors blocking publish, publishing over a newer menu, restore and
-discard, page security headers, and the checks on the real menu.
+discard, page security headers, and the checks on the real menu. Template tests: valid starters, the
+retail wording in the prompt and greeting, out-of-stock refusal, the coming-soon and
+unknown templates refused, tools per module, settings labels per template, the editor
+API sending the template, and the restaurant prompt unchanged by the refactor.
 
 ## 12. Multi-restaurant plan (phase 1 built, except Postgres)
 
@@ -471,7 +485,54 @@ before replacing it.
   operator sends the link (2026-11-22).
 - One plain HTML page with no build step, like the dashboard.
 
-## 15. Open issues and next steps
+## 15. Business templates (making the agent generic)
+
+The core works for any business: phone calls, routing by number, transcripts, staff
+sign-in, the web manager, payment links, dashboard, POS. What differs by kind of
+business is a **template** (`ordering_agent/templates.py`):
+
+| Part | What it is | Example (restaurant / shop) |
+|---|---|---|
+| `modules` | What a call can do. Each module brings its tools (`tools.MODULE_TOOLS`) and business rules in code. | `orders` / `orders` |
+| `words` | How the manager and the agent name things. | menu, dish, section, "sold out today" / catalog, product, category, "out of stock" |
+| `role`, `rules`, `declines` | The agent's role line, extra rules, and what it politely declines. | "phone ordering assistant", declines delivery and reservations / declines shipping, returns, special orders |
+| `greeting` | Default first line (a business can set its own). | "What can I get started for you today?" / "How can I help you today?" |
+| `tags` | Description tag chips in the editor. | Vegetarian, Spicy / Bestseller, Gift-wrappable |
+| `setting_overrides`, `extra_settings` | Changes to the settings form (labels, help) and settings only this kind of business has. | "Restaurant name", "Wait for payment before cooking" / "Business name" |
+
+A business's template is the `template` key of its catalog JSON. Starter catalogs are
+in `data/templates/<id>.json`; `python -m ordering_agent.restaurants templates` lists
+them. The prompt is assembled from the phone rules (shared), the orders rules with
+the template's words, the template's role and rules, the payment rule and the catalog.
+For restaurants it's byte-for-byte the prompt from before templates.
+
+**Templates now:** `restaurant` and `retail` (shops: bakeries, florists, liquor, gift and
+convenience stores) are available. `salon` (services and appointments) is listed as
+**coming soon**: it needs the `bookings` module, so `parse_menu` refuses it and it can't
+be registered.
+
+**Adding a kind of business** that only needs orders: a `Template` entry and a starter
+file. **Adding a module** (bookings): its tools in `tools.py`/`MODULE_TOOLS`, its rules in
+code (like `order.py`), its prompt section, its storage, its parts of the manager and
+dashboard, and `BUILT_MODULES` in `templates.py`. Planned bookings pieces: services with
+a length and price, staff and their hours, availability, appointments with a no-double-
+booking guarantee (wants Postgres), reschedule/cancel, confirmation and reminder texts,
+read-back of date and time on the call, and later sync with Google Calendar or Square
+Appointments.
+
+**Names.** Code and storage still say restaurant/menu (tables `restaurants`, `menus`,
+`restaurant_id`, the `restaurant` settings key, `ordering_agent/restaurants.py`, the
+`add-restaurant` skill). Renaming them means migrating live data for no change in
+behavior; it's planned with the move to Postgres. Everything people see (the manager,
+the agent's words) follows the template.
+
+**Decisions**
+
+- Templates and modules are code, not configuration (2026-11-22).
+- Bookings are "coming soon"; the extension points exist, the module doesn't
+  (2026-11-22).
+
+## 16. Open issues and next steps
 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
@@ -519,10 +580,13 @@ before replacing it.
   Square OAuth apps can go live without the App Marketplace.
 - Toast: submit the partner application (`docs/toast-partner-application.md`); expect
   discovery, an agreement, sandbox credentials, certification, then an alpha restaurant.
+- Bookings module and the salon template (section 15), then self-serve signup where a
+  business picks a template and enters its details itself.
+- Rename restaurant/menu in code and storage to business/catalog with the Postgres move.
 - Possible features: delivery, kitchen display, order status from the POS back to the
   dashboard ("ready").
 
-## 16. Change log
+## 17. Change log
 
 | Date | Change |
 |---|---|
@@ -542,3 +606,4 @@ before replacing it.
 | 2026-11-22 | `add-restaurant` skill and menu checker; menus moved to `data/restaurants/<slug>.json`; `restaurant.placeholders` marks unconfirmed settings (Hyderabad House's tax rate). |
 | 2026-11-22 | POS integrations: Square and Clover (OAuth connect, encrypted tokens, orders sent in the background with retries, payment recorded after Stripe, menu import with POS ids), POS status on the dashboard, `ordering_agent.pos` admin commands; Toast partner application drafted. |
 | 2026-11-22 | Menu manager at `/manage`: staff accounts with invite links (`ordering_agent.accounts`), sessions, drafts with autosave, publish, history and restore, settings form built from `settings_schema.py`, shared menu checks (`menu_check.py`), sold-out dishes (`available: false`), custom greeting. Unset address/hours no longer reach the prompt as "None". |
+| 2026-11-22 | Business templates: the agent is generic, with a template per kind of business (`ordering_agent/templates.py`: modules, words, prompt rules, greeting, tags, settings). `restaurant` (unchanged behavior) and `retail` available, `salon` coming soon (bookings module). Tools come from the template's modules; the manager's wording, tags and settings form follow the template; starter catalogs in `data/templates/`; `restaurants templates` command. |

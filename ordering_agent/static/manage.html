@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Menu Manager</title>
+<title>Phone Agent Manager</title>
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
@@ -138,7 +138,9 @@
   const app = document.getElementById("app");
   const dlg = document.getElementById("dlg");
   const API = "/api/manage";
-  const TAGS = ["Vegetarian.", "Vegan.", "Non-veg.", "Spicy.", "Extra spicy.", "Contains nuts.", "Gluten-free.", "Chef special."];
+  // Words and tags for this kind of business come from its template (S.ed.template).
+  const W = () => S.ed.template.words;
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const SAVE_DELAY = 1200;
 
   // ---- tiny DOM helper (text is always set as text, never HTML) ----
@@ -214,8 +216,8 @@
         catch (x) { err.textContent = x.message; submit.disabled = false; }
       }
     },
-      el("h2", {}, "Menu manager"),
-      el("p", { class: "sub" }, "Sign in to edit your restaurant's phone menu."),
+      el("h2", {}, "Phone agent manager"),
+      el("p", { class: "sub" }, "Sign in to edit what your phone agent offers and how it answers."),
       el("div", { class: "field" }, el("label", { for: "email" }, "Email"), email),
       el("div", { class: "field" }, el("label", { for: "pw" }, "Password"), pw),
       err, el("div", { class: "row" }, submit),
@@ -242,7 +244,7 @@
       }
     },
       el("h2", {}, "Welcome"),
-      el("p", { class: "sub" }, "Choose a password for the menu manager. Use at least 10 characters."),
+      el("p", { class: "sub" }, "Choose a password for the phone agent manager. Use at least 10 characters."),
       el("div", { class: "field" }, el("label", { for: "nm" }, "Your name"), name),
       el("div", { class: "field" }, el("label", { for: "pw1" }, "Password"), pw),
       el("div", { class: "field" }, el("label", { for: "pw2" }, "Password again"), pw2),
@@ -256,8 +258,8 @@
     try { S.me = await api("GET", "/me"); }
     catch (e) { if (e.status === 401) return showLogin(); return screen(el("p", {}, e.message)); }
     if (!S.me.restaurants.length) {
-      return screen(el("h2", {}, "No restaurants yet"),
-        el("p", { class: "sub" }, "Your account isn't linked to a restaurant. Ask us to add you."), signOutBtn());
+      return screen(el("h2", {}, "No businesses yet"),
+        el("p", { class: "sub" }, "Your account isn't linked to a business. Ask us to add you."), signOutBtn());
     }
     const saved = Number(store.get("manage.restaurant"));
     S.rid = S.me.restaurants.some(r => r.id === saved) ? saved : S.me.restaurants[0].id;
@@ -311,7 +313,7 @@
   window.addEventListener("beforeunload", e => { if (S.dirty || S.saving) { e.preventDefault(); e.returnValue = ""; } });
 
   function conflict(msg) {
-    ask({ title: "Someone else changed this menu", body: msg + " Your last few edits weren't saved.",
+    ask({ title: `Someone else changed this ${W().catalog}`, body: msg + " Your last few edits weren't saved.",
           ok: "Reload", cancel: null }).then(loadEditor);
   }
 
@@ -322,19 +324,19 @@
     const lines = [];
     if (c.blockers && c.blockers.length) lines.push("Still to confirm: " + c.blockers.join(" · "));
     const ok = await ask({ title: "Publish these changes?",
-      body: "Callers will hear the new menu from the next call. " + lines.join(" "), ok: "Publish" });
+      body: `Callers will hear the new ${W().catalog} from the next call. ` + lines.join(" "), ok: "Publish" });
     if (!ok) return;
     let overwrite = false;
     for (;;) {
       try {
         const r = await api("POST", `/restaurants/${S.rid}/publish`, { revision: S.revision, overwrite });
         S.ed = r; S.menu = structuredClone(r.menu); S.revision = null; S.versions = null;
-        toast("Published. The next call uses the new menu.");
+        toast(`Published. The next call uses the new ${W().catalog}.`);
         return render();
       } catch (e) {
         if (e.status === 409 && e.data && e.data.code === "live_changed") {
-          const yes = await ask({ title: "A newer menu was published",
-            body: "Someone published a menu after you started this draft. Publishing yours replaces it.", ok: "Publish mine anyway" });
+          const yes = await ask({ title: `A newer ${W().catalog} was published`,
+            body: `Someone published a ${W().catalog} after you started this draft. Publishing yours replaces it.`, ok: "Publish mine anyway" });
           if (!yes) return;
           overwrite = true; continue;
         }
@@ -346,7 +348,7 @@
   }
 
   async function discard() {
-    const ok = await ask({ title: "Discard all unpublished changes?", body: "The menu goes back to what callers hear now.", ok: "Discard", danger: true });
+    const ok = await ask({ title: "Discard all unpublished changes?", body: `The ${W().catalog} goes back to what callers hear now.`, ok: "Discard", danger: true });
     if (!ok) return;
     clearTimeout(S.saveTimer); S.dirty = false;
     try { S.ed = await api("DELETE", `/restaurants/${S.rid}/draft`); } catch (e) { return toast(e.message); }
@@ -381,7 +383,7 @@
 
   function render() {
     const restaurants = S.me.restaurants;
-    const picker = restaurants.length > 1 ? el("select", { "aria-label": "Restaurant", onchange: async e => {
+    const picker = restaurants.length > 1 ? el("select", { "aria-label": "Business", onchange: async e => {
       try { await flush(); } catch (x) { return toast("Couldn't save: " + x.message); }
       S.rid = Number(e.target.value); store.set("manage.restaurant", S.rid); loadEditor();
     } }, restaurants.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name))) : null;
@@ -393,7 +395,7 @@
       el("main", {},
         el("div", { class: "checks", id: "checks" }),
         el("nav", { class: "tabs", role: "tablist" },
-          [["menu", "Menu"], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
+          [["menu", cap(W().catalog)], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
             el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
                            onclick: () => { S.tab = k; render(); } }, label))),
         el("div", { id: "view" })));
@@ -415,7 +417,7 @@
     else if (hasDraft) status = el("span", { class: "status draft",
       title: S.ed.draft && S.ed.draft.updated_by ? "Last edit by " + S.ed.draft.updated_by : "" },
       "Draft saved" + (S.lastSaved ? " " + ago(S.lastSaved) : "") + " · not live yet");
-    else status = el("span", { class: "status live" }, "Live: callers hear this menu");
+    else status = el("span", { class: "status live" }, `Live: callers hear this ${W().catalog}`);
     const errors = (S.ed.check && S.ed.check.errors.length) || 0;
     hdr.replaceChildren(...[status,
       hasDraft ? el("button", { class: "btn small", onclick: discard }, "Discard changes") : null,
@@ -430,7 +432,7 @@
     const c = S.ed.check;
     const parts = [];
     if (S.ed.draft && S.ed.draft.live_changed)
-      parts.push(el("div", { class: "note warn" }, "A newer menu was published after this draft was started. Publishing this draft will replace it; discard the draft to start from the newest menu."));
+      parts.push(el("div", { class: "note warn" }, `A newer ${W().catalog} was published after this draft was started. Publishing this draft will replace it; discard the draft to start from the newest one.`));
     if (c && c.errors.length) parts.push(el("div", { class: "note bad", role: "alert" },
       el("strong", {}, "Fix before publishing"), el("ul", {}, c.errors.map(m => el("li", {}, m)))));
     if (c && c.blockers.length) parts.push(el("div", { class: "note warn" },
@@ -461,7 +463,7 @@
       if (!byCat.has(it.category)) { byCat.set(it.category, []); cats.push(it.category); }
       byCat.get(it.category).push(it);
     }
-    const search = el("input", { type: "search", placeholder: "Search dishes", value: S.q, "aria-label": "Search dishes",
+    const search = el("input", { type: "search", placeholder: "Search " + W().items, value: S.q, "aria-label": "Search " + W().items,
       oninput: e => { S.q = e.target.value; const v = document.getElementById("view"); v.replaceChildren(menuView());
                       const s = v.querySelector("input[type=search]"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); } });
     const chip = (k, label) => el("button", { class: "chip", "aria-pressed": S.filter === k ? "true" : "false",
@@ -469,11 +471,11 @@
     const nOff = items.filter(isOff).length, nEst = items.filter(isEstimated).length;
     return el("div", {},
       el("div", { class: "toolbar" }, search, chip("all", `All ${items.length}`),
-        nOff ? chip("off", `Sold out ${nOff}`) : null, nEst ? chip("est", `Estimated price ${nEst}`) : null,
+        nOff ? chip("off", `${W().unavailable_short} ${nOff}`) : null, nEst ? chip("est", `Estimated price ${nEst}`) : null,
         el("span", { class: "grow" }),
-        el("button", { class: "btn primary", onclick: () => openItem(null) }, "+ Add dish")),
+        el("button", { class: "btn primary", onclick: () => openItem(null) }, "+ Add " + W().item)),
       cats.length ? cats.map(cat => categoryBlock(cat, byCat.get(cat), !!q || S.filter !== "all"))
-        : el("div", { class: "empty" }, items.length ? "No dishes match." : "No dishes yet. Add your first one."));
+        : el("div", { class: "empty" }, items.length ? `No ${W().items} match.` : `No ${W().items} yet. Add your first one.`));
   }
 
   function categoryBlock(cat, items, forceOpen) {
@@ -491,7 +493,7 @@
     const toggle = el("label", { class: "switch", onclick: e => e.stopPropagation() },
       el("input", { type: "checkbox", checked: !isOff(it), "aria-label": `${it.name} available`,
         onchange: e => { if (e.target.checked) delete it.available; else it.available = false; changed(); } }),
-      el("span", {}, isOff(it) ? "Sold out" : "Available"));
+      el("span", {}, isOff(it) ? W().unavailable_short : "Available"));
     const opts = Object.keys(it.options || {}).length, extras = Object.keys(it.extras || {}).length;
     return el("div", { class: "item" + (isOff(it) ? " off" : ""), tabindex: 0, role: "button",
                        onclick: () => openItem(it), onkeydown: e => { if (e.key === "Enter") openItem(it); } },
@@ -499,7 +501,7 @@
         el("div", { class: "name" }, it.name),
         it.description ? el("div", { class: "desc" }, it.description) : null,
         (opts || extras || isEstimated(it) || isOff(it) || it.pos) ? el("div", { class: "badges" },
-          isOff(it) ? el("span", { class: "badge bad" }, "Sold out") : null,
+          isOff(it) ? el("span", { class: "badge bad" }, W().unavailable_short) : null,
           isEstimated(it) ? el("span", { class: "badge warn" }, "Estimated price") : null,
           opts ? el("span", { class: "badge" }, opts + (opts > 1 ? " choices" : " choice")) : null,
           extras ? el("span", { class: "badge" }, extras + (extras > 1 ? " extras" : " extra")) : null,
@@ -508,7 +510,7 @@
   }
 
   async function renameCategory(cat) {
-    const name = await ask({ title: "Rename section", body: `Renames "${cat}" for every dish in it.`, ok: "Rename", input: { value: cat } });
+    const name = await ask({ title: "Rename " + W().section, body: `Renames "${cat}" for every ${W().item} in it.`, ok: "Rename", input: { value: cat } });
     if (!name || name === cat) return;
     S.menu.items.forEach(it => { if (it.category === cat) it.category = name; });
     changed();
@@ -540,7 +542,7 @@
       if (structural) renderDrawer();
     };
     const categories = [...new Set(S.menu.items.map(i => i.category))];
-    const tags = el("div", { class: "tags" }, TAGS.map(tag => {
+    const tags = el("div", { class: "tags" }, S.ed.template.tags.map(tag => {
       const on = (it.description || "").includes(tag);
       return el("button", { class: "chip", type: "button", "aria-pressed": on ? "true" : "false", onclick: () => {
         let d = (it.description || "").replace(tag, "").replace(/\s{2,}/g, " ").trim();
@@ -551,9 +553,9 @@
     const body = el("div", { class: "drawer-body" },
       el("div", { class: "field" }, el("label", { for: "f-name" }, "Name"),
         el("input", { id: "f-name", type: "text", value: it.name, maxlength: 80, oninput: e => { it.name = e.target.value; edit(); } }),
-        el("span", { class: "help" }, "As callers would say it. Make it distinct from similar dishes.")),
+        el("span", { class: "help" }, `As callers would say it. Make it distinct from similar ${W().items}.`)),
       el("div", { class: "row" },
-        el("div", { class: "field grow" }, el("label", { for: "f-cat" }, "Section"),
+        el("div", { class: "field grow" }, el("label", { for: "f-cat" }, cap(W().section)),
           el("input", { id: "f-cat", type: "text", list: "cats", value: it.category, maxlength: 100,
                         oninput: e => { it.category = e.target.value; edit(); } }),
           el("datalist", { id: "cats" }, categories.map(c => el("option", { value: c })))),
@@ -567,34 +569,34 @@
       el("div", { class: "field" },
         el("label", { class: "switch", style: "color:inherit" },
           el("input", { type: "checkbox", checked: !isOff(it), onchange: e => { if (e.target.checked) delete it.available; else it.available = false; edit(true); } }),
-          el("span", {}, isOff(it) ? "Sold out: the agent says it's unavailable" : "Available to order"))),
+          el("span", {}, isOff(it) ? `${W().unavailable_short}: the agent says it's unavailable` : "Available to order"))),
       optionsEditor(it, edit),
       extrasEditor(it, edit),
-      !isNew ? el("p", { class: "sub" }, "Dish id: " + it.id + (it.pos ? " · linked to the POS" : "")) : null);
+      !isNew ? el("p", { class: "sub" }, `${cap(W().item)} id: ${it.id}` + (it.pos ? " · linked to the POS" : "")) : null);
 
     const foot = el("div", { class: "drawer-foot" },
       isNew ? el("span") : el("button", { class: "btn danger", type: "button", onclick: async () => {
         if (!await ask({ title: `Delete "${it.name}"?`, body: "Callers won't be able to order it once you publish.", ok: "Delete", danger: true })) return;
         S.menu.items.splice(S.menu.items.indexOf(it), 1);
         changed(false); closeDrawer();
-      } }, "Delete dish"),
+      } }, "Delete " + W().item),
       el("div", { class: "row" },
         el("button", { class: "btn", type: "button", onclick: closeDrawer }, isNew ? "Cancel" : "Done"),
         isNew ? el("button", { class: "btn primary", type: "button", onclick: () => {
-          if (!it.name.trim()) return toast("Give the dish a name.");
-          if (!it.category.trim()) return toast("Choose a section.");
+          if (!it.name.trim()) return toast(`Give the ${W().item} a name.`);
+          if (!it.category.trim()) return toast(`Choose a ${W().section}.`);
           if (!(it.price > 0)) return toast("Set a price.");
           const ids = new Set(S.menu.items.map(i => i.id));
           let id = slug(it.name), n = 2;
           while (ids.has(id)) id = slug(it.name) + "_" + n++;
           S.menu.items.push({ id, ...it });
           S.drawer = null; changed(); toast(`Added "${it.name}".`);
-        } }, "Add dish") : null));
+        } }, "Add " + W().item) : null));
 
     const bg = el("div", { class: "drawer-bg", onclick: closeDrawer });
-    const drawer = el("aside", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": isNew ? "New dish" : it.name,
+    const drawer = el("aside", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": isNew ? "New " + W().item : it.name,
                                  onkeydown: e => { if (e.key === "Escape") closeDrawer(); } },
-      el("div", { class: "drawer-head" }, el("h2", { style: "margin:0" }, isNew ? "New dish" : "Edit dish"),
+      el("div", { class: "drawer-head" }, el("h2", { style: "margin:0" }, isNew ? "New " + W().item : "Edit " + W().item),
         el("button", { class: "btn small", onclick: closeDrawer, "aria-label": "Close" }, "✕")),
       body, foot);
     document.body.append(bg, drawer);
@@ -623,7 +625,7 @@
     let n = 0;
     return el("div", { class: "field" },
       el("span", { class: "lbl" }, "Choices"),
-      el("span", { class: "help" }, "Things the caller picks, like size or protein. Price is added to the dish price; the cheapest should be $0."),
+      el("span", { class: "help" }, `Things the caller picks, like size or flavor. Price is added to the ${W().item} price; the cheapest should be $0.`),
       Object.entries(opts).map(([name, grp]) => {
         const gid = "g" + (n++);
         const rename = v => {
@@ -655,7 +657,7 @@
           } }, "+ Add option"));
       }),
       el("button", { class: "btn small", type: "button", onclick: async () => {
-        const v = await ask({ title: "New choice", body: "What does the caller choose? e.g. size, protein, spice level", ok: "Add", input: { value: "" } });
+        const v = await ask({ title: "New choice", body: "What does the caller choose? e.g. size, flavor, color", ok: "Add", input: { value: "" } });
         if (!v) return;
         it.options = it.options || {};
         if (v in it.options) return toast("That choice already exists.");
@@ -710,7 +712,11 @@
       if (f.path === "name") document.querySelector("header h1").textContent = v || S.ed.restaurant.slug;
       changed(rerender);
     };
-    return el("div", { class: "panel" }, [...groups].map(([group, fields]) => el("section", { class: "settings-group" },
+    const t = S.ed.template;
+    return el("div", { class: "panel" },
+      el("section", { class: "settings-group" }, el("h2", {}, "Business type"),
+        el("div", {}, el("strong", {}, t.label)), el("span", { class: "sub" }, t.description)),
+      [...groups].map(([group, fields]) => el("section", { class: "settings-group" },
       el("h2", {}, group),
       fields.map(f => {
         const id = "s-" + f.path.replace(/\./g, "-");
@@ -735,7 +741,7 @@
         return el("div", { class: "field" },
           el("label", { for: id }, f.label, f.required ? el("span", { class: "muted" }, " *") : null),
           input,
-          unconfirmed ? el("div", { class: "placeholder" }, "This was estimated when the menu was set up. Change it, or confirm it's right.",
+          unconfirmed ? el("div", { class: "placeholder" }, "This was estimated during setup. Change it, or confirm it's right.",
             el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
           f.help ? el("span", { class: "help" }, f.help) : null);
       }))),
@@ -752,7 +758,7 @@
         el("p", { class: "sub" }, "Restoring copies an old version into your draft; nothing changes for callers until you publish."),
         S.versions.map(v => el("div", { class: "v" },
           el("div", {}, el("div", {}, fmtTime(v.created_at), v.live ? el("span", { class: "badge ok", style: "margin-left:8px" }, "Live") : null),
-            el("div", { class: "sub" }, `by ${v.created_by} · ${v.items} dishes`)),
+            el("div", { class: "sub" }, `by ${v.created_by} · ${v.items} ${W().items}`)),
           v.live ? null : el("button", { class: "btn small", onclick: async () => {
             if (!await ask({ title: "Restore this version?", body: "It replaces your current draft (if any). Publish to make it live.", ok: "Restore" })) return;
             try { await flush(); } catch {}

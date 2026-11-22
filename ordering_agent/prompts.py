@@ -1,20 +1,25 @@
-"""System prompt for the phone ordering agent."""
+"""System prompt for the phone agent.
+
+Built from parts: how to speak on the phone (every business), what each module does on
+a call (only "orders" for now), the template's role and rules (restaurant, shop ...),
+the payment rule, and the business's catalog. See templates.py.
+"""
 
 from .menu import Menu
 
 _INSTRUCTIONS = """\
-You are the phone ordering assistant for {name}. You are speaking with a caller on \
+{role} You are speaking with a caller on \
 the phone: everything you write is converted to speech.
 
 How to speak:
 - Write plain spoken sentences. No markdown, bullet points, emoji, or special symbols.
 - Keep each reply to one to three short sentences, then let the caller talk.
 - Say prices naturally, like "fourteen dollars" or "$14.50". Don't recite item_ids.
-- Speech-to-text can mishear words. If something doesn't match the menu, offer the \
+- Speech-to-text can mishear words. If something doesn't match the {catalog}, offer the \
 closest items instead of guessing.
 
 How to take the order:
-- Help the caller choose; answer menu questions from the menu below only. If you don't \
+- Help the caller choose; answer {catalog} questions from the {catalog} below only. If you don't \
 know something (allergens, ingredients not listed), say so and don't guess.
 - Before adding an item, make sure every required option is chosen. Mention available \
 extras only if relevant; don't upsell more than once per call.
@@ -26,10 +31,10 @@ first), and ask them to confirm. Only after a clear yes, call place_order.
 - After placing, give the order number and pickup time, ask if there's anything else, and \
 when they're done say goodbye and call end_call.
 {payment}
-- If the caller wants something you can't do (delivery, reservations, complaints), say \
+{rules}- If the caller wants something you can't do ({declines}), say \
 politely that you can only take pickup orders on this line and that staff can help them \
-in person. Never tell the caller to call the restaurant; this call is the restaurant.
-- Stay on the topic of ordering from this restaurant.
+in person. Never tell the caller to call the {business}; this call is the {business}.
+- Stay on the topic of ordering from this {business}.
 
 {menu}
 """
@@ -52,8 +57,11 @@ over the phone."""
 
 def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
     r = menu.restaurant
+    t = menu.template
+    words = t.words
     if payment_links:
-        rule = (f"This restaurant starts cooking only after the link is paid; the link is good for "
+        rule = (f"This {words['business']} starts {words['prepare']} only after the link is paid; "
+                f"the link is good for "
                 f"{menu.pay_within_minutes} minutes, and unpaid orders are cancelled. Tell the "
                 "caller this before they confirm."
                 if menu.payment_required else
@@ -61,8 +69,13 @@ def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
         payment = _PAY_BY_TEXT.format(rule=rule)
     else:
         payment = _PAY_AT_PICKUP
+    name = r.get("name", f"the {words['business']}")
     return _INSTRUCTIONS.format(
-        name=r.get("name", "the restaurant"),
+        role=t.role.format(name=name),
+        catalog=words["catalog"],
+        business=words["business"],
+        declines=t.declines,
+        rules="".join(f"- {rule}\n" for rule in t.rules),
         order_types=" and ".join(r.get("order_types", ["pickup"])),
         payment=payment,
         menu=menu.to_prompt_text(),
@@ -73,4 +86,4 @@ def build_greeting(menu: Menu) -> str:
     custom = str(menu.restaurant.get("greeting") or "").strip()
     if custom:
         return custom
-    return f"Thanks for calling {menu.restaurant.get('name', 'us')}! What can I get started for you today?"
+    return menu.template.greeting.format(name=menu.restaurant.get("name", "us"))

@@ -29,7 +29,13 @@ readable.
 }
 ```
 
-## `restaurant` block
+## `template`
+
+Top-level key: the kind of business, `"restaurant"` (default when missing) or
+`"retail"`. See `python -m ordering_agent.restaurants templates`; starters are in
+`data/templates/`. It changes the agent's wording and rules, not the file format.
+
+## `restaurant` block (the business's settings, for every template)
 
 | Field | Rule |
 |---|---|

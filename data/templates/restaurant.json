@@ -1,0 +1,169 @@
+{
+  "template": "restaurant",
+  "restaurant": {
+    "name": "Example Pizzeria",
+    "order_types": [
+      "pickup"
+    ],
+    "pickup_minutes": 20,
+    "tax_rate": 0.08,
+    "payment": {
+      "required_before_cooking": false,
+      "pay_within_minutes": 30
+    },
+    "placeholders": [
+      "tax_rate",
+      "pickup_minutes"
+    ],
+    "notes": [
+      "Italian-American pizzeria. Pizzas come in 12 and 16 inch.",
+      "For allergies, say you can't guarantee anything and suggest asking staff at pickup."
+    ]
+  },
+  "items": [
+    {
+      "id": "margherita",
+      "name": "Margherita Pizza",
+      "category": "Pizza",
+      "price": 14.0,
+      "description": "Tomato, fresh mozzarella, basil.",
+      "options": {
+        "size": {
+          "choices": {
+            "12 inch": 0,
+            "16 inch": 4.0
+          },
+          "required": true
+        }
+      },
+      "extras": {
+        "extra cheese": 2.0,
+        "mushrooms": 1.5,
+        "pepperoni": 2.0,
+        "gluten-free crust": 3.0
+      }
+    },
+    {
+      "id": "pepperoni",
+      "name": "Pepperoni Pizza",
+      "category": "Pizza",
+      "price": 16.0,
+      "description": "Tomato, mozzarella, pepperoni.",
+      "options": {
+        "size": {
+          "choices": {
+            "12 inch": 0,
+            "16 inch": 4.0
+          },
+          "required": true
+        }
+      },
+      "extras": {
+        "extra cheese": 2.0,
+        "jalapenos": 1.0,
+        "gluten-free crust": 3.0
+      }
+    },
+    {
+      "id": "veggie",
+      "name": "Garden Veggie Pizza",
+      "category": "Pizza",
+      "price": 15.0,
+      "description": "Peppers, onions, mushrooms, olives, mozzarella.",
+      "options": {
+        "size": {
+          "choices": {
+            "12 inch": 0,
+            "16 inch": 4.0
+          },
+          "required": true
+        }
+      },
+      "extras": {
+        "extra cheese": 2.0,
+        "vegan cheese": 2.5,
+        "gluten-free crust": 3.0
+      }
+    },
+    {
+      "id": "spaghetti",
+      "name": "Spaghetti Bolognese",
+      "category": "Pasta",
+      "price": 17.0,
+      "description": "Slow-cooked beef and pork ragu.",
+      "extras": {
+        "meatballs": 4.0,
+        "extra parmesan": 1.0
+      }
+    },
+    {
+      "id": "penne_vodka",
+      "name": "Penne alla Vodka",
+      "category": "Pasta",
+      "price": 16.0,
+      "description": "Creamy tomato vodka sauce. Vegetarian.",
+      "extras": {
+        "grilled chicken": 5.0,
+        "shrimp": 7.0
+      }
+    },
+    {
+      "id": "caesar",
+      "name": "Caesar Salad",
+      "category": "Salads",
+      "price": 11.0,
+      "description": "Romaine, parmesan, croutons, Caesar dressing.",
+      "extras": {
+        "grilled chicken": 5.0
+      }
+    },
+    {
+      "id": "garlic_knots",
+      "name": "Garlic Knots",
+      "category": "Sides",
+      "price": 6.0,
+      "description": "Six knots with marinara."
+    },
+    {
+      "id": "wings",
+      "name": "Chicken Wings",
+      "category": "Sides",
+      "price": 12.0,
+      "description": "Ten wings.",
+      "options": {
+        "sauce": {
+          "choices": {
+            "buffalo": 0,
+            "bbq": 0,
+            "garlic parmesan": 0
+          },
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "tiramisu",
+      "name": "Tiramisu",
+      "category": "Desserts",
+      "price": 8.0,
+      "description": "Espresso-soaked ladyfingers, mascarpone."
+    },
+    {
+      "id": "soda",
+      "name": "Fountain Soda",
+      "category": "Drinks",
+      "price": 3.0,
+      "options": {
+        "flavor": {
+          "choices": {
+            "cola": 0,
+            "diet cola": 0,
+            "lemon-lime": 0,
+            "root beer": 0
+          },
+          "required": true
+        }
+      }
+    }
+  ]
+}

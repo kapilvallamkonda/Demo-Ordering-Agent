@@ -1,7 +1,10 @@
-"""The restaurant settings staff can edit, as data.
+"""The business settings staff can edit, as data.
 
-The /manage page builds its settings form from SETTINGS, and the server validates saved
-menus against it, so a new setting is one entry here (plus whatever code reads it).
+The /manage page builds its settings form from these fields, and the server validates
+saved catalogs against them, so a new setting is one entry here (plus whatever code
+reads it). SETTINGS are shared by every kind of business; a template (templates.py) can
+change a field's label or help (`setting_overrides`) and add its own (`extra_settings`):
+use settings_for(template).
 Each field lives at `path` inside the menu's "restaurant" block ("payment.pay_within_minutes"
 is restaurant["payment"]["pay_within_minutes"]). Keys not listed here (order_types,
 placeholders) are kept as they are.
@@ -19,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 SETTINGS: list[dict] = [
-    {"path": "name", "group": "Basics", "type": "text", "label": "Restaurant name", "required": True,
+    {"path": "name", "group": "Basics", "type": "text", "label": "Business name", "required": True,
      "max_length": 80, "help": "Said in the greeting and in texts to customers."},
     {"path": "greeting", "group": "Basics", "type": "text", "label": "Greeting", "max_length": 300,
      "help": "The first thing callers hear. Leave blank for: \"Thanks for calling <name>! "
@@ -33,19 +36,31 @@ SETTINGS: list[dict] = [
     {"path": "tax_rate", "group": "Orders", "type": "percent", "label": "Sales tax", "min": 0, "max": 0.15,
      "required": True, "help": "Added to every order. Enter the percent, e.g. 8.25."},
     {"path": "payment.required_before_cooking", "group": "Payment", "type": "boolean",
-     "label": "Wait for payment before cooking",
-     "help": "On: the kitchen gets the order once the texted payment link is paid. "
+     "label": "Wait for payment before preparing orders",
+     "help": "On: you get the order once the texted payment link is paid. "
              "Off: customers can pay at pickup."},
     {"path": "payment.pay_within_minutes", "group": "Payment", "type": "integer",
      "label": "Payment link valid for (minutes)", "min": 30, "max": 1440,
      "help": "Between 30 minutes and 24 hours."},
     {"path": "notes", "group": "Instructions for the phone agent", "type": "string_list",
      "label": "Notes", "max_items": 30, "max_length": 400,
-     "help": "Anything the agent should know: cuisine, how spice levels work, allergy guidance, "
-             "what's only sold in person. One note per line."},
+     "help": "Anything the agent should know: what you sell, policies, what's only available "
+             "in person. One note per line."},
 ]
 
 BY_PATH = {f["path"]: f for f in SETTINGS}
+
+
+def settings_for(template=None) -> list[dict]:
+    """The settings form for a kind of business (templates.Template, or None for the base)."""
+    if template is None:
+        return [dict(f) for f in SETTINGS]
+    fields = [{**f, **template.setting_overrides.get(f["path"], {})} for f in SETTINGS]
+    for f in fields:
+        if f["path"] == "greeting":  # show this template's default greeting
+            f["help"] = ("The first thing callers hear. Leave blank for: "
+                         f"\"{template.greeting.format(name='<name>')}\"")
+    return fields + [dict(f) for f in template.extra_settings]
 
 
 def get_path(block: dict, path: str) -> Any:
@@ -57,12 +72,12 @@ def get_path(block: dict, path: str) -> Any:
     return cur
 
 
-def validate_settings(restaurant: Any) -> list[str]:
-    """Problems with the restaurant block, as messages naming the field."""
+def validate_settings(restaurant: Any, template=None) -> list[str]:
+    """Problems with the settings block, as messages naming the field."""
     if not isinstance(restaurant, dict):
-        return ["restaurant settings are missing"]
+        return ["business settings are missing"]
     errors = []
-    for f in SETTINGS:
+    for f in settings_for(template):
         value = get_path(restaurant, f["path"])
         label = f["label"]
         if value is None or value == "":
