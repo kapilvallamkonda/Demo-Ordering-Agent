@@ -17,14 +17,16 @@ instances of this server as you like behind a load balancer.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import html
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 import anthropic
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -51,6 +53,12 @@ WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish be
 # to finish before it is cancelled anyway.
 TOOL_FINISH_SECONDS = 30.0
 NOT_SET_UP_SECONDS = 4.0  # let "this number isn't taking orders" play before hanging up
+# Calls one business can have at once. Past this its callers hear "all our lines are busy",
+# so one busy business can't use up the server or the shared Claude rate limit.
+MAX_CALLS_PER_BUSINESS = int(os.environ.get("MAX_CALLS_PER_BUSINESS", "20"))
+CALL_TOKEN_SECONDS = 600  # a /voice answer's WebSocket URL must be used within this time
+NOT_TAKING_CALLS = "Sorry, this number isn't taking orders right now. Goodbye."
+LINES_BUSY = "Sorry, all our lines are busy right now. Please call back in a few minutes. Goodbye."
 
 # Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
 # so Twilio's defaults apply.
@@ -93,9 +101,13 @@ def relay_voice_attrs() -> dict[str, str]:
 async def lifespan(app: FastAPI):
     app.state.store = Store(os.environ.get("DATABASE_PATH", "data/phone_agent.db"))
     app.state.businesses = BusinessDirectory(app.state.store)
+    app.state.active_calls = {}  # business id -> calls in progress (this process)
     listing = app.state.businesses.listing()
-    log.info("%d business(s): %s", len(listing),
+    log.info("%d business(es): %s", len(listing),
              ", ".join(f"{r['slug']} {r['phone_number'] or '(no number)'}" for r in listing) or "none")
+    for r in listing:
+        if r["problem"]:
+            log.error("business %s is offline: %s", r["slug"], r["problem"])
     # One client shared by every call, so connections get pooled.
     app.state.client = getattr(app.state, "client", None) or anthropic.AsyncAnthropic()
     # Pay-by-text links; None means customers pay at pickup.
@@ -151,16 +163,24 @@ async def voice(request: Request) -> Response:
             log.warning("rejected /voice request with bad Twilio signature")
             raise HTTPException(status_code=403, detail="invalid signature")
 
-    catalog = request.app.state.businesses.for_number(form.get("To"))
+    try:
+        catalog = request.app.state.businesses.for_number(form.get("To"))
+    except Exception:  # never let one business's problem become a Twilio error tone
+        log.exception("call to %s: business lookup failed", form.get("To"))
+        catalog = None
     if catalog is None:
         log.warning("call to %s: no active business has this number", form.get("To"))
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, this number '
-                    "isn't taking orders right now. Goodbye.</Say><Hangup/></Response>",
-            media_type="application/xml")
+        return _say_and_hang_up(NOT_TAKING_CALLS)
+    if _active_calls(request.app, catalog.business_id) >= MAX_CALLS_PER_BUSINESS:
+        log.warning("business %s: %d calls in progress; telling a new caller the lines are busy",
+                    catalog.slug, MAX_CALLS_PER_BUSINESS)
+        return _say_and_hang_up(LINES_BUSY)
 
     greeting = PhoneAgent(catalog, client=request.app.state.client).greeting
     ws_url = f"{_ws_url(_public_base(request))}?business={catalog.business_id}"
+    token = call_token(catalog.business_id, form.get("CallSid", ""))
+    if token:
+        ws_url += f"&token={token}"
     attrs = {"url": ws_url, "welcomeGreeting": greeting, **relay_voice_attrs()}
     rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
     twiml = (
@@ -168,6 +188,47 @@ async def voice(request: Request) -> Response:
         f"<Response><Connect><ConversationRelay {rendered} /></Connect></Response>"
     )
     return Response(content=twiml, media_type="application/xml")
+
+
+def _say_and_hang_up(text: str) -> Response:
+    return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Say>'
+                            f"{escape(text)}</Say><Hangup/></Response>",
+                    media_type="application/xml")
+
+
+def _active_calls(app_: FastAPI, business_id: int) -> int:
+    return getattr(app_.state, "active_calls", {}).get(business_id, 0)
+
+
+# ---- binding a call's WebSocket to its business ---------------------------------------
+# /voice (Twilio-signed) puts a token in the WebSocket URL: an HMAC of the business id,
+# the call SID and an expiry, keyed from TWILIO_AUTH_TOKEN. /ws only starts a call whose
+# token matches the business in the URL and the call SID in Twilio's setup message, so a
+# WebSocket can't be opened for some business without a real call to it.
+
+
+def _token_key() -> bytes:
+    return hashlib.sha256(b"ws-call-token:" + TWILIO_AUTH_TOKEN.encode()).digest()
+
+
+def call_token(business_id: int, call_sid: str, now: float | None = None) -> str | None:
+    if not TWILIO_AUTH_TOKEN:
+        return None  # local development without Twilio
+    expires = int((now or time.time()) + CALL_TOKEN_SECONDS)
+    sig = hmac.new(_token_key(), f"{business_id}.{call_sid}.{expires}".encode(), hashlib.sha256)
+    return f"{expires}.{sig.hexdigest()[:32]}"
+
+
+def check_call_token(token: str, business_id: int, call_sid: str, now: float | None = None) -> bool:
+    if not TWILIO_AUTH_TOKEN:
+        return True
+    try:
+        expires, sig = token.split(".")
+        expires_at = int(expires)
+    except ValueError:
+        return False
+    want = hmac.new(_token_key(), f"{business_id}.{call_sid}.{expires_at}".encode(), hashlib.sha256)
+    return hmac.compare_digest(want.hexdigest()[:32], sig) and (now or time.time()) <= expires_at
 
 
 def _require_token(request: Request) -> None:
@@ -300,6 +361,8 @@ class RelayCall:
         self.call_id: str | None = None
         self.store: Store | None = None
         self._unrecorded: list[str] = []  # reply text sent but not yet in the transcript
+        self.business_id: int | None = None  # set once the call is accepted (counted as active)
+        self.slug: str | None = None
 
     def flush_spoken(self, suffix: str = "") -> None:
         text = "".join(self._unrecorded).strip()
@@ -319,6 +382,12 @@ class RelayCall:
     async def send(self, payload: dict) -> None:
         await self.ws.send_text(json.dumps(payload))
 
+    async def decline(self, text: str) -> None:
+        """Say a short message and end the call (no agent is started)."""
+        await self.send({"type": "text", "last": True, "token": text})
+        await asyncio.sleep(NOT_SET_UP_SECONDS)
+        await self.send({"type": "end"})
+
     async def run(self) -> None:
         try:
             async for raw in self.ws.iter_text():
@@ -332,10 +401,12 @@ class RelayCall:
             pass
         finally:
             await self.cancel_reply()
+            if self.business_id is not None:
+                counts = self.ws.app.state.active_calls
+                counts[self.business_id] = max(0, counts.get(self.business_id, 1) - 1)
             if self.agent:
                 s = self.agent.session
-                log.info("call %s ended; order placed=%s number=%s", s.call_id, s.order.placed,
-                         s.order_number)
+                log.info("call %s for %s ended; order number=%s", s.call_id, self.slug, s.order_number)
                 self.record("event", "Call ended" + (f"; order #{s.order_number} placed"
                                                      if s.order_number else "; no order placed"))
                 if self.store and self.call_id:
@@ -348,28 +419,39 @@ class RelayCall:
         kind = msg.get("type")
         if kind == "setup":
             app_state = self.ws.app.state
-            catalog = self.business_for_call(app_state.businesses, msg)
+            try:
+                catalog = self.business_for_call(app_state.businesses, msg)
+            except Exception:
+                log.exception("call %s: business lookup failed", msg.get("callSid"))
+                catalog = None
             if catalog is None:
-                await self.send({"type": "text", "last": True,
-                                 "token": "Sorry, this number isn't taking orders right now. Goodbye."})
-                await asyncio.sleep(NOT_SET_UP_SECONDS)
-                await self.send({"type": "end"})
-                return
-            self.agent = PhoneAgent(
-                catalog,
-                client=app_state.client,
-                store=app_state.store,
-                call_id=msg.get("callSid"),
-                caller_phone=msg.get("from"),
-                payments=app_state.payments,
-                pos=getattr(app_state, "pos", None),
-            )
+                return await self.decline(NOT_TAKING_CALLS)
+            if _active_calls(self.ws.app, catalog.business_id) >= MAX_CALLS_PER_BUSINESS:
+                log.warning("business %s: too many calls; declining call %s", catalog.slug, msg.get("callSid"))
+                return await self.decline(LINES_BUSY)
+            try:
+                self.agent = PhoneAgent(
+                    catalog,
+                    client=app_state.client,
+                    store=app_state.store,
+                    call_id=msg.get("callSid"),
+                    caller_phone=msg.get("from"),
+                    payments=app_state.payments,
+                    pos=getattr(app_state, "pos", None),
+                )
+            except Exception:
+                log.exception("business %s: couldn't start the agent for call %s", catalog.slug,
+                              msg.get("callSid"))
+                return await self.decline(NOT_TAKING_CALLS)
+            self.business_id, self.slug = catalog.business_id, catalog.slug
+            app_state.active_calls[self.business_id] = app_state.active_calls.get(self.business_id, 0) + 1
             self.agent.on_tool = self.record_tool
             self.call_id, self.store = msg.get("callSid"), app_state.store
             if self.call_id:
                 try:
-                    self.store.start_call(self.call_id, self.agent.session.order.customer_phone
-                                          or msg.get("from"), catalog.business_id)
+                    session = self.agent.session
+                    caller = (session.order.customer_phone if session.order else None) or msg.get("from")
+                    self.store.start_call(self.call_id, caller, catalog.business_id)
                 except Exception:
                     log.exception("couldn't record call start")
             self.record("agent", self.agent.greeting)
@@ -400,17 +482,28 @@ class RelayCall:
         self.record("tool", f"{name}({args_text}) {'ERROR ' if is_error else ''}-> {result}")
 
     def business_for_call(self, directory: BusinessDirectory, setup: dict) -> Catalog | None:
-        """The business /voice chose (in the URL), cross-checked with the dialed number."""
+        """The business /voice chose (in the URL). The call is refused unless the URL's
+        token proves /voice issued it for this call, and the dialed number (if Twilio sent
+        one) belongs to the same business."""
+        call_sid = setup.get("callSid") or ""
         raw = self.ws.query_params.get("business", "")
-        catalog = directory.get(int(raw), active_only=True) if raw.isdigit() else None
-        dialed = directory.for_number(setup.get("to"))
+        if not raw.isdigit():
+            log.warning("call %s: no business in the WebSocket URL", call_sid)
+            return None
+        business_id = int(raw)
+        if not check_call_token(self.ws.query_params.get("token", ""), business_id, call_sid):
+            log.warning("call %s: refused, missing or bad call token for business %s", call_sid, business_id)
+            return None
+        catalog = directory.get(business_id, active_only=True)
         if catalog is None:
-            catalog = dialed  # e.g. an old URL without the parameter
-        elif dialed is not None and dialed.business_id != catalog.business_id:
-            log.warning("call %s: URL says business %s but %s was dialed (business %s)",
-                        setup.get("callSid"), catalog.business_id, setup.get("to"), dialed.business_id)
-        if catalog is None:
-            log.warning("call %s to %s: no business", setup.get("callSid"), setup.get("to"))
+            log.warning("call %s: business %s isn't taking calls", call_sid, business_id)
+            return None
+        if setup.get("to"):
+            dialed = directory.for_number(setup.get("to"))
+            if dialed is None or dialed.business_id != business_id:
+                log.warning("call %s: refused, URL says business %s but %s was dialed",
+                            call_sid, business_id, setup.get("to"))
+                return None
         return catalog
 
     async def cancel_reply(self) -> None:
@@ -448,7 +541,7 @@ class RelayCall:
                 self.flush_spoken("[cut off]")
             raise
         except Exception:
-            log.exception("agent failed")
+            log.exception("call %s for %s: agent failed", self.call_id, self.slug)
             self.flush_spoken("[error] Sorry, something went wrong.")
             await self.send({"type": "text", "token": "Sorry, something went wrong.", "last": True})
             return

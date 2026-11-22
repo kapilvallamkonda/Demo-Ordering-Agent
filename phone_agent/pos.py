@@ -44,6 +44,8 @@ from .storage import Store
 log = logging.getLogger("phone_agent.pos")
 
 RETRY_DELAYS = (5, 30, 120, 600)  # seconds between attempts after the first one fails
+PER_BUSINESS_JOBS = 2  # POS jobs one business can have running at once
+BUSY_RECHECK = 2.0  # seconds before a job that had to wait for its business's slot tries again
 RESUME_HOURS = 6  # on startup, resend orders from this many hours back that never made it
 STATE_MAX_AGE = 3600  # a connect link works for an hour
 REFRESH_MARGIN = 3 * 24 * 3600  # refresh an access token this long before it expires
@@ -277,11 +279,15 @@ def check_state(state: str, provider: str, now: float | None = None) -> int:
 
 
 class PosHub:
-    """Loads connections (refreshing tokens), and sends orders in the background."""
+    """Loads connections (refreshing tokens), and sends orders in the background.
+
+    Isolation: jobs never sleep in a worker (retries wait on timers), and one business can
+    have at most PER_BUSINESS_JOBS running at once, so a business whose POS is slow or down
+    can't hold up other businesses' orders."""
 
     def __init__(self, store: Store, directory, providers: dict[str, Provider],
                  retry_delays: tuple[float, ...] = RETRY_DELAYS, workers: int = 4,
-                 run_inline: bool = False):
+                 run_inline: bool = False, per_business: int = PER_BUSINESS_JOBS):
         self.store = store
         self.directory = directory  # businesses.BusinessDirectory
         self.providers = providers
@@ -292,6 +298,9 @@ class PosHub:
         self._locks: dict[int, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._refresh_lock = threading.Lock()  # refresh tokens can be single-use
+        self.per_business = per_business
+        self._running: dict[int, int] = {}  # business id -> jobs running
+        self._running_guard = threading.Lock()
 
     # connections
 
@@ -343,49 +352,68 @@ class PosHub:
             self.store.set_pos_status(order_id, "held")
             return
         self.store.set_pos_status(order_id, "pending")
-        self._run(self._send_with_retries, order_id)
+        self._run(self._send_attempt, order_id, 0)
 
     def order_paid(self, order_id: int) -> None:
         """The payment link was paid: record it on the POS (if the order is there already;
         otherwise the send includes it)."""
-        self._run(self._sync_payment, order_id)
+        self._run(self._payment_attempt, order_id, 0)
 
     def resume(self) -> int:
         """Resend orders from the last few hours that never reached their POS."""
         ids = self.store.orders_to_send(time.time() - RESUME_HOURS * 3600)
         for oid in ids:
-            self._run(self._send_with_retries, oid)
+            self._run(self._send_attempt, oid, 0)
         return len(ids)
 
     def retry(self, order_id: int) -> None:
         self.store.set_pos_status(order_id, "pending")
-        self._run(self._send_with_retries, order_id)
+        self._run(self._send_attempt, order_id, 0)
 
-    def _run(self, fn, *args) -> None:
+    # scheduling: fn(order_id, attempt) runs on the pool, gated per business
+
+    def _run(self, fn, order_id: int, attempt: int, delay: float = 0) -> None:
         if self.run_inline:
-            fn(*args)
+            self._guard(fn, order_id, attempt)  # tests: no waiting, no threads
+        elif delay:
+            timer = threading.Timer(delay, self._run, (fn, order_id, attempt))
+            timer.daemon = True
+            timer.start()
         else:
-            self._pool.submit(self._guard, fn, *args)
+            self._pool.submit(self._guard, fn, order_id, attempt)
 
-    @staticmethod
-    def _guard(fn, *args) -> None:
+    def _guard(self, fn, order_id: int, attempt: int) -> None:
+        rec = None if self.run_inline else self.store.order_for_pos(order_id)
+        business = rec["business_id"] if rec else None  # inline (tests): no per-business gating
+        with self._running_guard:
+            busy = business is not None and self._running.get(business, 0) >= self.per_business
+            if not busy and business is not None:
+                self._running[business] = self._running.get(business, 0) + 1
+        if busy:
+            self._run(fn, order_id, attempt, delay=BUSY_RECHECK)  # let other businesses' jobs run
+            return
         try:
-            fn(*args)
+            fn(order_id, attempt)
         except Exception:
-            log.exception("POS job %s%r crashed", fn.__name__, args)
+            log.exception("POS job %s(order id %s) crashed", fn.__name__, order_id)
+        finally:
+            if business is not None:
+                with self._running_guard:
+                    self._running[business] = max(0, self._running.get(business, 1) - 1)
+
+    def _retry_later(self, fn, order_id: int, attempt: int, what: str) -> None:
+        if attempt < len(self.retry_delays):
+            self._run(fn, order_id, attempt + 1, delay=self.retry_delays[attempt])
+        else:
+            log.error("order id %s: gave up %s after %d attempts", order_id, what, attempt + 1)
 
     def _lock(self, order_id: int) -> threading.Lock:
         with self._locks_guard:
             return self._locks.setdefault(order_id, threading.Lock())
 
-    def _send_with_retries(self, order_id: int) -> None:
-        delays = (0, *self.retry_delays)
-        for i, delay in enumerate(delays):
-            if delay:
-                time.sleep(delay)
-            if self.send(order_id) != "retry":
-                return
-        log.error("order id %s: gave up sending to POS after %d attempts", order_id, len(delays))
+    def _send_attempt(self, order_id: int, attempt: int) -> None:
+        if self.send(order_id) == "retry":
+            self._retry_later(self._send_attempt, order_id, attempt, "sending to the POS")
 
     def send(self, order_id: int) -> str:
         """One attempt. Returns "sent", "skipped", "failed" (permanent) or "retry"."""
@@ -425,12 +453,9 @@ class PosHub:
                 log.exception("order id %s: POS send crashed", order_id)
                 return "retry"
 
-    def _sync_payment(self, order_id: int) -> None:
-        for delay in (0, *self.retry_delays):
-            if delay:
-                time.sleep(delay)
-            if self.record_payment(order_id) != "retry":
-                return
+    def _payment_attempt(self, order_id: int, attempt: int) -> None:
+        if self.record_payment(order_id) == "retry":
+            self._retry_later(self._payment_attempt, order_id, attempt, "recording the payment on the POS")
 
     def record_payment(self, order_id: int) -> str:
         """One attempt at recording the online payment on the POS. Returns "done" or "retry"."""

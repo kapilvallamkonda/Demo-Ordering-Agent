@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -28,16 +29,23 @@ from .catalog import Catalog, CatalogError, parse_catalog
 from .order import OrderError, normalize_phone
 from .storage import Store, BusinessRow
 
+log = logging.getLogger("phone_agent.businesses")
+
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class BusinessDirectory:
     """Looks up businesses and their current catalog. Parsed catalogs are cached by catalog id, so
-    each call costs one small query, and a newly published catalog is used on the next call."""
+    each call costs one small query, and a newly published catalog is used on the next call.
+
+    Isolation: a catalog that can't be loaded (say, its template was removed) only takes
+    its own business offline. It's logged, reported in listing() as "broken", and every
+    other business keeps working."""
 
     def __init__(self, store: Store):
         self.store = store
         self._catalogs: dict[int, Catalog] = {}
+        self._broken: dict[int, str] = {}  # catalog id -> why it couldn't be loaded
         self._lock = threading.Lock()
 
     def for_number(self, dialed: str | None) -> Catalog | None:
@@ -65,16 +73,37 @@ class BusinessDirectory:
     def _catalog(self, row: BusinessRow | None, require_active: bool = True) -> Catalog | None:
         if row is None or row.catalog_id is None or (require_active and not row.active):
             return None
+        return self._load(row, row.catalog_id)
+
+    def _load(self, row: BusinessRow, catalog_id: int) -> Catalog | None:
         with self._lock:
-            catalog = self._catalogs.get(row.catalog_id)
+            catalog = self._catalogs.get(catalog_id)
+            if catalog is None and catalog_id in self._broken:
+                return None
         if catalog is None:
-            payload = self.store.catalog_payload(row.catalog_id)
+            payload = self.store.catalog_version_payload(row.id, catalog_id)
             if payload is None:
                 return None
-            catalog = parse_catalog(payload, business_id=row.id, slug=row.slug, catalog_id=row.catalog_id)
+            try:
+                catalog = parse_catalog(payload, business_id=row.id, slug=row.slug, catalog_id=catalog_id)
+            except CatalogError as e:
+                log.error("business %s: catalog version %s can't be loaded, so it's offline: %s",
+                          row.slug, catalog_id, e)
+                with self._lock:
+                    self._broken[catalog_id] = str(e)
+                return None
             with self._lock:
-                self._catalogs[row.catalog_id] = catalog
+                self._catalogs[catalog_id] = catalog
         return catalog
+
+    def problem(self, row: BusinessRow) -> str | None:
+        """Why this business can't take calls, or None."""
+        if row.catalog_id is None:
+            return "no catalog"
+        if self._load(row, row.catalog_id) is None:
+            with self._lock:
+                return self._broken.get(row.catalog_id, "catalog missing")
+        return None
 
     def catalog_version(self, business_id: int, catalog_id: int | None) -> Catalog | None:
         """The catalog an old order was taken from (or the current one if that's unknown)."""
@@ -83,23 +112,17 @@ class BusinessDirectory:
             return None
         if catalog_id is None or catalog_id == row.catalog_id:
             return self._catalog(row, require_active=False)
-        with self._lock:
-            catalog = self._catalogs.get(catalog_id)
-        if catalog is None:
-            payload = self.store.catalog_payload(catalog_id)
-            if payload is None:
-                return self._catalog(row, require_active=False)
-            catalog = parse_catalog(payload, business_id=row.id, slug=row.slug, catalog_id=catalog_id)
-            with self._lock:
-                self._catalogs[catalog_id] = catalog
-        return catalog
+        # Only this business's own versions (the id comes from its order).
+        return self._load(row, catalog_id) or self._catalog(row, require_active=False)
 
     def listing(self) -> list[dict]:
         out = []
         for row in self.store.businesses():
             catalog = self._catalog(row, require_active=False)
+            problem = self.problem(row)
             out.append({"id": row.id, "slug": row.slug, "phone_number": row.phone_number,
-                        "active": row.active, "name": catalog.settings.get("name") if catalog else None,
+                        "active": row.active, "status": "broken" if problem else "ok", "problem": problem,
+                        "name": catalog.settings.get("name") if catalog else None,
                         "template": catalog.template_id if catalog else None,
                         "catalog_items": len(catalog.items) if catalog else 0})
         return out
@@ -156,7 +179,8 @@ def main(argv: list[str] | None = None, store: Store | None = None) -> int:
             for r in directory.listing():
                 print(f"{r['id']:>3}  {r['slug']:<24} {r['phone_number'] or '-':<14} "
                       f"{'active' if r['active'] else 'inactive':<9} {r['template'] or '-':<11} "
-                      f"{r['name']} ({r['catalog_items']} items)")
+                      f"{r['name']} ({r['catalog_items']} items)"
+                      + (f"  BROKEN: {r['problem']}" if r["problem"] else ""))
         elif args.cmd == "templates":
             from .templates import TEMPLATES
 

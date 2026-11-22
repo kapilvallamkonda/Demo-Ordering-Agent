@@ -1,112 +1,25 @@
-"""Tool definitions the model can call, plus the dispatcher that runs them.
+"""Running tools on a call: the tools every call has (end_call), the tool list for a
+business (its template's modules), and the dispatcher.
 
-Requests stream with `eager_input_streaming`, so the API doesn't validate tool
-inputs for us. Every handler checks its input types itself, and Order enforces
-the business rules.
+The dispatcher never raises for bad input: errors go back to the model as the tool's
+result so it can ask the caller. Module tools are defined in phone_agent/modules/.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from .order import Order, OrderError
-from .payments import PaymentService
-from .storage import Store
-
-if TYPE_CHECKING:
-    from .pos import PosHub
+from .modules import MODULES, modules_for
+from .session import BadInput, CallSession, ToolError, tool
 
 log = logging.getLogger("phone_agent.tools")
 
+__all__ = ["CallSession", "COMMON_TOOLS", "TOOLS", "run_tool", "start_session", "tools_for"]
 
-def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
-    return {
-        "name": name,
-        "description": description,
-        "eager_input_streaming": True,
-        "input_schema": {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": False,
-        },
-    }
-
-
-TOOLS: list[dict] = [
-    _tool(
-        "add_item",
-        "Add an item to the caller's order. Only call once the caller has chosen every "
-        "required option. If the tool returns an error, ask the caller to resolve it.",
-        {
-            "item_id": {"type": "string", "description": "item_id exactly as listed."},
-            "quantity": {"type": "integer", "minimum": 1, "description": "How many. Defaults to 1."},
-            "options": {
-                "type": "object",
-                "description": "Option choices keyed by option name, e.g. {\"size\": \"16 inch\"}.",
-                "additionalProperties": {"type": "string"},
-            },
-            "extras": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Paid extras exactly as listed, e.g. [\"extra cheese\"].",
-            },
-            "notes": {
-                "type": "string",
-                "description": "Free-text notes for preparing this item, e.g. 'well done', 'no onions', "
-                "'gift wrap'.",
-            },
-        },
-        ["item_id"],
-    ),
-    _tool(
-        "remove_item",
-        "Remove a line from the order. Get line_id from view_order or an earlier add_item result.",
-        {"line_id": {"type": "integer"}},
-        ["line_id"],
-    ),
-    _tool(
-        "update_quantity",
-        "Change how many of an existing line the caller wants. Quantity 0 removes the line.",
-        {"line_id": {"type": "integer"}, "quantity": {"type": "integer", "minimum": 0}},
-        ["line_id", "quantity"],
-    ),
-    _tool(
-        "view_order",
-        "Get the current order: lines with line_ids, subtotal, tax and total.",
-        {},
-        [],
-    ),
-    _tool(
-        "set_customer_name",
-        "Record the name the order is under.",
-        {"name": {"type": "string"}},
-        ["name"],
-    ),
-    _tool(
-        "set_customer_phone",
-        "Record the mobile number to text the order details and payment link to. Use when the "
-        "caller wants a different number than the one they're calling from, or caller ID is missing.",
-        {"phone": {"type": "string", "description": "The number as the caller said it, all digits."}},
-        ["phone"],
-    ),
-    _tool(
-        "place_order",
-        "Submit the order. Only call after reading the full order and total back to the caller "
-        "and hearing them confirm it. If payment links are on, this texts the order details and "
-        "a secure payment link to the customer's phone; the result says whether it was sent.",
-        {
-            "caller_confirmed": {
-                "type": "boolean",
-                "description": "True only if the caller explicitly confirmed the read-back order.",
-            }
-        },
-        ["caller_confirmed"],
-    ),
-    _tool(
+COMMON_TOOLS: list[dict] = [
+    tool(
         "end_call",
         "Hang up after you have said goodbye. Use when the caller is done or asks to end the call.",
         {},
@@ -114,160 +27,40 @@ TOOLS: list[dict] = [
     ),
 ]
 
-
-# What each module adds to a call. The agent offers the tools of its template's modules,
-# plus COMMON_TOOLS. "bookings" will add its own (find_available_times, book_appointment ...).
-COMMON_TOOLS = ("end_call",)
-MODULE_TOOLS: dict[str, tuple[str, ...]] = {
-    "orders": ("add_item", "remove_item", "update_quantity", "view_order", "set_customer_name",
-               "set_customer_phone", "place_order"),
-}
+# Every built tool, modules first (in module order) then the common ones.
+TOOLS: list[dict] = [t for m in MODULES.values() for t in m.tools] + COMMON_TOOLS
 
 
-def tools_for(modules) -> list[dict]:
-    """Tool schemas for a template's modules, in the order of TOOLS."""
-    names = set(COMMON_TOOLS)
-    for m in modules:
-        names.update(MODULE_TOOLS[m])
-    return [t for t in TOOLS if t["name"] in names]
+def tools_for(module_names) -> list[dict]:
+    """Tool schemas for a business: its modules' tools plus the common ones."""
+    return [t for m in modules_for(module_names) for t in m.tools] + COMMON_TOOLS
 
 
-@dataclass
-class CallSession:
-    """Everything one call/conversation owns."""
-
-    order: Order
-    store: Store | None = None
-    call_id: str | None = None
-    payments: PaymentService | None = None
-    pos: "PosHub | None" = None  # sends placed orders to the business's point of sale
-    order_number: int | None = None  # per-business number, what the caller hears
-    order_id: int | None = None  # internal row id
-    end_requested: bool = False
-    log: list[dict] = field(default_factory=list)
-
-
-def _place_order(session: CallSession) -> dict:
-    order = session.order
-    payments = session.payments if session.store is not None else None
-    if payments and not order.customer_phone:
-        raise OrderError("Ask for a mobile number to text the order details and payment link to, "
-                         "then call set_customer_phone.")
-    order.mark_placed()
-    catalog = order.catalog
-    required = bool(payments) and catalog.payment_required
-    if session.store is not None:
-        saved = session.store.save(
-            order, call_id=session.call_id,
-            status="awaiting_payment" if required else "confirmed",
-            payment_status="unpaid" if payments else "not_requested",
-        )
-        session.order_number, session.order_id = saved.number, saved.id
-        if session.pos is not None:
-            try:
-                session.pos.order_placed(saved.id, catalog.business_id)  # in the background
-            except Exception:
-                log.exception("couldn't queue order %s for the POS", saved.number)
-    result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
-                    "ready_in_minutes": catalog.settings.get("pickup_minutes")}
-    if not payments:
-        result["payment"] = "pay at pickup"
-        return result
-    try:
-        link = payments.request_payment(order, session.order_number)
-    except Exception:
-        log.exception("payment link for order %s failed", session.order_number)
-        result["payment"] = {
-            "link_sent": False,
-            "tell_caller": "The text with the payment link couldn't be sent. They can pay at pickup"
-            + ("; the kitchen will start the order once they pay at the counter." if required else "."),
-        }
-        return result
-    session.store.set_payment_link(session.order_id, link.id, link.url)
-    result["payment"] = {
-        "link_sent": True,
-        "texted_to_number_ending": order.customer_phone[-4:],
-        "required_before_cooking": required,
-        "link_valid_minutes": catalog.pay_within_minutes,
-    }
-    if required:
-        result["ready_in_minutes"] = f"{catalog.settings.get('pickup_minutes')} after payment"
-    return result
-
-
-class _BadInput(Exception):
-    pass
-
-
-def _req(args: dict, key: str, typ: type | tuple[type, ...]) -> Any:
-    if key not in args:
-        raise _BadInput(f"missing required field '{key}'")
-    return _opt(args, key, typ, None)
-
-
-def _opt(args: dict, key: str, typ: type | tuple[type, ...], default: Any) -> Any:
-    if key not in args or args[key] is None:
-        return default
-    val = args[key]
-    # bool is a subclass of int; don't accept true/false as a number
-    if typ is int and isinstance(val, bool):
-        raise _BadInput(f"field '{key}' must be an integer")
-    if not isinstance(val, typ):
-        raise _BadInput(f"field '{key}' has the wrong type")
-    return val
+def start_session(session: CallSession) -> CallSession:
+    """Let each of the business's modules set up its per-call state."""
+    for m in modules_for(session.catalog.template.modules):
+        if m.start:
+            m.start(session)
+    return session
 
 
 def run_tool(session: CallSession, name: str, args: Any) -> tuple[str, bool]:
     """Execute one tool call. Returns (result_text, is_error). Never raises for bad input."""
     if not isinstance(args, dict):
         return json.dumps({"INVALID_JSON": json.dumps(args)}), True
-    allowed = set(COMMON_TOOLS).union(*(MODULE_TOOLS.get(m, ()) for m in session.order.catalog.template.modules))
-    if name not in allowed:
-        return f"Unknown tool '{name}'.", True
-    order = session.order
     try:
-        if name == "add_item":
-            options = _opt(args, "options", dict, {})
-            extras = _opt(args, "extras", list, [])
-            if not all(isinstance(k, str) and isinstance(v, str) for k, v in options.items()):
-                raise _BadInput("options must map strings to strings")
-            if not all(isinstance(e, str) for e in extras):
-                raise _BadInput("extras must be a list of strings")
-            line = order.add_item(
-                item_id=_req(args, "item_id", str),
-                quantity=_opt(args, "quantity", int, 1),
-                options=options,
-                extras=extras,
-                notes=_opt(args, "notes", str, ""),
-            )
-            result = {"added": line.describe(), "line_id": line.line_id, "line_total": line.total,
-                      "order_total": order.total}
-        elif name == "remove_item":
-            line = order.remove_item(_req(args, "line_id", int))
-            result = {"removed": line.describe(), "order_total": order.total}
-        elif name == "update_quantity":
-            line = order.update_quantity(_req(args, "line_id", int), _req(args, "quantity", int))
-            result = {"updated": line.describe() if line else "removed", "order_total": order.total}
-        elif name == "view_order":
-            result = order.summary()
-        elif name == "set_customer_name":
-            order.set_customer(_req(args, "name", str))
-            result = {"customer_name": order.customer_name}
-        elif name == "set_customer_phone":
-            order.set_phone(_req(args, "phone", str))
-            result = {"customer_phone": order.customer_phone}
-        elif name == "place_order":
-            if _req(args, "caller_confirmed", bool) is not True:
-                raise OrderError("Read the order and total back and get the caller's confirmation first.")
-            result = _place_order(session)
-        elif name == "end_call":
+        if name == "end_call":
             session.end_requested = True
             result = {"ok": True}
         else:
-            return f"Unknown tool '{name}'.", True
-    except _BadInput as e:
+            module = next((m for m in modules_for(session.catalog.template.modules)
+                           if name in m.tool_names), None)
+            if module is None:
+                return f"Unknown tool '{name}'.", True
+            result = module.handle(session, name, args)
+    except BadInput as e:
         return f"Invalid input: {e}.", True
-    except OrderError as e:
+    except ToolError as e:
         return str(e), True
 
     session.log.append({"tool": name, "args": args, "result": result})

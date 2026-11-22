@@ -37,6 +37,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 | `data/businesses/<slug>.json` | One catalog file per business (template, settings and items), e.g. `hyderabad-house.json`, a restaurant with about 210 items. Optional `settings.notes` lines are added to the prompt. Live calls use the copy stored in the database; these files are what you load in. |
 | `.claude/skills/add-business/` | Claude Code skill (`/add-business`) that onboards a business end to end: menu or product photos to a catalog file, checks, Twilio number, registration on Fly, verification. Includes `scripts/check_catalog.py` and the catalog format guide. |
 | `tests/fixtures/catalog.json` | Small fixed catalog the tests use, so they don't depend on real ones. |
+| `phone_agent/modules/` | What a call can do: one module per capability (`orders.py` now; bookings coming soon), each with its tools, rules, prompt section and per-call state. Add a module here. |
+| `phone_agent/session.py` | Per-call state and the helpers modules use for tools. |
 | `phone_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
 | `phone_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
 | `phone_agent/prompts.py` | The phone-voice system prompt. |
@@ -189,6 +191,7 @@ They include a full phone order over the WebSocket.
 | `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |
 | `CATALOG_PATH` | `data/businesses/hyderabad-house.json` | Catalog file for the terminal chat when `--business` isn't given. Live calls use catalogs in the database. |
 | `ADMIN_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
+| `MAX_CALLS_PER_BUSINESS` | `20` | Calls one business can have at once; past this its callers hear "all our lines are busy", so one busy business can't crowd out the others. |
 | `POS_SECRET_KEY` | unset | Turns on POS integrations and encrypts their tokens. A Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it safe: without it every business must reconnect. |
 | `SQUARE_APPLICATION_ID`, `SQUARE_APPLICATION_SECRET` | unset | Square app credentials (Developer Console), for connect links. |
 | `SQUARE_ENVIRONMENT` | `sandbox` | `sandbox` or `production`. |
@@ -221,7 +224,7 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
   done in Stripe.
 - Hang-up timing after the goodbye is estimated from the word count (`server.py`). Tune it
   after real calls.
-- `/ws` rejects a bad Twilio signature, but doesn't yet require one to be present.
+- Some resources are still shared by all businesses (Anthropic key, Stripe account, SMS number, one SQLite file); see the design doc, section 5.
 - DTMF (keypad) input is ignored.
 - Square and Clover integrations are tested against fake APIs only so far; Toast needs
   its partner program first (`docs/toast-partner-application.md`).

@@ -21,5 +21,11 @@ Pure refactors, test-only changes and typo fixes don't need a design update.
 - Setup: `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt`
 - Tests: `python -m pytest` (no API key needed; uses `tests/fakes.py`)
 - Terminal chat: `python -m phone_agent.cli` (needs `ANTHROPIC_API_KEY`)
-- Business rules belong in `phone_agent/order.py`, not in the prompt.
+- Business rules belong in code (the module's own code, e.g. `phone_agent/order.py` for
+  orders), not in the prompt. New capabilities are modules (`phone_agent/modules/`); new
+  kinds of business are templates (`phone_agent/templates.py`).
+- Keep businesses isolated (design doc section 5): anything stored per business is keyed
+  by `business_id` and queried with it; one business's bad data, load or failing
+  integration must never affect another's calls (no shared blocking work, per-business
+  limits). Add a test in `tests/test_isolation.py` for new shared resources.
 - New settings go in `.env.example`, the README configuration table, and the design doc.

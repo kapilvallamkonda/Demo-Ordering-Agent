@@ -11,11 +11,12 @@ import re
 from dataclasses import dataclass, field
 
 from .catalog import Catalog
+from .session import ToolError
 
 MAX_QUANTITY = 50
 
 
-class OrderError(ValueError):
+class OrderError(ToolError):
     """A request the order can't satisfy; the message is shown to the model."""
 
 

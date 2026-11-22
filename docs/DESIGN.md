@@ -1,6 +1,6 @@
 # High-Level Design: Phone Agent for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (renamed to Phone Agent).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (modules and isolation between businesses).
 
 ## 1. Goal
 
@@ -54,9 +54,11 @@ flowchart LR
 | Voice webhook | `phone_agent/server.py` `/voice` | Finds the business by the dialed number (`To`) and answers with that business's greeting and TwiML that connects the call to ConversationRelay (business id in the `/ws` URL), including voice settings. Unknown numbers get a short apology and hang-up. |
 | Business directory | `phone_agent/businesses.py` | Maps a dialed number or id to the business's current catalog (parsed catalogs cached by catalog version). Also the admin commands: add a business, publish a catalog, set its number, activate/deactivate. |
 | Relay session | `server.py` `RelayCall`, `/ws` | One per call. Turns relay messages into agent turns, streams reply text back, handles interruptions and hang-up. |
-| Agent | `phone_agent/agent.py` | Streaming Claude tool-use loop for one call. Yields text chunks as they arrive. |
-| System prompt | `phone_agent/prompts.py` | Speaking style for phone, ordering procedure, the full catalog. |
-| Tools | `phone_agent/tools.py` | Tool schemas for Claude, input type checks, dispatch to the order. |
+| Agent | `phone_agent/agent.py` | Streaming Claude tool-use loop for one call. Yields text chunks as they arrive. Knows nothing about orders: it gets its tools and prompt from the business's modules. |
+| Modules | `phone_agent/modules/` (`orders.py`; registry in `__init__.py`) | What a call can do. Each module owns its tools, their handlers, its prompt section and its per-call state. Built: `orders`. Coming soon: `bookings`. Section 15. |
+| Call session | `phone_agent/session.py` | Per-call state (`CallSession`), the tool-schema helper, tool input checks, `ToolError`. |
+| System prompt | `phone_agent/prompts.py` | The template's role and how to speak on the phone, then each module's section, then the catalog. |
+| Tools | `phone_agent/tools.py` | The tools every call has (`end_call`), the tool list for a business, and the dispatcher that routes a tool call to its module. |
 | Order | `phone_agent/order.py` | Cart state and all business rules: valid items, required options, extras, quantities, tax, totals. |
 | Catalog | `phone_agent/catalog.py`; catalogs stored per business in the database, loaded from `data/businesses/<slug>.json` files | Business info and settings, optional business notes, and catalog, rendered into the prompt deterministically. Validated before it's saved. Items sold in several versions (e.g. chicken/fish/shrimp) are one item with a required option priced as deltas from the cheapest version. Tests use `tests/fixtures/catalog.json`. |
 | Payments | `phone_agent/payments.py` | Creates a Stripe Checkout link per order, texts it with the order details via Twilio, applies Stripe webhook events (paid / expired) to the order. |
@@ -167,6 +169,25 @@ is how to find out why a call didn't produce an order.
   `ord`); the Twilio number's voice webhook points there.
   Local development still works with uvicorn plus a tunnel.
 
+### Isolation between businesses
+
+One deployment serves every business, so nothing one business does or suffers may
+reach another:
+
+| Shared thing | How businesses are kept apart |
+|---|---|
+| Data | Every business-owned row has `business_id`; queries take it as a parameter. Order numbers count per business. A catalog version is only looked up within its business. |
+| Access | Staff only see their businesses (`user_businesses`; others' ids return 404). POS connect links are signed for one business. The operator token sees all. |
+| Calls | A call's WebSocket is bound to the business `/voice` chose for that call (signed token) and must match the dialed number. Each call has its own agent, order and history. |
+| Bad data | A catalog that can't be loaded takes only its own business offline. Catalogs are validated before they're saved. |
+| Capacity | `MAX_CALLS_PER_BUSINESS` (default 20) concurrent calls per business, so one busy business can't use up the server's connections or the shared Claude rate limit. |
+| Background work | POS jobs never sleep in a worker (retries wait on timers), and a business has at most 2 POS jobs running, so a slow or failing POS only delays its own orders. |
+| Errors | Lookups and agent start-up are wrapped per call; logs name the business. |
+
+Still shared, and the limits that come with it (section 16): one Anthropic API key and
+rate limit, one Stripe account and one SMS sender number (phase 3), one SQLite file with
+one lock, and one machine.
+
 ## 6. Data model
 
 - **Business:** id, slug (e.g. `hyderabad-house`), the Twilio number callers dial
@@ -248,9 +269,12 @@ hours, notes) live in each business's catalog, not in environment variables.
 ## 9. Security
 
 - `/voice` validates Twilio's request signature when `TWILIO_AUTH_TOKEN` is set.
-- `/ws` rejects a bad signature (checked over the full URL, including the business
-  id), but doesn't yet require one (open issue). The business id in the URL is
-  cross-checked against the dialed number in the setup message; a mismatch is logged.
+- `/ws` only starts a call that `/voice` issued: the WebSocket URL carries a token (HMAC
+  of business id, call SID and expiry, keyed from `TWILIO_AUTH_TOKEN`, valid 10 minutes)
+  that must match the business in the URL and the call SID in Twilio's setup message.
+  The dialed number must also belong to that business. Anything else hears "this
+  number isn't taking orders" and is hung up. A bad Twilio signature, if present, is
+  still rejected. (Without `TWILIO_AUTH_TOKEN`, for local development, tokens are off.)
 - Every order and call row carries its business, and the APIs filter by it. Until
   staff logins exist, the single `ADMIN_API_TOKEN` sees every business, so only the
   operator should have it.
@@ -296,6 +320,9 @@ hours, notes) live in each business's catalog, not in environment variables.
 | Text after payment fails | Logged; payment status is still updated. |
 | POS unreachable, rate-limited or 5xx | The call isn't affected (sending runs in the background). Retried after 5 s, 30 s, 2 min and 10 min; the dashboard shows "Sending to POS" / "Not on POS" with the error. Orders not sent are resent on server start (last 6 hours) or with `pos retry`. Square requests use idempotency keys; Clover partial orders are deleted before retrying. |
 | POS rejects the order (other 4xx) | Not retried; shown as "Not on POS" with the error for staff. |
+| One business's catalog can't be loaded | Only that business goes offline: its callers hear "this number isn't taking orders", it's logged at startup and shown as `broken` in `/businesses` and `businesses list`. Every other business keeps working. |
+| Unexpected error looking up or starting a call | Caught per call: that caller hears the short apology; other calls aren't affected. |
+| One business gets more calls than `MAX_CALLS_PER_BUSINESS` | New callers to that business hear "all our lines are busy"; other businesses still answer. |
 
 ## 11. Testing
 
@@ -319,7 +346,12 @@ item refused), errors blocking publish, publishing over a newer catalog, restore
 discard, page security headers, and the checks on the real catalog. Template tests: valid starters, the
 retail wording in the prompt and greeting, out-of-stock refusal, the coming-soon and
 unknown templates refused, tools per module, settings labels per template, the editor
-API sending the template, and the business prompt unchanged by the refactor.
+API sending the template, and the business prompt unchanged by the refactor. Isolation tests
+(`tests/test_isolation.py`): a broken catalog leaves other businesses working, catalog
+versions stay within their business, `/ws` refuses missing, foreign and expired call
+tokens and a mismatched dialed number, call limits are per business and freed when a
+call ends, a hung POS for one business doesn't delay another's orders, retries don't
+block workers, and tools of modules a template doesn't use are refused.
 
 ## 12. Multi-business plan (phase 1 built, except Postgres)
 
@@ -499,7 +531,7 @@ business is a **template** (`phone_agent/templates.py`):
 
 | Part | What it is | Example (restaurant / shop) |
 |---|---|---|
-| `modules` | What a call can do. Each module brings its tools (`tools.MODULE_TOOLS`) and business rules in code. | `orders` / `orders` |
+| `modules` | What a call can do (`phone_agent/modules/`). Each module brings its tools, their handlers (business rules in code), its prompt section and its per-call state. | `orders` / `orders` |
 | `words` | How the manager and the agent name things. | menu, dish, section, "sold out today" / catalog, product, category, "out of stock" |
 | `role`, `rules`, `declines` | The agent's role line, extra rules, and what it politely declines. | "phone ordering assistant", declines delivery and reservations / declines shipping, returns, special orders |
 | `greeting` | Default first line (a business can set its own). | "What can I get started for you today?" / "How can I help you today?" |
@@ -518,9 +550,12 @@ convenience stores) are available. `salon` (services and appointments) is listed
 be registered.
 
 **Adding a kind of business** that only needs orders: a `Template` entry and a starter
-file. **Adding a module** (bookings): its tools in `tools.py`/`MODULE_TOOLS`, its rules in
-code (like `order.py`), its prompt section, its storage, its parts of the manager and
-dashboard, and `BUILT_MODULES` in `templates.py`. Planned bookings pieces: services with
+file. **Adding a module** (bookings): `phone_agent/modules/<name>.py` with its tool schemas,
+`handle(session, name, args)` (raising `ToolError` for anything the caller must resolve),
+`prompt(catalog, payment_links)` and `start(session)`; register it in `MODULES` in
+`modules/__init__.py` (tool names must be unique; checked at import). A module with a
+handler counts as built, which makes templates that use it available. Then its storage
+(keyed by `business_id`), its manager pages and dashboard views. Planned bookings pieces: services with
 a length and price, staff and their hours, availability, appointments with a no-double-
 booking guarantee (wants Postgres), reschedule/cancel, confirmation and reminder texts,
 read-back of date and time on the call, and later sync with Google Calendar or Square
@@ -539,6 +574,12 @@ and "menu" appear only where they mean the restaurant template.
 
 ## 16. Open issues and next steps
 
+- Shared between businesses (section 5): one Anthropic key (a rate-limit or billing
+  problem stops every business; per-business keys or limits would need a gateway), one
+  Stripe account and SMS number (phase 3), one SQLite file behind one lock (Postgres),
+  one machine (active-call counts and POS job limits are per process; move them to the
+  database or Redis before running several machines).
+
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
 - Catalog gaps: address and hours are not set. Drinks, shakes, desserts and pastries (17
@@ -547,7 +588,6 @@ and "menu" appear only where they mean the restaurant template.
   aren't on the phone catalog; the agent offers them at the counter.
 - The full catalog adds roughly 6k tokens to the (cached) system prompt; watch first-turn latency.
 - Hang-up delay after the goodbye is estimated from word count; tune after real calls.
-- Require a Twilio signature on `/ws`.
 - DTMF (keypad) input is ignored.
 - Payments not yet tried live: needs Stripe keys, the webhook registered in Stripe, and
   US SMS registration (A2P 10DLC) for the Twilio number, or US carriers block the texts.
@@ -613,3 +653,4 @@ and "menu" appear only where they mean the restaurant template.
 | 2026-11-22 | Menu manager at `/manage`: staff accounts with invite links (`phone_agent.accounts`), sessions, drafts with autosave, publish, history and restore, settings form built from `settings_schema.py`, shared menu checks (`catalog_check.py`), sold-out dishes (`available: false`), custom greeting. Unset address/hours no longer reach the prompt as "None". |
 | 2026-11-22 | Business templates: the agent is generic, with a template per kind of business (`phone_agent/templates.py`: modules, words, prompt rules, greeting, tags, settings). `restaurant` (unchanged behavior) and `retail` available, `salon` coming soon (bookings module). Tools come from the template's modules; the manager's wording, tags and settings form follow the template; starter catalogs in `data/templates/`; `restaurants templates` command. |
 | 2026-11-22 | Renamed to **Phone Agent**: package `phone_agent`, repo `phone-agent`, Fly app `phone-agent-604b` (new app and volume; the old app and its test data were retired). Generic names throughout: `businesses.py`, `catalog.py`, `catalog_check.py`, `Store`, `PhoneAgent`; tables `businesses`, `catalog_versions`, `catalog_drafts`, `user_businesses`; `business_id`/`catalog_id`; catalog JSON `settings` block; `/businesses` and `?business=`; env `DATABASE_PATH`, `ADMIN_API_TOKEN`, `CATALOG_PATH`; CLI `set-catalog`, `--catalog`, `--business`, `import-catalog`; skill `add-business`. Schema created in full, with the old upgrade code removed. |
+| 2026-11-22 | Modules and isolation: call logic split into modules (`phone_agent/modules/`, orders built, bookings registered as coming soon) with a generic agent, dispatcher and call session (`session.py`); the prompt is unchanged. Businesses isolated: a broken catalog only takes its own business offline; `/ws` requires a per-call token from `/voice` and a matching dialed number; `MAX_CALLS_PER_BUSINESS`; POS retries on timers with at most 2 jobs per business; catalog versions looked up within their business. |

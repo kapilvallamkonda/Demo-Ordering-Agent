@@ -14,11 +14,11 @@ from collections.abc import AsyncIterator, Callable
 import anthropic
 
 from .catalog import Catalog
-from .order import Order, OrderError, normalize_phone
+
 from .payments import PaymentService
 from .prompts import build_greeting, build_system_prompt
 from .storage import Store
-from .tools import CallSession, run_tool, tools_for
+from .tools import CallSession, run_tool, start_session, tools_for
 
 log = logging.getLogger(__name__)
 
@@ -49,13 +49,9 @@ class PhoneAgent:
         self.catalog = catalog
         self.greeting = build_greeting(catalog)
         self.tools = tools_for(catalog.template.modules)  # what this kind of business can do
-        self.session = CallSession(order=Order(catalog=catalog), store=store, call_id=call_id,
-                                   payments=payments, pos=pos)
-        if caller_phone:
-            try:
-                self.session.order.customer_phone = normalize_phone(caller_phone)
-            except OrderError:
-                pass  # hidden or odd caller ID; the agent asks for a number if it needs one
+        self.session = start_session(CallSession(
+            catalog=catalog, store=store, call_id=call_id, caller_phone=caller_phone,
+            payments=payments, pos=pos))
         # The system prompt and tools are identical across calls, so they get cached.
         self._system = [
             {

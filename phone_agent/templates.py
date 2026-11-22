@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-BUILT_MODULES = {"orders"}
 
 
 @dataclass(frozen=True)
@@ -41,7 +40,9 @@ class Template:
 
     @property
     def status(self) -> str:
-        return "available" if set(self.modules) <= BUILT_MODULES else "coming_soon"
+        from .modules import BUILT  # here, not at the top: modules import the catalog, which imports this
+
+        return "available" if set(self.modules) <= BUILT else "coming_soon"
 
     def public(self) -> dict:
         """What the /manage page needs."""
