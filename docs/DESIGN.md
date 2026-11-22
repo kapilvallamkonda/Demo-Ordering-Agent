@@ -138,6 +138,12 @@ is how to find out why a call didn't produce an order.
   pools connections, and each call is a lightweight asyncio task.
 - **Shared state** is only placed orders. SQLite is fine for one instance; use a shared
   database or send orders to the POS for more.
+- **Simultaneous calls:** a Twilio number is not a single line. Every incoming call gets
+  its own `/voice` request and its own WebSocket, so several callers can order at once and
+  nobody gets a busy signal. On our side each call is one WebSocket; `fly.toml` caps a
+  machine at 100 connections (soft limit 50). If a restaurant forwards its existing
+  number to ours, its phone carrier decides how many calls it forwards at once; check
+  that per restaurant.
 - **Limits to plan for:** Anthropic rate limits at peak concurrent calls, and Twilio
   concurrency on the account.
 - **Hosting:** Fly.io (`Dockerfile`, `fly.toml`), one always-on `shared-cpu-1x` machine
@@ -227,7 +233,69 @@ webhook signature checks and duplicate events (with fake Stripe and SMS), an
 interruption during `place_order` (order still saved, history stays valid), and call
 transcripts through `/calls`.
 
-## 12. Open issues and next steps
+## 12. Multi-restaurant plan (not built yet)
+
+Goal: one deployment serves many restaurants. Each call is routed to one restaurant,
+and each restaurant's menu, settings, orders, transcripts, staff and money are kept
+separate. The agent, tools and order rules are already restaurant-neutral (everything
+restaurant-specific is in `data/menu.json`), so the change is mostly data, routing and
+accounts.
+
+**What changes**
+
+| Today | Multi-restaurant |
+|---|---|
+| One menu file, loaded at startup | `restaurants` table plus versioned menus in the database, loaded per call and cached |
+| One Twilio number to `/voice` | A number per restaurant; the dialed number (`To`) selects the restaurant |
+| Orders and calls have no restaurant column; one order-number sequence | `restaurant_id` on every row; order numbers counted per restaurant |
+| One shared dashboard token | Staff logins scoped to one restaurant |
+| One Stripe key; all money to one account | Stripe Connect: each restaurant connects its own Stripe account and is paid directly; optional platform fee |
+| One SMS sender | The restaurant's own number sends its texts; A2P 10DLC registration per restaurant brand (Twilio ISV flow) |
+| SQLite on one machine | Postgres (multiple machines, backups) |
+| Tax, hours, pickup time, pay-first rule in the menu file | Per-restaurant settings, editable in an admin page |
+
+**Call routing**
+
+1. `/voice` (Twilio-signed) looks up the restaurant by the dialed number and returns
+   that restaurant's greeting. Unknown number: a short apology and hang up.
+2. The `/ws` URL in the TwiML carries the restaurant ID. Twilio signs that URL, so the
+   `/ws` signature becomes required (it is optional today).
+3. The agent is built from that restaurant's menu, settings and payment account. The
+   system prompt differs only in the menu block, so prompt caching works per restaurant.
+4. Orders, transcripts, texts and payment links are tagged with the restaurant; the
+   Stripe webhook (Connect events carry the connected account) finds the order through it.
+
+Restaurants can keep their published number and forward calls to ours, either always or
+only when staff don't pick up ("no answer" forwarding is an easy first step for them).
+
+**New components**
+
+- Onboarding: menu photos to structured menu data with Claude vision, then a review screen
+  where the restaurant confirms prices and required options before going live.
+- Restaurant admin: menu editing, "sold out today", hours (the agent knows when the
+  restaurant is closed), tax, pickup time, pay-first rule, voice.
+- Kitchen hand-off: the dashboard first; POS connectors (Toast, Square, Clover) later, one
+  adapter per POS.
+- Tenant-isolation tests: no query, endpoint or webhook may return another restaurant's data.
+- Later: billing restaurants for the service (Stripe Billing).
+
+**Phases**
+
+1. Restaurants table, routing by dialed number, Postgres, `restaurant_id` everywhere,
+   menus in the database. Hyderabad House becomes restaurant #1. No change for callers.
+2. Staff logins and per-restaurant dashboards.
+3. Stripe Connect and per-restaurant SMS (needed before payment links go live for anyone).
+4. Onboarding from photos and the admin page, so restaurant #2 needs no hand-edited JSON.
+5. POS integrations as restaurants ask for them.
+
+**Decisions still open**
+
+- Phone numbers bought in our main Twilio account (simplest) or a Twilio subaccount per
+  restaurant (cleaner billing and isolation).
+- Whether chains are in scope: if so, model brand -> locations from the start, with menu
+  and hours per location.
+
+## 13. Open issues and next steps
 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
@@ -251,9 +319,10 @@ transcripts through `/calls`.
   period (delete after N days) before real customers call.
 - The first live order that wasn't saved (call `CA277d47…`, before transcripts) is still
   unexplained; the next failed call will have a transcript to check.
+- Multi-restaurant support (section 12): phase 1 is next.
 - Possible features: delivery, POS integration, kitchen display.
 
-## 13. Change log
+## 14. Change log
 
 | Date | Change |
 |---|---|
@@ -268,3 +337,4 @@ transcripts through `/calls`.
 | 2026-11-18 | Deployed to Fly.io (`phone-ordering-agent-604b`); Twilio number moved off the cloudflared tunnel. |
 | 2026-11-18 | Restaurant named Hyderabad House. Agent no longer tells callers to phone the restaurant; unpriced desserts/drinks/specials are offered at the counter instead. |
 | 2026-11-22 | Drinks, shakes, desserts and pastries added to the phone menu with placeholder prices (`placeholder_price` tag). Only daily specials are still counter-only. |
+| 2026-11-22 | Multi-restaurant plan (section 12); note on simultaneous calls in section 5. |
