@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{BRAND}}</title>
 <meta name="application-name" content="{{BRAND}}">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <meta name="description" content="An AI that answers your business's phone and takes orders. Set it up yourself in about ten minutes.">
 <style>
   :root {
@@ -36,8 +42,9 @@
 
   /* header */
   header { display: flex; justify-content: space-between; align-items: center; padding-top: 20px; padding-bottom: 20px; }
-  .logo { display: flex; align-items: center; gap: 9px; font-weight: 750; font-size: 18px; letter-spacing: -0.02em; }
-  .mark { display: block; flex: none; }
+  /* the logo is the name in lowercase; body copy keeps its capital */
+  .wordmark { color: var(--text); font-weight: 820; font-size: 24px; letter-spacing: -0.045em; line-height: 1; text-transform: lowercase; }
+  .wordmark:hover { color: var(--text); }
   nav { display: flex; align-items: center; gap: 22px; font-size: 15px; }
   nav a.link { color: var(--muted); }
   nav a.link:hover { color: var(--text); }
@@ -131,7 +138,7 @@
 </head>
 <body>
 <header class="wrap">
-  <div class="logo"><svg class="mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" style="fill:var(--accent)"/><circle cx="14" cy="14" r="7.5" fill="none" stroke-width="2.6" style="stroke:var(--accent-text)"/><circle cx="14" cy="14" r="2.6" style="fill:var(--accent-text)"/></svg><span>{{BRAND}}</span></div>
+  <a class="wordmark" href="/" aria-label="{{BRAND}}">{{BRAND}}</a>
   <nav>
     <a class="link" href="#why">Why</a>
     <a class="link" href="#golive">Setup</a>

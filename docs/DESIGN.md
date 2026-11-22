@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (start over before the first publish).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (wordmark logo and app icon).
 
 ## 1. Goal
 
@@ -605,7 +605,11 @@ Appointments.
 **Names.** The product is called **Ringcart** on everything people see. The name is one
 setting, `BRAND_NAME` (default `Ringcart`, `phone_agent/brand.py`): pages in `static/`
 write `{{BRAND}}`, filled in (HTML-escaped) when served, and scripts read it from
-`<meta name="application-name">`. Rebranding is that one value. The code name stays
+`<meta name="application-name">`. Rebranding is that one value. The logo is the name as a lowercase
+wordmark (CSS, so it follows `BRAND_NAME`); the app icon is a lowercase "r" mark
+(`static/icons/`: favicon SVG and ICO, Apple touch icon, 192/512 PNGs and a maskable
+one, served from the site root with `/site.webmanifest`). The icon artwork isn't
+generated from the name, so a rebrand needs new icon files. The code name stays
 **Phone Agent** (package `phone_agent`, repo
 `phone-agent`, Fly app `phone-agent-604b`) and code and storage use generic names:
 business, catalog, item, `business_id`, `catalog_id`, the `settings` block. "Restaurant"
@@ -773,3 +777,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Menu reading shows its progress: it runs as a background job the page polls (`POST .../import` returns a job, `GET .../import/{job}`), and the streamed answer is followed (`catalog_import.Progress`) to show the section being read, items so far and finished sections. Results merge into the draft as it is at the end. One job per business; jobs in memory. Tested on the 377-item Mama Bros menu (3.6 minutes). |
 | 2026-11-22 | A reading in progress stays visible with the panel closed (corner pill with section and count; click to reopen) and survives a page reload (`GET .../import` returns the running job). |
 | 2026-11-22 | Start over: before its first publish, an owner can reset a business to how it was when created (catalog and all details cleared; name and type kept). |
+| 2026-11-22 | New logo: lowercase "ringcart" wordmark on the landing page and sign-in, and an "r" app icon (favicon, Apple touch icon, Android icons, web app manifest; the manager's header uses it too). |

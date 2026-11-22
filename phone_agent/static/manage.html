@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{BRAND}}</title>
 <meta name="application-name" content="{{BRAND}}">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
@@ -124,8 +130,8 @@
   .muted { color: var(--muted); }
   .empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
   /* ---- app shell, onboarding and the new views ---- */
-  .logo { font-weight: 750; font-size: 17px; display: flex; align-items: center; gap: 8px; }
-  .logo .name { letter-spacing: -0.02em; }
+  .wordmark { display: inline-block; color: var(--text); font-weight: 820; font-size: 24px; letter-spacing: -0.045em; line-height: 1;
+              text-transform: lowercase; text-decoration: none; }
   .markwrap { display: inline-flex; flex: none; }
   .markwrap svg { display: block; }
   .btn.google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px 16px;
@@ -292,9 +298,9 @@
   const G_ICON = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>';
   function icon(svg) { const s = el("span", { class: "gicon" }); s.innerHTML = svg; return s; }  // constant markup only
   const BRAND = (document.querySelector('meta[name="application-name"]') || {}).content || document.title;
-  const MARK = '<svg class="mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" style="fill:var(--accent)"/><circle cx="14" cy="14" r="7.5" fill="none" stroke-width="2.6" style="stroke:var(--accent-text)"/><circle cx="14" cy="14" r="2.6" style="fill:var(--accent-text)"/></svg>';
+  const MARK = '<svg class="mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" style="fill:var(--accent)"/><path d="M11 20.5V11M11 15a5 5 0 0 1 5-5h1.5" fill="none" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--accent-text)"/></svg>';
   const mark = () => { const s = el("span", { class: "markwrap" }); s.innerHTML = MARK; return s; };  // constant markup only
-  const logo = () => el("div", { class: "logo" }, mark(), el("span", { class: "name" }, BRAND));
+  const logo = () => el("a", { class: "wordmark", href: "/", "aria-label": BRAND }, BRAND);
 
   function screen(...kids) { app.replaceChildren(el("div", { class: "center" }, el("div", { class: "panel card" }, ...kids))); }
 

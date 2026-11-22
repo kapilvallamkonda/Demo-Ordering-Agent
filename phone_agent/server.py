@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape, quoteattr
 
@@ -134,6 +135,34 @@ app = FastAPI(title=brand.name(), lifespan=lifespan)
 app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
 app.include_router(onboarding_router)  # self-serve: create a business, read a menu, go live, team ...
 app.include_router(google_router)  # /auth/google: sign in with Google
+
+
+ICONS = Path(__file__).parent / "static" / "icons"
+ICON_TYPES = {"favicon.svg": "image/svg+xml", "favicon.ico": "image/x-icon", "apple-touch-icon.png": "image/png",
+              "icon-192.png": "image/png", "icon-512.png": "image/png", "icon-maskable-512.png": "image/png"}
+
+
+def _icon_route(name: str, media_type: str) -> None:
+    @app.get("/" + name, include_in_schema=False)
+    async def icon() -> Response:
+        return Response((ICONS / name).read_bytes(), media_type=media_type,
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+for _name, _type in ICON_TYPES.items():
+    _icon_route(_name, _type)
+
+
+@app.get("/site.webmanifest", include_in_schema=False)
+async def web_manifest() -> Response:
+    """Lets phones add the manager to the home screen with the app icon and the brand name."""
+    return Response(json.dumps({
+        "name": brand.name(), "short_name": brand.name(), "start_url": "/manage", "display": "standalone",
+        "background_color": "#f6f5f2", "theme_color": "#b4441f",
+        "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                  {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                  {"src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}],
+    }), media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/", response_class=HTMLResponse)

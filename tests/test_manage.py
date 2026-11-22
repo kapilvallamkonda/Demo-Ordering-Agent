@@ -267,3 +267,19 @@ def test_unset_address_and_hours_are_described_to_the_agent():
     del raw["settings"]["address"], raw["settings"]["hours"]
     text = parse_catalog(raw).to_prompt_text()
     assert "Address: not available on this line yet" in text and "None" not in text
+
+
+def test_icons_and_manifest(app, monkeypatch):
+    c, *_ = app
+    for path, kind in (("/favicon.svg", "image/svg+xml"), ("/favicon.ico", "image/x-icon"),
+                       ("/apple-touch-icon.png", "image/png"), ("/icon-192.png", "image/png"),
+                       ("/icon-512.png", "image/png"), ("/icon-maskable-512.png", "image/png")):
+        r = c.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith(kind) and r.content, path
+    monkeypatch.setenv("BRAND_NAME", "Acme & Co")
+    m = c.get("/site.webmanifest").json()
+    assert m["name"] == "Acme & Co" and m["start_url"] == "/manage"
+    assert {i["src"] for i in m["icons"]} == {"/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"}
+    for path in ("/", "/manage"):
+        assert 'rel="icon" href="/favicon.svg"' in c.get(path).text
+
