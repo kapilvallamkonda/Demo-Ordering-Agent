@@ -192,6 +192,15 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
         job.pop("task", None)
 
 
+@router.get("/api/manage/businesses/{business_id}/import")
+async def import_running(request: Request, business_id: int) -> dict:
+    """The reading under way for this business, if any (so a reloaded page can follow it)."""
+    who = _who(request)
+    row = _business(request, who, business_id)
+    running = [k for k, j in _import_jobs(request.app).items() if j["business_id"] == row.id and j["state"] == "running"]
+    return {"job": running[0] if running else None}
+
+
 @router.get("/api/manage/businesses/{business_id}/import/{job_id}")
 async def import_status(request: Request, business_id: int, job_id: str) -> dict:
     who = _who(request)

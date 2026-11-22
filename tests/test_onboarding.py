@@ -260,6 +260,8 @@ def test_import_merges_into_edits_made_while_reading(app):
     fake.beta.messages.stream = slow
     r = start_import(c, b["id"], b["draft"]["revision"], files=[("files", ("m.jpg", b"jpg", "image/jpeg"))])
     job = r.json()["job"]
+    # A reloaded page finds the reading under way.
+    assert c.get(f"/api/manage/businesses/{b['id']}/import").json() == {"job": job}
     # A second reading for the same business waits for the first.
     again = start_import(c, b["id"], b["draft"]["revision"], files=[("files", ("m.jpg", b"jpg", "image/jpeg"))])
     assert again.status_code == 409
@@ -271,7 +273,7 @@ def test_import_merges_into_edits_made_while_reading(app):
     gate.set()
     out = wait_import(c, b["id"], r)
     assert out["state"] == "done" and {i["id"] for i in out["catalog"]["items"]} == {"tea", "croissant", "cake"}
-    assert job
+    assert c.get(f"/api/manage/businesses/{b['id']}/import").json() == {"job": None}
 
 
 MENU_PAGE = """<html><head><title>Rosa's</title><script>var price = "$999.99";</script></head><body>

@@ -644,7 +644,9 @@ A business sets itself up without us, like creating any online account.
    `catalog_import.Progress` picks out each item's `"name", "category"` pair (structured
    output writes properties in schema order) so the owner sees the section being read,
    the count so far, the sections finished and the last item. The result is merged into
-   the draft as it is when reading ends, so edits made meanwhile are kept. One job per
+   the draft as it is when reading ends, so edits made meanwhile are kept. Closing the
+   panel doesn't stop it: a pill in the corner shows the section and count and reopens the
+   progress, and a reloaded page finds the running job (`GET .../import`). One job per
    business at a time; jobs are in memory (a restart loses a reading in progress, and the
    owner starts again); another business's job id answers 404.
 5. **Try it**: a typed conversation in the browser with the real agent on the draft
@@ -765,3 +767,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Read the menu from a link: owners paste their menu's web address instead of uploading photos (`menu_link.py`: public-address check on every hop, size and time caps, visible page text or a linked PDF/image to Claude as before). Tested on a real 376-item restaurant menu page: every price matched. |
 | 2026-11-22 | Landing page redesign (hero with a sample call, why-it-matters band, ten-minute setup timeline, closing call to action; light and dark). `brand.page()` fills other `{{KEY}}` values too: the page's "up to N calls at once" comes from `MAX_CALLS_PER_BUSINESS`, so it can't drift. |
 | 2026-11-22 | Menu reading shows its progress: it runs as a background job the page polls (`POST .../import` returns a job, `GET .../import/{job}`), and the streamed answer is followed (`catalog_import.Progress`) to show the section being read, items so far and finished sections. Results merge into the draft as it is at the end. One job per business; jobs in memory. Tested on the 377-item Mama Bros menu (3.6 minutes). |
+| 2026-11-22 | A reading in progress stays visible with the panel closed (corner pill with section and count; click to reopen) and survives a page reload (`GET .../import` returns the running job). |

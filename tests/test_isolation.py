@@ -307,6 +307,7 @@ def test_import_jobs_are_per_business(tmp_path, monkeypatch):
         sign_in(c, store, "bo@example.com")
         b = new_business(c, "Bo's")
         assert c.get(f"/api/manage/businesses/{b['id']}/import/{job}").status_code == 404
+        assert c.get(f"/api/manage/businesses/{b['id']}/import").json() == {"job": None}
         assert c.get(f"/api/manage/businesses/{a['id']}/import/{job}").status_code == 404  # not their business
     finally:
         next(gen, None)
