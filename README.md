@@ -43,6 +43,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 | `ordering_agent/restaurants.py` | Routes each call to a restaurant by the number dialed; admin commands to add restaurants and publish menus. |
 | `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
 | `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
+| `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a restaurant's Square or Clover, send each placed order to it, import its menu. Admin commands: `python -m ordering_agent.pos --help`. |
 | `ordering_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
 | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders and call transcripts (SQLite). |
 
@@ -179,6 +180,13 @@ They include a full phone order over the WebSocket.
 | `ORDERS_DB` | `data/orders.db` | SQLite file: restaurants, menus, orders, transcripts. |
 | `MENU_PATH` | `data/restaurants/hyderabad-house.json` | Menu file for the terminal chat when `--restaurant` isn't given. Live calls use menus in the database. |
 | `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
+| `POS_SECRET_KEY` | unset | Turns on POS integrations and encrypts their tokens. A Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it safe: without it every restaurant must reconnect. |
+| `SQUARE_APPLICATION_ID`, `SQUARE_APPLICATION_SECRET` | unset | Square app credentials (Developer Console), for connect links. |
+| `SQUARE_ENVIRONMENT` | `sandbox` | `sandbox` or `production`. |
+| `SQUARE_API_VERSION` | `2025-01-23` | `Square-Version` header. |
+| `CLOVER_APP_ID`, `CLOVER_APP_SECRET` | unset | Clover app credentials (developer dashboard), for connect links. |
+| `CLOVER_ENVIRONMENT` | `sandbox` | `sandbox` or `production` (North America). |
+| `POS_ALLOW_TOKENS` | unset | Enables both providers without app credentials, for `pos connect-token` with a sandbox token. |
 
 Voice settings are read on every incoming call, so changing them only needs a server
 restart, no code change. Speech costs are billed through your Twilio account. Valid provider
@@ -196,8 +204,7 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
   WebSockets. No sticky sessions or shared cache are required.
 - One `AsyncAnthropic` client per process pools connections; each call is a lightweight
   asyncio task, so one process handles many concurrent calls.
-- Before production: swap SQLite for a shared database or post orders to your POS
-  (`storage.py`), and check your Anthropic rate limits against peak concurrent calls.
+- Before production: swap SQLite for a shared database (`storage.py`), and check your Anthropic rate limits against peak concurrent calls.
 
 ## Known limitations / next steps
 
@@ -207,3 +214,21 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
   after real calls.
 - `/ws` rejects a bad Twilio signature, but doesn't yet require one to be present.
 - DTMF (keypad) input is ignored.
+- Square and Clover integrations are tested against fake APIs only so far; Toast needs
+  its partner program first (`docs/toast-partner-application.md`).
+
+## POS integrations (Square, Clover)
+
+Placed orders can go straight onto the restaurant's Square or Clover POS, and its
+menu can be imported from there. See [docs/DESIGN.md](docs/DESIGN.md) section 13.
+
+```bash
+# On the server (fly ssh console -C "..."), with POS_SECRET_KEY and the app credentials set:
+python -m ordering_agent.pos connect-link hyderabad-house square   # send this link to the owner
+python -m ordering_agent.pos status
+python -m ordering_agent.pos import-menu hyderabad-house > menu.json   # review, check_menu.py, set-menu
+python -m ordering_agent.pos retry hyderabad-house                  # resend orders that failed
+```
+
+Square only shows API orders on the POS once they're paid; pay-at-pickup orders for a
+Square restaurant appear on our dashboard only.

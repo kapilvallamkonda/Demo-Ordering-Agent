@@ -43,12 +43,13 @@ class OrderingAgent:
         call_id: str | None = None,
         caller_phone: str | None = None,
         payments: PaymentService | None = None,
+        pos=None,
     ):
         self.client = client or anthropic.AsyncAnthropic()
         self.menu = menu
         self.greeting = build_greeting(menu)
         self.session = CallSession(order=Order(menu=menu), store=store, call_id=call_id,
-                                   payments=payments)
+                                   payments=payments, pos=pos)
         if caller_phone:
             try:
                 self.session.order.customer_phone = normalize_phone(caller_phone)

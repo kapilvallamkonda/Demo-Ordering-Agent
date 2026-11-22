@@ -33,6 +33,14 @@ _ORDER_COLUMNS = {
     "paid_at": "REAL",
     "restaurant_id": "INTEGER",
     "number": "INTEGER",  # per-restaurant order number, what callers and staff see
+    "menu_id": "INTEGER",  # the menu version the order was taken from
+    # Sending the order to the restaurant's point of sale (pos.py). pos_status: NULL (no POS
+    # connected), "held" (waiting for payment), "pending", "sent", "failed".
+    "pos_status": "TEXT",
+    "pos_order_id": "TEXT",
+    "pos_error": "TEXT",
+    "pos_attempts": "INTEGER NOT NULL DEFAULT 0",
+    "pos_paid": "INTEGER NOT NULL DEFAULT 0",  # the online payment has been recorded on the POS
 }
 _CALL_COLUMNS = {"restaurant_id": "INTEGER"}
 
@@ -109,12 +117,29 @@ class OrderStore:
                 text TEXT NOT NULL
             )"""
         )
+        # A restaurant's link to its point of sale. `secret` holds the encrypted access and
+        # refresh tokens (pos.py encrypts them with POS_SECRET_KEY); `settings` holds ids
+        # picked at connect time (order type, tax rate).
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS pos_connections (
+                restaurant_id INTEGER PRIMARY KEY REFERENCES restaurants(id),
+                provider TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                merchant_id TEXT,
+                location_id TEXT,
+                secret TEXT NOT NULL,
+                settings TEXT NOT NULL DEFAULT '{}',
+                connected_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )"""
+        )
         # Databases created before payments / multiple restaurants get the new columns.
         self._add_columns("orders", _ORDER_COLUMNS)
         self._add_columns("calls", _CALL_COLUMNS)
         c.execute("UPDATE orders SET number = id WHERE number IS NULL")
         c.execute("CREATE INDEX IF NOT EXISTS orders_payment_id ON orders(payment_id)")
         c.execute("CREATE INDEX IF NOT EXISTS orders_restaurant ON orders(restaurant_id, number)")
+        c.execute("CREATE INDEX IF NOT EXISTS orders_pos ON orders(pos_status, created_at)")
         c.execute("CREATE INDEX IF NOT EXISTS calls_restaurant ON calls(restaurant_id, started_at)")
         c.execute("CREATE INDEX IF NOT EXISTS call_events_call ON call_events(call_id, id)")
         c.commit()
@@ -209,6 +234,10 @@ class OrderStore:
     def save(self, order: Order, call_id: str | None = None, status: str = "confirmed",
              payment_status: str = "not_requested") -> SavedOrder:
         s = order.summary()
+        # Structured lines, for sending the order to a point of sale later.
+        s["items"] = [{"item_id": l.item_id, "name": l.name, "quantity": l.quantity,
+                       "unit_price": l.unit_price, "options": l.options, "extras": l.extras,
+                       "notes": l.notes} for l in order.lines]
         rid = order.menu.restaurant_id
         with self._lock:
             (number,) = self._conn.execute(
@@ -216,9 +245,10 @@ class OrderStore:
             ).fetchone()
             cur = self._conn.execute(
                 "INSERT INTO orders (created_at, call_id, customer_name, customer_phone, total, payload,"
-                " status, payment_status, restaurant_id, number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " status, payment_status, restaurant_id, number, menu_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (time.time(), call_id, s["customer_name"], s["customer_phone"], s["total"], json.dumps(s),
-                 status, payment_status, rid, number),
+                 status, payment_status, rid, number, order.menu.menu_id),
             )
             self._conn.commit()
             return SavedOrder(id=int(cur.lastrowid), number=int(number))
@@ -277,13 +307,127 @@ class OrderStore:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, number, restaurant_id, created_at, call_id, payload, status, payment_status,"
-                f" payment_url FROM orders {where} ORDER BY id DESC LIMIT ?", (*args, limit)
+                " payment_url, pos_status, pos_error FROM orders"
+                f" {where} ORDER BY id DESC LIMIT ?", (*args, limit)
             ).fetchall()
-        return [
-            {"id": r[0], "order_number": r[1], "restaurant_id": r[2], "created_at": r[3], "call_id": r[4],
-             **json.loads(r[5]), "status": r[6], "payment_status": r[7], "payment_url": r[8]}
-            for r in rows
-        ]
+        out = []
+        for r in rows:
+            payload = json.loads(r[5])
+            payload.pop("items", None)
+            out.append({"id": r[0], "order_number": r[1], "restaurant_id": r[2], "created_at": r[3],
+                        "call_id": r[4], **payload, "status": r[6], "payment_status": r[7],
+                        "payment_url": r[8], "pos_status": r[9], "pos_error": r[10]})
+        return out
+
+    # ---- point of sale ----------------------------------------------------------
+
+    def set_pos_connection(self, restaurant_id: int, provider: str, environment: str, secret: str,
+                           merchant_id: str | None = None, location_id: str | None = None,
+                           settings: dict | None = None) -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO pos_connections (restaurant_id, provider, environment, merchant_id,"
+                " location_id, secret, settings, connected_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(restaurant_id) DO UPDATE SET provider = excluded.provider,"
+                " environment = excluded.environment, merchant_id = excluded.merchant_id,"
+                " location_id = excluded.location_id, secret = excluded.secret,"
+                " settings = excluded.settings, connected_at = excluded.connected_at,"
+                " updated_at = excluded.updated_at",
+                (restaurant_id, provider, environment, merchant_id, location_id, secret,
+                 json.dumps(settings or {}), now, now),
+            )
+            self._conn.commit()
+
+    def update_pos_connection(self, restaurant_id: int, *, secret: str | None = None,
+                              location_id: str | None = None, settings: dict | None = None) -> None:
+        sets, args = ["updated_at = ?"], [time.time()]
+        for col, val in (("secret", secret), ("location_id", location_id),
+                         ("settings", None if settings is None else json.dumps(settings))):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                args.append(val)
+        with self._lock:
+            self._conn.execute(f"UPDATE pos_connections SET {', '.join(sets)} WHERE restaurant_id = ?",
+                               (*args, restaurant_id))
+            self._conn.commit()
+
+    def pos_connection(self, restaurant_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT provider, environment, merchant_id, location_id, secret, settings, connected_at"
+                " FROM pos_connections WHERE restaurant_id = ?", (restaurant_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"restaurant_id": restaurant_id, "provider": row[0], "environment": row[1],
+                "merchant_id": row[2], "location_id": row[3], "secret": row[4],
+                "settings": json.loads(row[5]), "connected_at": row[6]}
+
+    def delete_pos_connection(self, restaurant_id: int) -> bool:
+        with self._lock:
+            n = self._conn.execute("DELETE FROM pos_connections WHERE restaurant_id = ?",
+                                   (restaurant_id,)).rowcount
+            self._conn.commit()
+        return bool(n)
+
+    def order_for_pos(self, order_id: int) -> dict | None:
+        """Everything needed to send one order to a point of sale."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, number, restaurant_id, menu_id, created_at, customer_name, customer_phone,"
+                " payload, status, payment_status, payment_id, pos_status, pos_order_id, pos_attempts,"
+                " pos_paid FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"id": row[0], "number": row[1], "restaurant_id": row[2], "menu_id": row[3],
+                "created_at": row[4], "customer_name": row[5], "customer_phone": row[6],
+                **{k: v for k, v in json.loads(row[7]).items()
+                   if k in ("items", "subtotal", "tax", "total", "lines")},
+                "status": row[8], "payment_status": row[9], "payment_id": row[10],
+                "pos_status": row[11], "pos_order_id": row[12], "pos_attempts": row[13],
+                "pos_paid": bool(row[14])}
+
+    def set_pos_status(self, order_id: int, status: str, *, pos_order_id: str | None = None,
+                       error: str | None = None, attempted: bool = False) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE orders SET pos_status = ?, pos_error = ?,"
+                " pos_order_id = COALESCE(?, pos_order_id),"
+                " pos_attempts = pos_attempts + ? WHERE id = ?",
+                (status, (error or "")[:500] or None, pos_order_id, int(attempted), order_id),
+            )
+            self._conn.commit()
+
+    def clear_pos_order_id(self, order_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE orders SET pos_order_id = NULL WHERE id = ?", (order_id,))
+            self._conn.commit()
+
+    def set_pos_paid(self, order_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE orders SET pos_paid = 1 WHERE id = ?", (order_id,))
+            self._conn.commit()
+
+    def orders_to_send(self, since: float, restaurant_id: int | None = None,
+                       statuses: tuple[str, ...] = ("pending", "failed")) -> list[int]:
+        """Ids of orders not yet on their POS, oldest first (for retrying after a restart)."""
+        marks = ", ".join("?" * len(statuses))
+        where = f"pos_status IN ({marks}) AND created_at >= ?"
+        args: list = [*statuses, since]
+        if restaurant_id is not None:
+            where += " AND restaurant_id = ?"
+            args.append(restaurant_id)
+        with self._lock:
+            rows = self._conn.execute(f"SELECT id FROM orders WHERE {where} ORDER BY id", args).fetchall()
+        return [r[0] for r in rows]
+
+    def order_id_by_number(self, restaurant_id: int, number: int) -> int | None:
+        with self._lock:
+            row = self._conn.execute("SELECT id FROM orders WHERE restaurant_id = ? AND number = ?",
+                                     (restaurant_id, number)).fetchone()
+        return row[0] if row else None
 
     # ---- calls and transcripts ----------------------------------------------------
 

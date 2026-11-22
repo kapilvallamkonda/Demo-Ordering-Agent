@@ -153,6 +153,8 @@
     paid: ["Paid", "ok"], unpaid: ["Unpaid", "warn"], expired: ["Link expired", "bad"],
     not_requested: ["Pay at pickup", ""],
   };
+  // Sending the order to the restaurant's point of sale (Square, Clover). No badge when none is connected.
+  const POS = { held: ["To POS when paid", ""], sent: ["On POS", "ok"], pending: ["Sending to POS", ""], failed: ["Not on POS", "bad"] };
   const badge = ([label, cls]) => el("span", { class: "badge " + cls }, label);
 
   function showLogin(message) {
@@ -316,7 +318,9 @@
       el("div", { class: "right" },
         el("div", { class: "total" }, money(o.total)),
         el("div", { class: "sub" }, `Subtotal ${money(o.subtotal)} · Tax ${money(o.tax)}`),
-        el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status || "", ""]), badge(pay)),
+        el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status || "", ""]), badge(pay),
+          o.pos_status ? el("span", { class: "badge " + (POS[o.pos_status] || ["", ""])[1],
+                                      title: o.pos_error || "" }, (POS[o.pos_status] || [o.pos_status])[0]) : null),
         o.payment_url && o.payment_status === "unpaid"
           ? el("a", { href: o.payment_url, target: "_blank", rel: "noopener", class: "sub" }, "Payment link") : null,
         o.call_id && calls.some(c => c.call_id === o.call_id)

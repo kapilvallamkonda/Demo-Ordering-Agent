@@ -34,6 +34,7 @@ from twilio.request_validator import RequestValidator
 from .agent import OrderingAgent
 from .menu import Menu
 from .payments import handle_stripe_event, payment_service_from_env
+from .pos import PosError, PosHub, check_state, providers_from_env
 from .restaurants import RestaurantDirectory
 from .storage import OrderStore
 
@@ -100,6 +101,14 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "payments"):
         app.state.payments = payment_service_from_env(PUBLIC_BASE_URL)
     log.info("payment links %s", "on" if app.state.payments else "off (pay at pickup)")
+    # Point-of-sale integrations; None unless POS_SECRET_KEY is set (it encrypts the tokens).
+    if not hasattr(app.state, "pos"):
+        app.state.pos = (PosHub(app.state.store, app.state.restaurants, providers_from_env())
+                         if os.environ.get("POS_SECRET_KEY", "").strip() else None)
+    if app.state.pos:
+        log.info("POS integrations on: %s; resending %d unsent orders",
+                 ", ".join(app.state.pos.providers) or "no provider apps configured",
+                 app.state.pos.resume())
     yield
 
 
@@ -218,9 +227,10 @@ async def stripe_webhook(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="invalid signature")
     state = request.app.state
     payments = state.payments
+    pos = getattr(state, "pos", None)
     outcome = await asyncio.to_thread(
         handle_stripe_event, json.loads(payload), state.store, state.restaurants.get,
-        payments.sms if payments else None,
+        payments.sms if payments else None, pos.order_paid if pos else None,
     )
     return {"ok": True, "result": outcome}
 
@@ -235,6 +245,47 @@ async def paid_page(request: Request, order: int = 0, cancelled: int = 0, r: str
     return (f"<!doctype html><meta name=viewport content='width=device-width'>"
             f"<title>{name}</title><body style='font-family:sans-serif;padding:24px'>"
             f"<h2>{name}</h2><p>{msg}</p></body>")
+
+
+def _page(title: str, msg: str) -> str:
+    return (f"<!doctype html><meta name=viewport content='width=device-width'>"
+            f"<title>{html.escape(title)}</title><body style='font-family:sans-serif;padding:24px'>"
+            f"<h2>{html.escape(title)}</h2><p>{html.escape(msg)}</p></body>")
+
+
+@app.get("/pos/{provider}/callback", response_class=HTMLResponse)
+async def pos_callback(request: Request, provider: str, code: str = "", state: str = "") -> HTMLResponse:
+    """Where Square or Clover sends the restaurant owner after they approve the connection.
+    The link they started from (pos connect-link) carries a signed state naming the restaurant."""
+    hub: PosHub | None = getattr(request.app.state, "pos", None)
+    if hub is None or provider not in hub.providers:
+        raise HTTPException(status_code=404)
+    query = dict(request.query_params)
+    if query.get("error") or not code:
+        log.warning("%s connect was declined: %s", provider, query.get("error_description") or query.get("error"))
+        return HTMLResponse(_page("Not connected", "The connection wasn't approved. You can close this page."),
+                            status_code=400)
+    try:
+        restaurant_id = check_state(state, provider)
+        row = request.app.state.store.restaurant(restaurant_id)
+        if row is None:
+            raise PosError("unknown restaurant", retry=False)
+        redirect = f"{_public_base(request)}/pos/{provider}/callback"
+        prov = hub.provider(provider)
+        tokens, merchant_id = await asyncio.to_thread(prov.exchange_code, code, query, redirect)
+        conn = await asyncio.to_thread(hub.save_connection, restaurant_id, provider, prov.environment,
+                                       tokens, merchant_id)
+    except PosError as e:
+        log.warning("%s connect failed: %s", provider, e)
+        return HTMLResponse(_page("Not connected", f"Something went wrong: {e}"), status_code=400)
+    menu = request.app.state.restaurants.get(restaurant_id)
+    name = menu.restaurant.get("name", row.slug) if menu else row.slug
+    log.info("restaurant %s connected to %s (merchant %s, location %s)", row.slug, provider,
+             merchant_id, conn.location_id)
+    extra = ("" if conn.location_id or provider != "square" else
+             " One more step on our side: this account has several locations, and we'll pick yours.")
+    return HTMLResponse(_page(f"{name} is connected",
+                              f"Phone orders will now appear in {provider.title()}.{extra} You can close this page."))
 
 
 class RelayCall:
@@ -309,6 +360,7 @@ class RelayCall:
                 call_id=msg.get("callSid"),
                 caller_phone=msg.get("from"),
                 payments=app_state.payments,
+                pos=getattr(app_state, "pos", None),
             )
             self.agent.on_tool = self.record_tool
             self.call_id, self.store = msg.get("callSid"), app_state.store

@@ -1,6 +1,6 @@
 # High-Level Design: Phone Ordering Agent
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22.
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (POS integrations).
 
 ## 1. Goal
 
@@ -39,6 +39,7 @@ flowchart LR
     Agent -- "place_order: Checkout Session" --> Stripe[(Stripe)]
     Agent -- "SMS: order + pay link" --> TwilioSMS[Twilio Messaging]
     Stripe -- "POST /stripe/webhook" --> Server
+    DB -- "placed orders (background)" --> POS[(Square / Clover)]
 ```
 
 | Component | File | Responsibility |
@@ -55,6 +56,7 @@ flowchart LR
 | Payments | `ordering_agent/payments.py` | Creates a Stripe Checkout link per order, texts it with the order details via Twilio, applies Stripe webhook events (paid / expired) to the order. |
 | Stripe webhook | `server.py` `/stripe/webhook`, `/paid` | Verifies Stripe's signature and updates payment and order status; `/paid` is the page shown after paying. |
 | Storage | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders (order and payment status, per-restaurant order numbers) and call transcripts, in SQLite. All SQL is in this file. Adds new columns to older databases on startup. |
+| POS integrations | `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py`; `server.py` `/pos/<provider>/callback` | Connects a restaurant's Square or Clover account (OAuth, encrypted tokens), sends each placed order to it in the background with retries, records the online payment there, imports the POS menu into a menu file. Section 13. |
 | Terminal client | `ordering_agent/cli.py` | Same agent without a phone, for testing. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
 
@@ -171,7 +173,19 @@ is how to find out why a call didn't produce an order.
   restaurant's first order is #1), time, Twilio call SID, name, phone, total, full
   order summary as JSON, order status (`confirmed` / `awaiting_payment` / `cancelled`),
   payment status (`not_requested` / `unpaid` / `paid` / `expired`), Stripe Checkout
-  Session ID and URL, paid time.
+  Session ID and URL, paid time, the menu version it was taken from, and structured
+  lines (item ids, options, extras) for sending it to a POS. POS fields: status
+  (empty when no POS is connected, `held` until paid for pay-first restaurants,
+  `pending`, `sent`, `failed`), the POS's order id,
+  the last error, attempts, and whether the online payment was recorded on the POS.
+- **POS connection:** restaurant (one each), provider (`square` / `clover`),
+  environment (`sandbox` / `production`), merchant and location ids, access and refresh
+  tokens encrypted with `POS_SECRET_KEY`, settings picked at connect time (Clover's
+  pickup order type and default tax rate; Square's location currency).
+- **Menu item POS ids** (optional, written by a menu import): `pos.item` (Square item
+  variation or Clover item), `pos.choices` (each option choice to a variation or
+  modifier id), `pos.extras`, and `pos_key` (keeps our item id stable across
+  re-imports). The menu's top-level `pos.provider` says which POS they belong to.
 - **Call row:** Twilio call SID, restaurant, start and end time, caller phone, order number (if any).
 - **Call event:** call SID, time, role (`caller` / `agent` / `tool` / `event`), text
   (at most 4,000 characters).
@@ -196,7 +210,9 @@ All settings are environment variables; see `.env.example` and the README table.
 Groups: Claude (model, effort, fast mode), voice (text-to-speech and speech-to-text
 provider, voice, language, extra ConversationRelay attributes), Twilio (auth token,
 public URL, account SID and SMS sender number), Stripe (secret key, webhook secret),
-storage (database file; menu file for the terminal chat), admin (`/orders` token). Payment links are on
+storage (database file; menu file for the terminal chat), admin (`/orders` token),
+POS (`POS_SECRET_KEY`, which turns POS sending on and encrypts tokens; Square and Clover
+app credentials and environment). Payment links are on
 only when `STRIPE_SECRET_KEY` and the Twilio SMS settings are all set; otherwise
 customers pay at pickup. Per-restaurant settings (tax, pickup time, pay-first rule,
 hours, notes) live in each restaurant's menu, not in environment variables.
@@ -221,6 +237,11 @@ hours, notes) live in each restaurant's menu, not in environment variables.
   without a valid Stripe signature. Retried events don't change state twice or send
   duplicate texts.
 - `RELAY_EXTRA_ATTRS` can't override `url` or `welcomeGreeting`.
+- POS access tokens are encrypted at rest (Fernet, `POS_SECRET_KEY`); losing the key
+  means reconnecting every restaurant. Connect links carry an HMAC-signed state naming
+  the restaurant and expire after an hour, so a callback can't attach a POS to the wrong
+  restaurant. Sandbox tokens for testing are read from `POS_ACCESS_TOKEN`, never from
+  the command line.
 
 ## 10. Failure handling
 
@@ -236,6 +257,8 @@ hours, notes) live in each restaurant's menu, not in environment variables.
 | Transcript write fails | Logged; the call carries on. |
 | Stripe or SMS fails at `place_order` | The order is still saved. The agent tells the caller the text didn't go through and they can pay at pickup (pay-first restaurants: the order starts when they pay at the counter). |
 | Text after payment fails | Logged; payment status is still updated. |
+| POS unreachable, rate-limited or 5xx | The call isn't affected (sending runs in the background). Retried after 5 s, 30 s, 2 min and 10 min; the dashboard shows "Sending to POS" / "Not on POS" with the error. Orders not sent are resent on server start (last 6 hours) or with `pos retry`. Square requests use idempotency keys; Clover partial orders are deleted before retrying. |
+| POS rejects the order (other 4xx) | Not retried; shown as "Not on POS" with the error for staff. |
 
 ## 11. Testing
 
@@ -248,7 +271,11 @@ interruption during `place_order` (order still saved, history stays valid), call
 transcripts through `/calls`, and multiple restaurants: routing by dialed number,
 unknown and inactive numbers, per-restaurant order numbers, API filtering, payment texts
 in the right restaurant's name, migrating a pre-restaurant database, and admin-command
-validation.
+validation. POS tests (fake Square and Clover APIs over `httpx.MockTransport`): order
+bodies, catalog-linked lines and modifiers, retries with one idempotency key, permanent
+rejections, external payment after Stripe, Clover partial-order cleanup, token refresh,
+encrypted tokens, signed connect state, the OAuth callback, menu import (and keeping item
+ids on re-import), and admin commands. Not yet tried against the real sandboxes.
 
 ## 12. Multi-restaurant plan (phase 1 built, except Postgres)
 
@@ -312,7 +339,7 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
    number, registration on Fly, signed test call). Menu files live in git at
    `data/restaurants/<slug>.json` and ship in the image; `restaurant.placeholders` and
    `placeholder_price` mark guessed values, which the checker blocks on.
-5. POS integrations as restaurants ask for them.
+5. POS integrations: Square and Clover built (section 13); Toast application drafted.
 
 **Decisions**
 
@@ -322,7 +349,54 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
   A chain's locations can be separate restaurants; a brand level can be added later.
 - Database: Postgres provider still to choose.
 
-## 13. Open issues and next steps
+## 13. POS integrations
+
+Phone orders go onto the restaurant's own point of sale, so the kitchen works from the
+system it already uses, and a menu can be imported from the POS instead of typed in.
+Code: `ordering_agent/pos.py` (connections, background sending, import, admin
+commands), `pos_square.py`, `pos_clover.py`.
+
+**Connecting.** The operator runs `pos connect-link SLUG square|clover` and sends the
+link to the owner, who approves access (OAuth). The callback (`/pos/<provider>/callback`)
+stores the tokens encrypted and picks the location (Square, when there's one) or the
+pickup order type and default tax rate (Clover). Square tokens last 30 days and are
+refreshed a week early; Clover's are short-lived and refreshed when within 5 minutes.
+For sandbox testing, `pos connect-token` stores a token from `POS_ACCESS_TOKEN`.
+
+**Sending orders.** After `place_order` saves the order, it's queued for the POS and
+sent by a small thread pool; the caller never waits. For a pay-first restaurant the
+order is held until the payment link is paid, so the kitchen never sees an unpaid
+order (if the link expires it never reaches the POS; if the text failed, staff see it
+only on our dashboard). Lines from an imported menu go as
+catalog items with their modifiers; anything else goes as a custom line with our name
+and price. The order total and tax on the POS come from the POS for catalog items, so a
+menu that is out of date with the POS can show a different total there; re-import after
+POS price changes.
+
+| | Square | Clover |
+|---|---|---|
+| Order | Orders API, PICKUP fulfillment (ASAP, prep time from the menu), ticket name `Phone #N Name`, order-level sales tax at the menu's rate. | v3 order, state open, title `Phone #N Name`, pickup order type, total; one line per unit (bulk), then modifiers. |
+| Shows on the POS | **Only once paid** (a Square rule). | Immediately. |
+| Payment link paid | EXTERNAL payment (source "Stripe payment link") for Square's order total; the order then appears. | Order note becomes "PAID ONLINE". |
+| Retries | Idempotency keys from our order id. | Partial order deleted, then recreated. |
+| Menu import | Catalog: variations become a required `size`/`type` option, single-select modifier lists become options, multi-select become extras; variable-price items skipped. | Items with modifier groups (max 1 is an option, otherwise extras); hidden and variable-price items skipped. |
+
+**Importing a menu.** `pos import-menu SLUG > data/restaurants/SLUG.json` writes a menu
+file using the restaurant's current settings block (or `--base`), then it goes through
+the normal checker, review, commit, deploy and `set-menu`. Item ids of items imported
+before are kept (matched by POS id), since old orders refer to them. Imported items have
+no vegetarian/spice tags; add them in review.
+
+**Decisions**
+
+- Square and Clover first: both open self-serve developer platforms (2026-11-22).
+  Toast needs the partner program (application drafted in
+  `docs/toast-partner-application.md`); Lightspeed and others later, or through a
+  middleware such as Deliverect or Otter.
+- The POS doesn't replace our dashboard: unpaid Square orders and failed sends are only
+  visible there.
+
+## 14. Open issues and next steps
 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
@@ -351,9 +425,24 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 - Multi-restaurant support (section 12): finish phase 1 with Postgres, then phase 2
   (staff logins). Payment texts still come from one `TWILIO_SMS_FROM` number for every
   restaurant until phase 3.
-- Possible features: delivery, POS integration, kitchen display.
+- POS (section 13): not yet tried against the real Square or Clover sandboxes; needs
+  developer accounts and app credentials. To test: a Square sandbox token and seller
+  test account, and a Clover sandbox merchant. Field names were written from the API
+  docs and need checking against real responses (Clover bulk line item response,
+  Square catalog fields).
+- Square shows API orders on the POS only once paid. Pay-at-pickup orders for a Square
+  restaurant are only on our dashboard. Options: require payment before cooking for
+  Square restaurants, or record an "unpaid" external tender (bad for their reports).
+- Clover: the online payment is only noted on the order, not recorded as a Clover
+  payment (needs a custom tender). Clover outside North America needs other hosts.
+- Apps need review before production: Clover App Market approval (or a private app);
+  Square OAuth apps can go live without the App Marketplace.
+- Toast: submit the partner application (`docs/toast-partner-application.md`); expect
+  discovery, an agreement, sandbox credentials, certification, then an alpha restaurant.
+- Possible features: delivery, kitchen display, order status from the POS back to the
+  dashboard ("ready").
 
-## 14. Change log
+## 15. Change log
 
 | Date | Change |
 |---|---|
@@ -371,3 +460,4 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 | 2026-11-22 | Multi-restaurant plan (section 12); note on simultaneous calls in section 5. |
 | 2026-11-22 | Multi-restaurant phase 1 on SQLite: restaurants and versioned menus in the database, calls routed by dialed number, `restaurant_id` on orders and calls, per-restaurant order numbers, admin commands (`ordering_agent/restaurants.py`), `/restaurants` API, restaurant filter on `/orders` and `/calls`, dashboard restaurant picker. |
 | 2026-11-22 | `add-restaurant` skill and menu checker; menus moved to `data/restaurants/<slug>.json`; `restaurant.placeholders` marks unconfirmed settings (Hyderabad House's tax rate). |
+| 2026-11-22 | POS integrations: Square and Clover (OAuth connect, encrypted tokens, orders sent in the background with retries, payment recorded after Stripe, menu import with POS ids), POS status on the dashboard, `ordering_agent.pos` admin commands; Toast partner application drafted. |

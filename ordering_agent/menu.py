@@ -30,6 +30,9 @@ class MenuItem:
     description: str = ""
     options: dict[str, OptionGroup] = field(default_factory=dict)
     extras: dict[str, float] = field(default_factory=dict)
+    # Point-of-sale ids, written by a menu import (see pos.py): {"item": id,
+    # "choices": {option: {choice: {"variation"|"modifier": id}}}, "extras": {extra: id}}
+    pos: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,8 @@ class Menu:
     items: dict[str, MenuItem]
     restaurant_id: int | None = None  # set when the menu belongs to a restaurant in the database
     slug: str | None = None
+    menu_id: int | None = None  # the menu version in the database
+    pos_provider: str | None = None  # the POS the item "pos" ids came from ("square", "clover")
 
     @property
     def tax_rate(self) -> float:
@@ -105,17 +110,18 @@ def load_menu(path: str | Path = DEFAULT_MENU_PATH) -> Menu:
     return parse_menu(json.loads(Path(path).read_text()))
 
 
-def parse_menu(raw: dict, restaurant_id: int | None = None, slug: str | None = None) -> Menu:
+def parse_menu(raw: dict, restaurant_id: int | None = None, slug: str | None = None,
+               menu_id: int | None = None) -> Menu:
     """Build a Menu from menu JSON. Raises MenuError if it isn't usable."""
     try:
-        return _parse(raw, restaurant_id, slug)
+        return _parse(raw, restaurant_id, slug, menu_id)
     except MenuError:
         raise
     except (KeyError, TypeError, ValueError, AttributeError) as e:
         raise MenuError(f"invalid menu: {e!r}") from e
 
 
-def _parse(raw: dict, restaurant_id: int | None, slug: str | None) -> Menu:
+def _parse(raw: dict, restaurant_id: int | None, slug: str | None, menu_id: int | None) -> Menu:
     if not isinstance(raw.get("restaurant"), dict) or not raw["restaurant"].get("name"):
         raise MenuError("menu needs a restaurant block with a name")
     items: dict[str, MenuItem] = {}
@@ -134,7 +140,10 @@ def _parse(raw: dict, restaurant_id: int | None, slug: str | None) -> Menu:
             description=it.get("description", ""),
             options=options,
             extras=dict(it.get("extras", {})),
+            pos=dict(it.get("pos") or {}),
         )
     if not items:
         raise MenuError("menu has no items")
-    return Menu(restaurant=raw["restaurant"], items=items, restaurant_id=restaurant_id, slug=slug)
+    pos = raw.get("pos") or {}
+    return Menu(restaurant=raw["restaurant"], items=items, restaurant_id=restaurant_id, slug=slug,
+                menu_id=menu_id, pos_provider=pos.get("provider") if isinstance(pos, dict) else None)

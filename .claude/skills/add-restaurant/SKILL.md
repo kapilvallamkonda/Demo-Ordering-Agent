@@ -25,7 +25,9 @@ the user's answer.
 Get from the user: the restaurant's name, its menu (photos, PDF, link or text), and as
 much of this as they know: address, hours, sales tax rate, typical pickup minutes,
 whether the kitchen must wait for payment before cooking, preferred area code for the
-number, cuisine and allergy notes. Don't block on the optional ones; anything missing
+number, cuisine and allergy notes, and **which POS they use**. Square and Clover can be
+connected (step 6b), and the menu can then be imported from the POS instead of photos.
+Toast isn't supported yet (partner application pending). Don't block on the optional ones; anything missing
 gets a placeholder (step 2) and goes on the hand-off list.
 
 Pick the slug: lowercase words joined by dashes (`taj-palace`). Check it isn't taken
@@ -111,6 +113,30 @@ If ssh says there are no started machines: `fly status` / `fly logs`. "Trial mac
 stopping" means the Fly account has no card yet (https://fly.io/trial); start it with
 `fly machine start <id>` to finish, and tell the user the line won't stay up.
 
+## 6b. Connect their POS (Square or Clover, optional)
+
+Needs `POS_SECRET_KEY` and the provider's app credentials as Fly secrets (see README).
+Print a connect link and send it to the owner; it works for an hour:
+
+```bash
+fly ssh console --app phone-ordering-agent-604b -C "python -m ordering_agent.pos connect-link <slug> square"
+fly ssh console --app phone-ordering-agent-604b -C "python -m ordering_agent.pos status"
+```
+
+After they approve, `status` shows the merchant and location. If Square has several
+locations, ask which one and run `set-location <slug> <LOCATION_ID>`.
+
+To take the menu from the POS (keeps POS ids, so orders land as real POS items):
+
+```bash
+fly ssh console --app phone-ordering-agent-604b -C "python -m ordering_agent.pos import-menu <slug>" \
+  > data/restaurants/<slug>.json
+```
+
+Then repeat steps 3 (check; add Vegetarian/Spicy tags and notes by hand), 6 (commit,
+deploy, `set-menu`). Re-import whenever they change prices on the POS. Tell the user that
+on Square, orders show on the POS only once paid (recommend pay-before-cooking).
+
 ## 7. Verify
 
 A signed request to `/voice` for the new number must return its greeting:
@@ -149,6 +175,8 @@ Tell the user, briefly:
   the top. The token sees every restaurant, so don't share it with restaurant staff yet.
 - Payment links: still sent from the shared `TWILIO_SMS_FROM` number (per-restaurant
   texting is phase 3).
+- POS: connected or not; if connected, place a test order and check it appears on the
+  POS (dashboard badge "On POS"; "Not on POS" shows the error on hover).
 
 If a step changed how onboarding works (not just added a restaurant), update
 `docs/DESIGN.md` per `CLAUDE.md`. Adding a restaurant by itself needs no design update.

@@ -70,9 +70,27 @@ class RestaurantDirectory:
             payload = self.store.menu_payload(row.menu_id)
             if payload is None:
                 return None
-            menu = parse_menu(payload, restaurant_id=row.id, slug=row.slug)
+            menu = parse_menu(payload, restaurant_id=row.id, slug=row.slug, menu_id=row.menu_id)
             with self._lock:
                 self._menus[row.menu_id] = menu
+        return menu
+
+    def menu_version(self, restaurant_id: int, menu_id: int | None) -> Menu | None:
+        """The menu an old order was taken from (or the current one if that's unknown)."""
+        row = self.store.restaurant(restaurant_id)
+        if row is None:
+            return None
+        if menu_id is None or menu_id == row.menu_id:
+            return self._menu(row, require_active=False)
+        with self._lock:
+            menu = self._menus.get(menu_id)
+        if menu is None:
+            payload = self.store.menu_payload(menu_id)
+            if payload is None:
+                return self._menu(row, require_active=False)
+            menu = parse_menu(payload, restaurant_id=row.id, slug=row.slug, menu_id=menu_id)
+            with self._lock:
+                self._menus[menu_id] = menu
         return menu
 
     def listing(self) -> list[dict]:

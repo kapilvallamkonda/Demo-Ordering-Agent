@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .order import Order, OrderError
 from .payments import PaymentService
 from .storage import OrderStore
+
+if TYPE_CHECKING:
+    from .pos import PosHub
 
 log = logging.getLogger("ordering_agent.tools")
 
@@ -119,6 +122,7 @@ class CallSession:
     store: OrderStore | None = None
     call_id: str | None = None
     payments: PaymentService | None = None
+    pos: "PosHub | None" = None  # sends placed orders to the restaurant's point of sale
     order_number: int | None = None  # per-restaurant number, what the caller hears
     order_id: int | None = None  # internal row id
     end_requested: bool = False
@@ -141,6 +145,11 @@ def _place_order(session: CallSession) -> dict:
             payment_status="unpaid" if payments else "not_requested",
         )
         session.order_number, session.order_id = saved.number, saved.id
+        if session.pos is not None:
+            try:
+                session.pos.order_placed(saved.id, menu.restaurant_id)  # in the background
+            except Exception:
+                log.exception("couldn't queue order %s for the POS", saved.number)
     result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
                     "ready_in_minutes": menu.restaurant.get("pickup_minutes")}
     if not payments:

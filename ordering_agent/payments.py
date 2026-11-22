@@ -132,10 +132,11 @@ def payment_service_from_env(base_url: str) -> PaymentService | None:
 
 
 def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Menu | None],
-                        sms: SmsSender | None) -> str:
+                        sms: SmsSender | None, on_paid: Callable[[int], None] | None = None) -> str:
     """Apply a (signature-verified) Stripe event to the order. Returns what happened.
 
-    menu_for(restaurant_id) gives the order's restaurant, for the wording of the text."""
+    menu_for(restaurant_id) gives the order's restaurant, for the wording of the text.
+    on_paid(order_id) is told about newly paid orders (to record it on the POS)."""
     kind = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
     payment_id = obj.get("id")
@@ -160,6 +161,11 @@ def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Men
     if not changed:
         return "duplicate"
     log.info("order %s payment %s", changed["order_number"], outcome)
+    if outcome == "paid" and on_paid:
+        try:
+            on_paid(changed["order_id"])
+        except Exception:
+            log.exception("couldn't pass payment of order %s to the POS", changed["order_number"])
     if text and sms and changed.get("customer_phone"):
         try:
             sms.send(changed["customer_phone"], text)
