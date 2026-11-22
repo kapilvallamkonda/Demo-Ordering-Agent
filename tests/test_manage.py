@@ -217,9 +217,18 @@ def test_restore_and_discard(app):
 def test_manage_page_is_served_with_safe_headers(app):
     c, *_ = app
     r = c.get("/manage")
-    assert r.status_code == 200 and "<title>Phone Agent</title>" in r.text
+    assert r.status_code == 200 and "<title>Ringcart</title>" in r.text
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_brand_name_is_one_setting(app, monkeypatch):
+    c, *_ = app
+    monkeypatch.setenv("BRAND_NAME", "Acme & Co")
+    for path in ("/", "/manage"):
+        r = c.get(path)
+        assert "{{BRAND}}" not in r.text and "Ringcart" not in r.text
+        assert '<meta name="application-name" content="Acme &amp; Co">' in r.text
 
 
 # ---- catalog rules and checks -------------------------------------------------------------------

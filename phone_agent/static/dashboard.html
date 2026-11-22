@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Phone Orders</title>
+<title>{{BRAND}} · Orders</title>
+<meta name="application-name" content="{{BRAND}}">
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
@@ -93,7 +94,7 @@
 <body>
 <header>
   <div>
-    <h1 id="title">Phone Orders</h1>
+    <h1 id="title">Orders</h1>
     <div class="sub" id="status">Loading…</div>
   </div>
   <div style="display:flex;gap:8px">
@@ -104,6 +105,7 @@
 <main id="app"></main>
 
 <script>
+  const BASE_TITLE = document.title;
 (() => {
   const KEY = "orders_dashboard_token";
   const REFRESH_MS = 10000;
@@ -194,8 +196,8 @@
         businessId = ""; try { localStorage.removeItem(RKEY); } catch {}
         return load();
       }
-      document.getElementById("title").textContent = own ? own.name + " · Phone Orders"
-        : businesses.length === 1 ? businesses[0].name + " · Phone Orders" : "Phone Orders";
+      document.getElementById("title").textContent = own ? own.name + " · Orders"
+        : businesses.length === 1 ? businesses[0].name + " · Orders" : "Orders";
       const live = calls.find(c => c.call_id === openCall);
       if (openCall && (!transcripts.has(openCall) || (live && !live.ended_at))) await loadTranscript(openCall);
       const ids = new Set(data.map(o => o.id));
@@ -263,7 +265,7 @@
     }
     renderList();
     app.replaceChildren(tabs, tiles, controls, list);
-    if (fresh.size) document.title = `(${fresh.size} new) Phone Orders`;
+    if (fresh.size) document.title = `(${fresh.size} new) ${BASE_TITLE}`;
   }
 
   const fmtDuration = c => {
@@ -336,7 +338,7 @@
 
   document.getElementById("refresh").addEventListener("click", () => token ? load() : showLogin());
   document.getElementById("logout").addEventListener("click", () => { store.clear(); token = ""; showLogin(); });
-  window.addEventListener("focus", () => { document.title = "Phone Orders"; });
+  window.addEventListener("focus", () => { document.title = BASE_TITLE; });
   token ? start() : showLogin();
 })();
 </script>

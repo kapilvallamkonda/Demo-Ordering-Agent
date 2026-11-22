@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Phone Agent</title>
+<title>{{BRAND}}</title>
+<meta name="application-name" content="{{BRAND}}">
 <meta name="description" content="An AI that answers your business's phone and takes orders. Set it up in minutes.">
 <style>
   :root {
@@ -18,7 +19,8 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; max-width: 1080px; margin: auto; }
   .logo { font-weight: 750; font-size: 18px; display: flex; align-items: center; gap: 8px; }
-  .dot { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: var(--accent-text); font-size: 15px; }
+  .logo span { letter-spacing: -0.02em; }
+  .mark { flex: none; display: block; }
   a.btn, button.btn { display: inline-flex; align-items: center; gap: 10px; border-radius: 10px; padding: 12px 20px; font-weight: 650;
            text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer; }
   a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -45,7 +47,7 @@
 </head>
 <body>
 <header>
-  <div class="logo"><span class="dot" aria-hidden="true">☎</span>Phone Agent</div>
+  <div class="logo"><svg class="mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" style="fill:var(--accent)"/><circle cx="14" cy="14" r="7.5" fill="none" stroke-width="2.6" style="stroke:var(--accent-text)"/><circle cx="14" cy="14" r="2.6" style="fill:var(--accent-text)"/></svg><span>{{BRAND}}</span></div>
   <a class="btn small" href="/manage">Sign in</a>
 </header>
 <main>
@@ -71,7 +73,7 @@
     <div class="step"><div class="n">4</div><h3>Go live</h3><p>Get your own phone number, or forward your existing line to it.</p></div>
   </section>
 </main>
-<footer>Phone Agent · Orders show up in your dashboard, or on your Square or Clover POS.</footer>
+<footer>{{BRAND}} · Orders show up in your dashboard, or on your Square or Clover POS.</footer>
 <script>
   // Without Google sign-in configured, send people to the regular sign-in page.
   fetch("/api/manage/config").then(r => r.json()).then(c => {

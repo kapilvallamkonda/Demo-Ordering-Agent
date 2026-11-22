@@ -1,6 +1,6 @@
-# High-Level Design: Phone Agent for Businesses
+# High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (self-serve sign-up and onboarding).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (product name Ringcart, set in one place).
 
 ## 1. Goal
 
@@ -273,7 +273,8 @@ provider, voice, language, extra ConversationRelay attributes), Twilio (auth tok
 public URL, account SID and SMS sender number), Stripe (secret key, webhook secret),
 storage (database file; catalog file for the terminal chat), admin (`/orders` token),
 POS (`POS_SECRET_KEY`, which turns POS sending on and encrypts tokens; Square and Clover
-app credentials and environment). Payment links are on
+app credentials and environment), branding (`BRAND_NAME`, the product name on every
+page). Payment links are on
 only when `STRIPE_SECRET_KEY` and the Twilio SMS settings are all set; otherwise
 customers pay at pickup. Per-business settings (tax, pickup time, pay-first rule,
 hours, notes) live in each business's catalog, not in environment variables.
@@ -594,7 +595,11 @@ booking guarantee (wants Postgres), reschedule/cancel, confirmation and reminder
 read-back of date and time on the call, and later sync with Google Calendar or Square
 Appointments.
 
-**Names.** Since 2026-11-22 the project is **Phone Agent** (package `phone_agent`, repo
+**Names.** The product is called **Ringcart** on everything people see. The name is one
+setting, `BRAND_NAME` (default `Ringcart`, `phone_agent/brand.py`): pages in `static/`
+write `{{BRAND}}`, filled in (HTML-escaped) when served, and scripts read it from
+`<meta name="application-name">`. Rebranding is that one value. The code name stays
+**Phone Agent** (package `phone_agent`, repo
 `phone-agent`, Fly app `phone-agent-604b`) and code and storage use generic names:
 business, catalog, item, `business_id`, `catalog_id`, the `settings` block. "Restaurant"
 and "menu" appear only where they mean the restaurant template.
@@ -734,3 +739,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Renamed to **Phone Agent**: package `phone_agent`, repo `phone-agent`, Fly app `phone-agent-604b` (new app and volume; the old app and its test data were retired). Generic names throughout: `businesses.py`, `catalog.py`, `catalog_check.py`, `Store`, `PhoneAgent`; tables `businesses`, `catalog_versions`, `catalog_drafts`, `user_businesses`; `business_id`/`catalog_id`; catalog JSON `settings` block; `/businesses` and `?business=`; env `DATABASE_PATH`, `ADMIN_API_TOKEN`, `CATALOG_PATH`; CLI `set-catalog`, `--catalog`, `--business`, `import-catalog`; skill `add-business`. Schema created in full, with the old upgrade code removed. |
 | 2026-11-22 | Modules and isolation: call logic split into modules (`phone_agent/modules/`, orders built, bookings registered as coming soon) with a generic agent, dispatcher and call session (`session.py`); the prompt is unchanged. Businesses isolated: a broken catalog only takes its own business offline; `/ws` requires a per-call token from `/voice` and a matching dialed number; `MAX_CALLS_PER_BUSINESS`; POS retries on timers with at most 2 jobs per business; catalog versions looked up within their business. |
 | 2026-11-22 | Self-serve sign-up and onboarding: landing page, sign in with Google, create a business from a template, read the menu from photos or PDF with Claude, test chat in the browser, go live (automatic number purchase within limits, operator approval past them), pause/resume, team by email with owner/manager roles, per-business orders and calls, POS connect buttons, operator queue. Database schema versioning (`Store._migrate`, version 2). |
+| 2026-11-22 | Product name **Ringcart**, set in one place: `BRAND_NAME` (`phone_agent/brand.py`) fills `{{BRAND}}` in the landing page, `/manage` and the dashboard; new logo mark in place of the phone emoji. Code, repo and Fly app names unchanged. |

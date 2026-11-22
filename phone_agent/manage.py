@@ -20,13 +20,13 @@ import hmac
 import json
 import logging
 import os
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from .accounts import Accounts, LoginLimiter, check_password_rules
 from .catalog_check import check_catalog
+from . import brand
 from .settings_schema import settings_for
 from .templates import TEMPLATES, get_template
 
@@ -35,7 +35,6 @@ log = logging.getLogger("phone_agent.manage")
 router = APIRouter()
 COOKIE = "oa_session"
 MAX_BODY = 2_000_000
-MANAGE_HTML = Path(__file__).parent / "static" / "manage.html"
 limiter = LoginLimiter()
 
 PAGE_HEADERS = {
@@ -50,7 +49,7 @@ PAGE_HEADERS = {
 
 @router.get("/manage", response_class=HTMLResponse)
 async def manage_page() -> HTMLResponse:
-    return HTMLResponse(MANAGE_HTML.read_text(), headers=PAGE_HEADERS)
+    return HTMLResponse(brand.page("manage.html"), headers=PAGE_HEADERS)
 
 
 # ---- who is asking -----------------------------------------------------------------------

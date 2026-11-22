@@ -166,7 +166,7 @@ def test_dashboard_and_orders_need_token(app_client, monkeypatch):
     assert c.get("/orders").status_code == 404
     monkeypatch.setattr(server, "ADMIN_API_TOKEN", "tok")
     page = c.get("/dashboard")
-    assert page.status_code == 200 and "Phone Orders" in page.text
+    assert page.status_code == 200 and "<title>Ringcart · Orders</title>" in page.text
     assert c.get("/orders").status_code == 401
     assert c.get("/orders", headers={"authorization": "Bearer nope"}).status_code == 401
     r = c.get("/orders?limit=5", headers={"authorization": "Bearer tok"})

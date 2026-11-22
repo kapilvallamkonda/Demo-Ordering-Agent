@@ -1,6 +1,6 @@
-# Phone Agent
+# Ringcart
 
-A demo AI phone agent for businesses. Callers dial a business's Twilio number and talk
+Ringcart (code name Phone Agent: package `phone_agent`, repo `phone-agent`) is a demo AI phone agent for businesses. Callers dial a business's Twilio number and talk
 to Claude, which takes their pickup order with tools, reads it back, places it and
 gives an order number. Each business picks a **template** (restaurant or shop today;
 salons and other appointment-based services are coming soon). Businesses sign up
@@ -194,6 +194,7 @@ They include a full phone order over the WebSocket.
 | `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
+| `BRAND_NAME` | `Ringcart` | Product name shown on the website, sign-in and dashboards (`phone_agent/brand.py`). |
 | `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |
 | `CATALOG_PATH` | `data/businesses/hyderabad-house.json` | Catalog file for the terminal chat when `--business` isn't given. Live calls use catalogs in the database. |
 | `ADMIN_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |

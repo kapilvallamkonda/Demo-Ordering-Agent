@@ -25,7 +25,6 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
 import anthropic
@@ -33,6 +32,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
+from . import brand
 from .agent import PhoneAgent
 from .google_auth import router as google_router
 from .manage import router as manage_router
@@ -50,7 +50,6 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 ADMIN_API_TOKEN = os.environ.get("ADMIN_API_TOKEN", "")
-DASHBOARD_HTML = Path(__file__).parent / "static" / "dashboard.html"
 WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish before hanging up
 # An interrupted reply that is mid tool call (e.g. placing the order) is allowed this long
 # to finish before it is cancelled anyway.
@@ -131,18 +130,17 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Phone Agent", lifespan=lifespan)
+app = FastAPI(title=brand.name(), lifespan=lifespan)
 app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
 app.include_router(onboarding_router)  # self-serve: create a business, read a menu, go live, team ...
 app.include_router(google_router)  # /auth/google: sign in with Google
-LANDING_HTML = Path(__file__).parent / "static" / "landing.html"
 
 
 @app.get("/", response_class=HTMLResponse)
 async def landing() -> HTMLResponse:
     from .manage import PAGE_HEADERS
 
-    return HTMLResponse(LANDING_HTML.read_text(), headers=PAGE_HEADERS)
+    return HTMLResponse(brand.page("landing.html"), headers=PAGE_HEADERS)
 
 
 def _public_base(request: Request) -> str:
@@ -287,7 +285,7 @@ async def dashboard() -> str:
     """Orders dashboard. The page holds no data; it asks for ADMIN_API_TOKEN and reads /orders."""
     if not ADMIN_API_TOKEN:
         raise HTTPException(status_code=404)
-    return DASHBOARD_HTML.read_text()
+    return brand.page("dashboard.html")
 
 
 @app.post("/stripe/webhook")
