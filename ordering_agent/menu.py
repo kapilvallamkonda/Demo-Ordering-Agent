@@ -33,6 +33,7 @@ class MenuItem:
     # Point-of-sale ids, written by a menu import (see pos.py): {"item": id,
     # "choices": {option: {choice: {"variation"|"modifier": id}}}, "extras": {extra: id}}
     pos: dict = field(default_factory=dict)
+    available: bool = True  # False: sold out / off the menu for now (staff toggle it in /manage)
 
 
 @dataclass(frozen=True)
@@ -68,10 +69,11 @@ class Menu:
         Output is deterministic (stable ordering) so it stays prompt-cache friendly.
         """
         r = self.restaurant
+        unset = "not available on this line yet; say you don't have that information"
         lines = [
             f"Restaurant: {r.get('name')}",
-            f"Address: {r.get('address')}",
-            f"Hours: {r.get('hours')}",
+            f"Address: {r.get('address') or unset}",
+            f"Hours: {r.get('hours') or unset}",
             f"Order types: {', '.join(r.get('order_types', []))}",
             f"Typical pickup time: {r.get('pickup_minutes')} minutes",
         ]
@@ -89,7 +91,8 @@ class Menu:
         for cat, items in by_cat.items():
             lines.append(f"\n## {cat}")
             for it in items:
-                lines.append(f"- {it.id} | {it.name} | ${it.price:.2f} | {it.description}")
+                sold_out = "" if it.available else " | SOLD OUT today: can't be ordered"
+                lines.append(f"- {it.id} | {it.name} | ${it.price:.2f} | {it.description}{sold_out}")
                 for grp in it.options.values():
                     choices = ", ".join(
                         f"{c}" + (f" (+${d:.2f})" if d else "") for c, d in grp.choices.items()
@@ -141,6 +144,7 @@ def _parse(raw: dict, restaurant_id: int | None, slug: str | None, menu_id: int 
             options=options,
             extras=dict(it.get("extras", {})),
             pos=dict(it.get("pos") or {}),
+            available=it.get("available", True) is not False,
         )
     if not items:
         raise MenuError("menu has no items")

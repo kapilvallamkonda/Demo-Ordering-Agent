@@ -171,6 +171,13 @@ Tell the user, briefly:
   forwarded calls can ring at once.
 - Everything still a placeholder or missing (from step 3), to confirm with the
   restaurant, and that fixing them is: edit the file, re-run step 3, deploy, `set-menu`.
+- Menu manager: invite the restaurant's staff so they can fix prices, mark dishes sold
+  out and edit settings themselves:
+  `fly ssh console --app phone-ordering-agent-604b -C "python -m ordering_agent.accounts invite <email> --restaurant <slug>"`.
+  Send them the printed link (one use, 72 hours). They edit at `/manage`; their changes
+  go live when they publish. Menu files in git are then only the starting point; the
+  live menu is in the database (`set-menu` from a file replaces their edits, so check
+  `/manage` history first).
 - Dashboard: `https://phone-ordering-agent-604b.fly.dev/dashboard`, restaurant picker at
   the top. The token sees every restaurant, so don't share it with restaurant staff yet.
 - Payment links: still sent from the shared `TWILIO_SMS_FROM` number (per-restaurant

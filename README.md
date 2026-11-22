@@ -44,6 +44,10 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 | `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
 | `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
 | `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a restaurant's Square or Clover, send each placed order to it, import its menu. Admin commands: `python -m ordering_agent.pos --help`. |
+| `ordering_agent/manage.py`, `static/manage.html` | Menu manager at `/manage`: restaurant staff sign in and edit their menu and settings (draft, publish, history). |
+| `ordering_agent/accounts.py` | Staff accounts: invite links, passwords, sessions. `python -m ordering_agent.accounts --help`. |
+| `ordering_agent/settings_schema.py` | The restaurant settings staff can edit; the settings form is built from it. Add a setting here. |
+| `ordering_agent/menu_check.py` | Menu checks used by the menu manager and the add-restaurant skill. |
 | `ordering_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
 | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders and call transcripts (SQLite). |
 
@@ -216,6 +220,21 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
 - DTMF (keypad) input is ignored.
 - Square and Clover integrations are tested against fake APIs only so far; Toast needs
   its partner program first (`docs/toast-partner-application.md`).
+
+## Menu manager (for restaurant staff)
+
+Restaurants edit their own phone menu at `/manage`: dishes, descriptions, prices,
+choices and extras, sold-out switches, and settings (greeting, hours, address, pickup
+time, tax, payment rule, notes for the agent). Changes save to a draft automatically and
+reach callers when someone presses Publish. See [docs/DESIGN.md](docs/DESIGN.md) section 14.
+
+```bash
+# On the server: invite someone (prints a one-time link where they choose a password)
+python -m ordering_agent.accounts invite owner@example.com --restaurant hyderabad-house --name "Owner"
+python -m ordering_agent.accounts list
+```
+
+To add a setting staff can edit, add an entry to `SETTINGS` in `ordering_agent/settings_schema.py`.
 
 ## POS integrations (Square, Clover)
 

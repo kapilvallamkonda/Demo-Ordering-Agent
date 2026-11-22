@@ -1,6 +1,6 @@
 # High-Level Design: Phone Ordering Agent
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (POS integrations).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (menu manager).
 
 ## 1. Goal
 
@@ -58,6 +58,7 @@ flowchart LR
 | Storage | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders (order and payment status, per-restaurant order numbers) and call transcripts, in SQLite. All SQL is in this file. Adds new columns to older databases on startup. |
 | POS integrations | `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py`; `server.py` `/pos/<provider>/callback` | Connects a restaurant's Square or Clover account (OAuth, encrypted tokens), sends each placed order to it in the background with retries, records the online payment there, imports the POS menu into a menu file. Section 13. |
 | Terminal client | `ordering_agent/cli.py` | Same agent without a phone, for testing. |
+| Menu manager | `ordering_agent/manage.py` (`/manage`, `/api/manage/...`), `static/manage.html`, `accounts.py`, `settings_schema.py`, `menu_check.py` | Web page where restaurant staff sign in and edit their own menu (dishes, descriptions, prices, choices, extras, sold out) and settings. Edits autosave to a draft; publishing makes a new menu version used from the next call. History with restore. Section 14. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
 
 ## 3. Call flow
@@ -186,6 +187,16 @@ is how to find out why a call didn't produce an order.
   variation or Clover item), `pos.choices` (each option choice to a variation or
   modifier id), `pos.extras`, and `pos_key` (keeps our item id stable across
   re-imports). The menu's top-level `pos.provider` says which POS they belong to.
+- **User:** email (unique), name, scrypt password hash (empty until they accept their
+  invite), active flag; linked to one or more restaurants (`user_restaurants`, role
+  `manager`).
+- **Auth token:** SHA-256 of a session or invite token, kind, user, expiry (sessions 14
+  days, invites 72 hours).
+- **Menu draft:** one per restaurant: the edited menu JSON, the live version it started
+  from, a revision number (for conflict checks), who and when last saved. Published
+  menu versions record who published them (`created_by`: an email or `operator`).
+- **Menu item extras:** `available: false` marks a dish sold out (the agent says so and
+  `add_item` refuses it); `restaurant.greeting` overrides the opening line.
 - **Call row:** Twilio call SID, restaurant, start and end time, caller phone, order number (if any).
 - **Call event:** call SID, time, role (`caller` / `agent` / `tool` / `event`), text
   (at most 4,000 characters).
@@ -236,6 +247,15 @@ hours, notes) live in each restaurant's menu, not in environment variables.
 - `/stripe/webhook` is off unless `STRIPE_WEBHOOK_SECRET` is set, and rejects events
   without a valid Stripe signature. Retried events don't change state twice or send
   duplicate texts.
+- `/manage`: staff sign in with email and password (scrypt; 10+ characters), set from a
+  one-time invite link (token in the URL fragment, so it isn't logged). Sessions are
+  random tokens in an HttpOnly, SameSite=Lax cookie (Secure on https); only hashes are
+  stored. Failed sign-ins are limited per email and per IP (8 per 15 minutes). Writes
+  need an `X-Manage` header and a matching Origin (CSRF). Each user only sees their own
+  restaurants (other ids return 404); the operator can use `ORDERS_API_TOKEN` as a
+  Bearer token. The page is served with a strict CSP, `X-Frame-Options: DENY` and
+  `no-store`. Every save is validated on the server (menu_check.py), whatever the page
+  sends.
 - `RELAY_EXTRA_ATTRS` can't override `url` or `welcomeGreeting`.
 - POS access tokens are encrypted at rest (Fernet, `POS_SECRET_KEY`); losing the key
   means reconnecting every restaurant. Connect links carry an HMAC-signed state naming
@@ -275,7 +295,11 @@ validation. POS tests (fake Square and Clover APIs over `httpx.MockTransport`): 
 bodies, catalog-linked lines and modifiers, retries with one idempotency key, permanent
 rejections, external payment after Stripe, Clover partial-order cleanup, token refresh,
 encrypted tokens, signed connect state, the OAuth callback, menu import (and keeping item
-ids on re-import), and admin commands. Not yet tried against the real sandboxes.
+ids on re-import), and admin commands. Not yet tried against the real sandboxes. Menu manager tests: invites and sign-in, password rules, rate limiting, disabled users,
+CSRF header and Origin checks, access to other restaurants, operator token, draft
+revisions and conflicts, publish reaching the next call (greeting, new dish, sold-out
+dish refused), errors blocking publish, publishing over a newer menu, restore and
+discard, page security headers, and the checks on the real menu.
 
 ## 12. Multi-restaurant plan (phase 1 built, except Postgres)
 
@@ -331,9 +355,11 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
    is restaurant #1. **Still to do:** move to Postgres (provider not chosen; Netlify
    Database was looked at and isn't a fit, since it's tied to apps deployed on Netlify;
    Neon directly or Fly Managed Postgres are the candidates).
-2. Staff logins and per-restaurant dashboards.
+2. Staff logins and per-restaurant dashboards. **Started 2026-11-22:** staff accounts and
+   the menu manager (section 14). The orders dashboard still uses the shared token.
 3. Stripe Connect and per-restaurant SMS (needed before payment links go live for anyone).
 4. Onboarding from photos and the admin page, so restaurant #2 needs no hand-edited JSON.
+   The menu manager (section 14) now covers editing after onboarding.
    Until then, onboarding is done with the Claude Code skill
    `.claude/skills/add-restaurant/` (menu file from photos, `check_menu.py`, Twilio
    number, registration on Fly, signed test call). Menu files live in git at
@@ -396,7 +422,56 @@ no vegetarian/spice tags; add them in review.
 - The POS doesn't replace our dashboard: unpaid Square orders and failed sends are only
   visible there.
 
-## 14. Open issues and next steps
+## 14. Menu manager (restaurant web interface)
+
+Restaurant staff edit their own phone menu and settings at `/manage`, without us
+editing JSON files.
+
+**Accounts.** The operator invites people with
+`python -m ordering_agent.accounts invite EMAIL --restaurant SLUG`, which prints a
+one-time link where they choose a password. Resetting a password is the same command.
+`list`, `grant`, `revoke`, `disable` manage access. A person can manage several
+restaurants (a picker appears).
+
+**Editing.** The page loads the restaurant's draft (or the live menu), and every change
+is saved to the draft about a second later. Callers keep hearing the live menu until
+someone presses Publish, which validates the draft, stores it as a new menu version
+(recording who published it) and deletes the draft; the next call uses it, with no
+restart. Discard drops the draft; History lists published versions and can restore one
+into the draft.
+
+- Menu tab: dishes by section, search, filters (sold out, estimated price), a
+  sold-out switch on every dish, rename a section, add/delete dishes. The dish panel
+  edits name, section, price, description (with tag chips such as Vegetarian, Spicy,
+  Contains nuts), availability, choices (required or not, each option with its added
+  price) and extras. New dishes get an id from their name; ids never change after that.
+  Changing an estimated price, or pressing "It's right", clears the estimate flag.
+- Settings tab: built from `settings_schema.py` (name, greeting, address, hours,
+  pickup time, sales tax, pay-first rule, link validity, notes for the agent).
+  Estimated settings show a confirm prompt.
+- Checks (`menu_check.py`, shared with the add-restaurant skill) run on every save:
+  errors (out-of-range values, missing names or prices, bad choices) block publishing;
+  "please confirm" items (estimated prices or settings, no tax) and suggestions are shown.
+
+**Adding a setting later:** add an entry to `SETTINGS` in `settings_schema.py` (path,
+type, label, help, limits) and read it where it's used. The form and server-side
+validation follow automatically. Supported types: text, textarea, integer, percent,
+boolean, string_list.
+
+**Conflicts.** Each draft save carries the revision it was based on; a stale one gets
+409 and the page asks to reload. If someone published a newer menu after the draft was
+started (for example the operator or a POS import), publishing asks for confirmation
+before replacing it.
+
+**Decisions**
+
+- Draft then publish, rather than live edits, so a half-finished change never reaches
+  callers (2026-11-22).
+- Invite links instead of operator-chosen passwords, and no email provider yet: the
+  operator sends the link (2026-11-22).
+- One plain HTML page with no build step, like the dashboard.
+
+## 15. Open issues and next steps
 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
@@ -412,8 +487,13 @@ no vegetarian/spice tags; add them in review.
   US SMS registration (A2P 10DLC) for the Twilio number, or US carriers block the texts.
 - The dashboard is read-only: no "ready" / "picked up" status, and it polls rather than
   pushing new orders. Cancelled pay-first orders show there but aren't announced.
-- The dashboard token is one shared secret that sees every restaurant; staff logins
-  scoped to one restaurant are phase 2.
+- The orders dashboard still uses one shared token that sees every restaurant; move it
+  onto staff sign-in (scoped to their restaurants) next, now that accounts exist.
+- Menu manager (section 14): no email sending, so invites and password resets are links
+  the operator sends by hand; no roles beyond "manager"; no photo upload or
+  menu-from-photos; editing a POS-linked dish's price doesn't change the POS. Sign-in
+  limits are in memory (reset on restart). Two people editing at once get a conflict
+  message and must reload, not a merge.
 - Refunds and order changes after payment are handled manually in Stripe.
 - Before scaling past one Fly machine, move to Postgres (SQLite is on one volume). Order
   numbers are assigned as max + 1 under a process lock, which is only safe on one
@@ -422,8 +502,8 @@ no vegetarian/spice tags; add them in review.
   period (delete after N days) before real customers call.
 - The first live order that wasn't saved (call `CA277d47…`, before transcripts) is still
   unexplained; the next failed call will have a transcript to check.
-- Multi-restaurant support (section 12): finish phase 1 with Postgres, then phase 2
-  (staff logins). Payment texts still come from one `TWILIO_SMS_FROM` number for every
+- Multi-restaurant support (section 12): finish phase 1 with Postgres, then the
+  rest of phase 2 (dashboard on staff sign-in). Payment texts still come from one `TWILIO_SMS_FROM` number for every
   restaurant until phase 3.
 - POS (section 13): not yet tried against the real Square or Clover sandboxes; needs
   developer accounts and app credentials. To test: a Square sandbox token and seller
@@ -442,7 +522,7 @@ no vegetarian/spice tags; add them in review.
 - Possible features: delivery, kitchen display, order status from the POS back to the
   dashboard ("ready").
 
-## 15. Change log
+## 16. Change log
 
 | Date | Change |
 |---|---|
@@ -461,3 +541,4 @@ no vegetarian/spice tags; add them in review.
 | 2026-11-22 | Multi-restaurant phase 1 on SQLite: restaurants and versioned menus in the database, calls routed by dialed number, `restaurant_id` on orders and calls, per-restaurant order numbers, admin commands (`ordering_agent/restaurants.py`), `/restaurants` API, restaurant filter on `/orders` and `/calls`, dashboard restaurant picker. |
 | 2026-11-22 | `add-restaurant` skill and menu checker; menus moved to `data/restaurants/<slug>.json`; `restaurant.placeholders` marks unconfirmed settings (Hyderabad House's tax rate). |
 | 2026-11-22 | POS integrations: Square and Clover (OAuth connect, encrypted tokens, orders sent in the background with retries, payment recorded after Stripe, menu import with POS ids), POS status on the dashboard, `ordering_agent.pos` admin commands; Toast partner application drafted. |
+| 2026-11-22 | Menu manager at `/manage`: staff accounts with invite links (`ordering_agent.accounts`), sessions, drafts with autosave, publish, history and restore, settings form built from `settings_schema.py`, shared menu checks (`menu_check.py`), sold-out dishes (`available: false`), custom greeting. Unset address/hours no longer reach the prompt as "None". |

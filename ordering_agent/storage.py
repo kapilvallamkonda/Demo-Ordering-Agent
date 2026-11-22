@@ -43,6 +43,7 @@ _ORDER_COLUMNS = {
     "pos_paid": "INTEGER NOT NULL DEFAULT 0",  # the online payment has been recorded on the POS
 }
 _CALL_COLUMNS = {"restaurant_id": "INTEGER"}
+_MENU_COLUMNS = {"created_by": "TEXT"}  # who published it: a user's email, or "operator"
 
 
 @dataclass(frozen=True)
@@ -133,9 +134,51 @@ class OrderStore:
                 updated_at REAL NOT NULL
             )"""
         )
+        # Restaurant staff who sign in to /manage. A user can belong to several restaurants.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL DEFAULT '',
+                password_hash TEXT,
+                created_at REAL NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            )"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS user_restaurants (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+                role TEXT NOT NULL DEFAULT 'manager',
+                PRIMARY KEY (user_id, restaurant_id)
+            )"""
+        )
+        # Sign-in sessions and set-password invites. Only SHA-256 hashes of the tokens are stored.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS auth_tokens (
+                token_hash TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL
+            )"""
+        )
+        # Unpublished menu edits, one per restaurant. base_menu_id is the live version the
+        # draft started from, to catch someone else publishing in the meantime.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS menu_drafts (
+                restaurant_id INTEGER PRIMARY KEY REFERENCES restaurants(id),
+                payload TEXT NOT NULL,
+                base_menu_id INTEGER,
+                revision INTEGER NOT NULL DEFAULT 1,
+                updated_at REAL NOT NULL,
+                updated_by TEXT
+            )"""
+        )
         # Databases created before payments / multiple restaurants get the new columns.
         self._add_columns("orders", _ORDER_COLUMNS)
         self._add_columns("calls", _CALL_COLUMNS)
+        self._add_columns("menus", _MENU_COLUMNS)
         c.execute("UPDATE orders SET number = id WHERE number IS NULL")
         c.execute("CREATE INDEX IF NOT EXISTS orders_payment_id ON orders(payment_id)")
         c.execute("CREATE INDEX IF NOT EXISTS orders_restaurant ON orders(restaurant_id, number)")
@@ -164,17 +207,17 @@ class OrderStore:
             self._conn.commit()
             return rid
 
-    def set_menu(self, restaurant_id: int, menu: dict) -> int:
+    def set_menu(self, restaurant_id: int, menu: dict, created_by: str = "operator") -> int:
         """Publish a new menu version for the restaurant. Old versions are kept. Returns its id."""
         with self._lock:
-            menu_id = self._insert_menu(restaurant_id, menu)
+            menu_id = self._insert_menu(restaurant_id, menu, created_by)
             self._conn.commit()
             return menu_id
 
-    def _insert_menu(self, restaurant_id: int, menu: dict) -> int:
+    def _insert_menu(self, restaurant_id: int, menu: dict, created_by: str = "operator") -> int:
         cur = self._conn.execute(
-            "INSERT INTO menus (restaurant_id, created_at, payload) VALUES (?, ?, ?)",
-            (restaurant_id, time.time(), json.dumps(menu, ensure_ascii=False)),
+            "INSERT INTO menus (restaurant_id, created_at, payload, created_by) VALUES (?, ?, ?, ?)",
+            (restaurant_id, time.time(), json.dumps(menu, ensure_ascii=False), created_by),
         )
         menu_id = int(cur.lastrowid)
         self._conn.execute("UPDATE restaurants SET menu_id = ? WHERE id = ?", (menu_id, restaurant_id))
@@ -228,6 +271,163 @@ class OrderStore:
         with self._lock:
             row = self._conn.execute("SELECT payload FROM menus WHERE id = ?", (menu_id,)).fetchone()
         return json.loads(row[0]) if row else None
+
+    def menu_versions(self, restaurant_id: int, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, created_at, created_by, payload FROM menus WHERE restaurant_id = ?"
+                " ORDER BY id DESC LIMIT ?", (restaurant_id, limit)).fetchall()
+        return [{"id": r[0], "created_at": r[1], "created_by": r[2] or "operator",
+                 "items": len(json.loads(r[3]).get("items", []))} for r in rows]
+
+    def menu_version_payload(self, restaurant_id: int, menu_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT payload FROM menus WHERE id = ? AND restaurant_id = ?",
+                                     (menu_id, restaurant_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    # ---- menu drafts -----------------------------------------------------------------
+
+    def draft(self, restaurant_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload, base_menu_id, revision, updated_at, updated_by FROM menu_drafts"
+                " WHERE restaurant_id = ?", (restaurant_id,)).fetchone()
+        if row is None:
+            return None
+        return {"menu": json.loads(row[0]), "base_menu_id": row[1], "revision": row[2],
+                "updated_at": row[3], "updated_by": row[4]}
+
+    def save_draft(self, restaurant_id: int, menu: dict, base_menu_id: int | None,
+                   expected_revision: int | None, updated_by: str) -> int | None:
+        """Save the draft if nobody else saved since `expected_revision` (None: there was
+        no draft). Returns the new revision, or None on a conflict."""
+        payload = json.dumps(menu, ensure_ascii=False)
+        with self._lock:
+            row = self._conn.execute("SELECT revision FROM menu_drafts WHERE restaurant_id = ?",
+                                     (restaurant_id,)).fetchone()
+            current = row[0] if row else None
+            if current != expected_revision:
+                return None
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO menu_drafts (restaurant_id, payload, base_menu_id, revision, updated_at,"
+                    " updated_by) VALUES (?, ?, ?, 1, ?, ?)",
+                    (restaurant_id, payload, base_menu_id, time.time(), updated_by))
+                new = 1
+            else:
+                new = current + 1
+                self._conn.execute(
+                    "UPDATE menu_drafts SET payload = ?, revision = ?, updated_at = ?, updated_by = ?"
+                    " WHERE restaurant_id = ?", (payload, new, time.time(), updated_by, restaurant_id))
+            self._conn.commit()
+            return new
+
+    def delete_draft(self, restaurant_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM menu_drafts WHERE restaurant_id = ?", (restaurant_id,))
+            self._conn.commit()
+
+    def publish_draft(self, restaurant_id: int, menu: dict, created_by: str) -> int:
+        """Publish the menu and drop the draft, in one transaction."""
+        with self._lock:
+            menu_id = self._insert_menu(restaurant_id, menu, created_by)
+            self._conn.execute("DELETE FROM menu_drafts WHERE restaurant_id = ?", (restaurant_id,))
+            self._conn.commit()
+            return menu_id
+
+    # ---- users and sign-in --------------------------------------------------------------
+
+    def add_user(self, email: str, name: str = "") -> int:
+        with self._lock:
+            cur = self._conn.execute("INSERT INTO users (email, name, created_at) VALUES (?, ?, ?)",
+                                     (email, name, time.time()))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def user_by_email(self, email: str) -> dict | None:
+        return self._user("email", email)
+
+    def user(self, user_id: int) -> dict | None:
+        return self._user("id", user_id)
+
+    def _user(self, col: str, value) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT id, email, name, password_hash, active FROM users WHERE {col} = ?", (value,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"id": row[0], "email": row[1], "name": row[2], "password_hash": row[3], "active": bool(row[4])}
+
+    def set_password_hash(self, user_id: int, password_hash: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+            self._conn.commit()
+
+    def set_user_name(self, user_id: int, name: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
+            self._conn.commit()
+
+    def set_user_active(self, user_id: int, active: bool) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE users SET active = ? WHERE id = ?", (int(active), user_id))
+            if not active:
+                self._conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (user_id,))
+            self._conn.commit()
+
+    def grant(self, user_id: int, restaurant_id: int, role: str = "manager") -> None:
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO user_restaurants (user_id, restaurant_id, role)"
+                               " VALUES (?, ?, ?)", (user_id, restaurant_id, role))
+            self._conn.commit()
+
+    def revoke(self, user_id: int, restaurant_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM user_restaurants WHERE user_id = ? AND restaurant_id = ?",
+                               (user_id, restaurant_id))
+            self._conn.commit()
+
+    def user_restaurant_ids(self, user_id: int) -> list[int]:
+        with self._lock:
+            rows = self._conn.execute("SELECT restaurant_id FROM user_restaurants WHERE user_id = ?"
+                                      " ORDER BY restaurant_id", (user_id,)).fetchall()
+        return [r[0] for r in rows]
+
+    def users(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT u.id, u.email, u.name, u.active, u.password_hash IS NOT NULL,"
+                " GROUP_CONCAT(r.slug, ', ') FROM users u"
+                " LEFT JOIN user_restaurants ur ON ur.user_id = u.id"
+                " LEFT JOIN restaurants r ON r.id = ur.restaurant_id GROUP BY u.id ORDER BY u.id").fetchall()
+        return [{"id": r[0], "email": r[1], "name": r[2], "active": bool(r[3]), "has_password": bool(r[4]),
+                 "restaurants": r[5] or ""} for r in rows]
+
+    def add_token(self, token_hash: str, kind: str, user_id: int, expires_at: float) -> None:
+        with self._lock:
+            self._conn.execute("INSERT INTO auth_tokens (token_hash, kind, user_id, created_at, expires_at)"
+                               " VALUES (?, ?, ?, ?, ?)", (token_hash, kind, user_id, time.time(), expires_at))
+            self._conn.execute("DELETE FROM auth_tokens WHERE expires_at < ?", (time.time(),))
+            self._conn.commit()
+
+    def token_user(self, token_hash: str, kind: str) -> int | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT user_id FROM auth_tokens WHERE token_hash = ? AND kind = ? AND expires_at > ?",
+                (token_hash, kind, time.time())).fetchone()
+        return row[0] if row else None
+
+    def delete_token(self, token_hash: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
+            self._conn.commit()
+
+    def delete_user_tokens(self, user_id: int, kind: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM auth_tokens WHERE user_id = ? AND kind = ?", (user_id, kind))
+            self._conn.commit()
 
     # ---- orders ------------------------------------------------------------------
 

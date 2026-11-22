@@ -70,4 +70,7 @@ def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
 
 
 def build_greeting(menu: Menu) -> str:
+    custom = str(menu.restaurant.get("greeting") or "").strip()
+    if custom:
+        return custom
     return f"Thanks for calling {menu.restaurant.get('name', 'us')}! What can I get started for you today?"

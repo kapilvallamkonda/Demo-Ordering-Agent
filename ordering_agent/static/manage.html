@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu Manager</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
+    --accent: #b4441f; --accent-text: #ffffff; --ok: #2f7d4f; --ok-bg: #e6f3eb; --warn: #8a5f00; --warn-bg: #fbf1d9;
+    --bad: #a3322a; --bad-bg: #f9e3e1; --neutral-bg: #efede8; --shadow: 0 8px 30px rgba(0,0,0,.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #201f1c; --text: #ecebe7; --muted: #a29f97; --line: #34322e;
+      --accent: #e0774f; --accent-text: #1d1c1a; --ok: #6cc591; --ok-bg: #1f3428; --warn: #e3b94f; --warn-bg: #3a3020;
+      --bad: #ee8a80; --bad-bg: #3d2422; --neutral-bg: #2b2a26; --shadow: 0 8px 30px rgba(0,0,0,.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+           justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  h1 { margin: 0; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  main { padding: 18px 24px 80px; max-width: 1100px; margin: 0 auto; }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 14px;
+         font-size: 14px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  .btn.danger { color: var(--bad); }
+  .btn.small { padding: 3px 10px; font-size: 13px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; }
+  .status { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--neutral-bg); color: var(--muted); white-space: nowrap; }
+  .status.draft { background: var(--warn-bg); color: var(--warn); }
+  .status.live { background: var(--ok-bg); color: var(--ok); }
+  .status.bad { background: var(--bad-bg); color: var(--bad); }
+  nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; overflow-x: auto; }
+  nav.tabs button { border: 0; background: none; padding: 9px 14px; cursor: pointer; color: var(--muted);
+                    border-bottom: 2px solid transparent; font-weight: 600; white-space: nowrap; }
+  nav.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .checks { display: grid; gap: 8px; margin-bottom: 14px; }
+  .note { border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .note.bad { background: var(--bad-bg); color: var(--bad); }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.info { background: var(--neutral-bg); color: var(--muted); }
+  .note ul { margin: 4px 0 0; padding-left: 18px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  input[type=search], input[type=text], input[type=email], input[type=password], input[type=number], textarea, select {
+    border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+  input:focus, textarea:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=search] { flex: 1; min-width: 160px; max-width: 340px; }
+  textarea { width: 100%; resize: vertical; }
+  .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px;
+          font-size: 13px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--panel); border-color: var(--text); }
+  .cat { margin-bottom: 14px; }
+  .cat-head { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+  .cat-head h3 { margin: 0; font-size: 15px; }
+  .items { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .item { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 10px 14px;
+          border-top: 1px solid var(--line); cursor: pointer; }
+  .item:first-child { border-top: 0; }
+  .item:hover { background: var(--bg); }
+  .item.off .name { text-decoration: line-through; color: var(--muted); }
+  .item .name { font-weight: 600; }
+  .item .desc { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .main { min-width: 0; }
+  .price { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 3px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--neutral-bg); color: var(--muted); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .switch input { width: 34px; height: 20px; appearance: none; background: var(--line); border-radius: 999px; position: relative;
+                  cursor: pointer; transition: background .15s; margin: 0; flex: none; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+                         background: #fff; transition: left .15s; }
+  .switch input:checked { background: var(--ok); }
+  .switch input:checked::after { left: 16px; }
+  .field { display: grid; gap: 4px; margin-bottom: 14px; }
+  .field label, .lbl { font-weight: 600; font-size: 14px; }
+  .field .help { color: var(--muted); font-size: 13px; }
+  .field > .btn, .field > .linkish, .group > .linkish { justify-self: start; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { min-width: 0; }
+  .grow { flex: 1; }
+  .money { position: relative; display: inline-flex; align-items: center; }
+  .money span { position: absolute; left: 9px; color: var(--muted); pointer-events: none; }
+  .money input { padding-left: 20px; width: 110px; }
+  .group { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; display: grid; gap: 8px; }
+  .settings-group { margin-bottom: 18px; }
+  .settings-group h2 { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  .placeholder { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--warn-bg); color: var(--warn);
+                 border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+  .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 20; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--panel); z-index: 21;
+            box-shadow: var(--shadow); display: flex; flex-direction: column; }
+  .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .drawer-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+  .drawer-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .versions .v { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .versions .v:first-child { border-top: 0; }
+  .center { min-height: 80vh; display: grid; place-items: center; padding: 16px; }
+  .card { width: min(400px, 100%); }
+  .err { color: var(--bad); font-size: 14px; min-height: 20px; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--panel);
+           padding: 9px 16px; border-radius: 8px; z-index: 40; font-size: 14px; box-shadow: var(--shadow); max-width: calc(100% - 32px); }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 18px;
+           width: min(440px, calc(100% - 32px)); box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+  @media (max-width: 640px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .item { grid-template-columns: 1fr auto; }
+    .item .switch span { display: none; }
+    .item .price { grid-column: 2; grid-row: 1; }
+    .item .switch { grid-column: 2; grid-row: 2; justify-self: end; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<dialog id="dlg"></dialog>
+<script>
+(() => {
+  "use strict";
+  const app = document.getElementById("app");
+  const dlg = document.getElementById("dlg");
+  const API = "/api/manage";
+  const TAGS = ["Vegetarian.", "Vegan.", "Non-veg.", "Spicy.", "Extra spicy.", "Contains nuts.", "Gluten-free.", "Chef special."];
+  const SAVE_DELAY = 1200;
+
+  // ---- tiny DOM helper (text is always set as text, never HTML) ----
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else if (k === "class") n.className = v;
+      else if (k === "value") n.value = v;
+      else if (k === "checked") n.checked = !!v;
+      else n.setAttribute(k, v === true ? "" : v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : String(kid));
+    return n;
+  }
+  const money = n => "$" + Number(n || 0).toFixed(2);
+  const round2 = n => Math.round(Number(n) * 100) / 100;
+  const ago = t => {
+    const s = Math.max(0, Date.now() / 1000 - t);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + " min ago";
+    if (s < 86400) return Math.floor(s / 3600) + " h ago";
+    return new Date(t * 1000).toLocaleDateString();
+  };
+  const fmtTime = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  function toast(msg) {
+    const t = el("div", { class: "toast", role: "status" }, msg);
+    document.body.append(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  async function api(method, path, body) {
+    const opts = { method, headers: { "X-Manage": "1" }, credentials: "same-origin" };
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    const r = await fetch(API + path, opts);
+    let data = null;
+    try { data = await r.json(); } catch {}
+    if (!r.ok) {
+      const e = new Error((data && data.detail) || ("Request failed (" + r.status + ")"));
+      e.status = r.status; e.data = data;
+      throw e;
+    }
+    return data;
+  }
+
+  // ---- state ----
+  const S = {
+    me: null, rid: null, ed: null,       // ed: editor state from the server
+    menu: null, revision: null,          // working copy and draft revision
+    tab: "menu", q: "", filter: "all", collapsed: new Set(),
+    dirty: false, saving: false, saveTimer: null, saveError: null, lastSaved: null,
+    drawer: null,                        // {item, isNew}
+    versions: null,
+  };
+
+  // ---- sign in, invite ----
+  function screen(...kids) { app.replaceChildren(el("div", { class: "center" }, el("div", { class: "panel card" }, ...kids))); }
+
+  function showLogin(msg) {
+    const email = el("input", { type: "email", id: "email", autocomplete: "username", required: true });
+    const pw = el("input", { type: "password", id: "pw", autocomplete: "current-password", required: true });
+    const err = el("div", { class: "err", role: "alert" }, msg || "");
+    const submit = el("button", { class: "btn primary", type: "submit" }, "Sign in");
+    screen(el("form", {
+      onsubmit: async e => {
+        e.preventDefault(); submit.disabled = true; err.textContent = "";
+        try { await api("POST", "/login", { email: email.value, password: pw.value }); boot(); }
+        catch (x) { err.textContent = x.message; submit.disabled = false; }
+      }
+    },
+      el("h2", {}, "Menu manager"),
+      el("p", { class: "sub" }, "Sign in to edit your restaurant's phone menu."),
+      el("div", { class: "field" }, el("label", { for: "email" }, "Email"), email),
+      el("div", { class: "field" }, el("label", { for: "pw" }, "Password"), pw),
+      err, el("div", { class: "row" }, submit),
+      el("p", { class: "sub" }, "Forgot your password? Ask us for a new sign-in link.")));
+    email.focus();
+  }
+
+  function showInvite(token) {
+    const name = el("input", { type: "text", id: "nm", autocomplete: "name" });
+    const pw = el("input", { type: "password", id: "pw1", autocomplete: "new-password", minlength: 10, required: true });
+    const pw2 = el("input", { type: "password", id: "pw2", autocomplete: "new-password", required: true });
+    const err = el("div", { class: "err", role: "alert" });
+    const submit = el("button", { class: "btn primary", type: "submit" }, "Set password and sign in");
+    screen(el("form", {
+      onsubmit: async e => {
+        e.preventDefault(); err.textContent = "";
+        if (pw.value !== pw2.value) { err.textContent = "The passwords don't match."; return; }
+        submit.disabled = true;
+        try {
+          await api("POST", "/accept-invite", { token, password: pw.value, name: name.value });
+          history.replaceState(null, "", location.pathname);
+          boot();
+        } catch (x) { err.textContent = x.message; submit.disabled = false; }
+      }
+    },
+      el("h2", {}, "Welcome"),
+      el("p", { class: "sub" }, "Choose a password for the menu manager. Use at least 10 characters."),
+      el("div", { class: "field" }, el("label", { for: "nm" }, "Your name"), name),
+      el("div", { class: "field" }, el("label", { for: "pw1" }, "Password"), pw),
+      el("div", { class: "field" }, el("label", { for: "pw2" }, "Password again"), pw2),
+      err, submit));
+    name.focus();
+  }
+
+  async function boot() {
+    const m = location.hash.match(/invite=([\w-]+)/);
+    if (m) return showInvite(m[1]);
+    try { S.me = await api("GET", "/me"); }
+    catch (e) { if (e.status === 401) return showLogin(); return screen(el("p", {}, e.message)); }
+    if (!S.me.restaurants.length) {
+      return screen(el("h2", {}, "No restaurants yet"),
+        el("p", { class: "sub" }, "Your account isn't linked to a restaurant. Ask us to add you."), signOutBtn());
+    }
+    const saved = Number(store.get("manage.restaurant"));
+    S.rid = S.me.restaurants.some(r => r.id === saved) ? saved : S.me.restaurants[0].id;
+    await loadEditor();
+  }
+
+  async function loadEditor() {
+    app.replaceChildren(el("div", { class: "center" }, el("p", { class: "muted" }, "Loading…")));
+    S.ed = await api("GET", `/restaurants/${S.rid}/editor`);
+    S.menu = structuredClone(S.ed.menu || { restaurant: { name: "" }, items: [] });
+    S.revision = S.ed.draft ? S.ed.draft.revision : null;
+    S.dirty = false; S.saveError = null; S.versions = null; S.drawer = null;
+    render();
+  }
+
+  // ---- saving ----
+  function changed(rerender = true) {
+    S.dirty = true; S.saveError = null;
+    clearTimeout(S.saveTimer);
+    S.saveTimer = setTimeout(saveDraft, SAVE_DELAY);
+    if (rerender) render(); else renderHeader();
+  }
+
+  async function saveDraft() {
+    if (S.saving) { S.saveTimer = setTimeout(saveDraft, 400); return; }
+    if (!S.dirty) return;
+    S.saving = true; S.dirty = false; renderHeader();
+    try {
+      const r = await api("PUT", `/restaurants/${S.rid}/draft`, { menu: S.menu, revision: S.revision });
+      S.revision = r.revision; S.ed.check = r.check; S.lastSaved = Date.now() / 1000;
+      if (!S.ed.draft) S.ed.draft = { revision: r.revision, live_changed: false, updated_by: S.me.who };
+      S.ed.draft.revision = r.revision;
+    } catch (e) {
+      S.dirty = true;
+      S.saveError = e.message;
+      if (e.status === 409) conflict(e.message);
+      else if (e.status === 401) showLogin("You were signed out. Sign in again; unsaved edits on this page are lost.");
+    } finally {
+      S.saving = false;
+      if (S.ed) { renderHeader(); renderChecks(); }
+    }
+  }
+
+  async function flush() {
+    clearTimeout(S.saveTimer);
+    if (S.dirty) await saveDraft();
+    while (S.saving) await new Promise(r => setTimeout(r, 100));
+    if (S.saveError) throw new Error(S.saveError);
+  }
+
+  window.addEventListener("beforeunload", e => { if (S.dirty || S.saving) { e.preventDefault(); e.returnValue = ""; } });
+
+  function conflict(msg) {
+    ask({ title: "Someone else changed this menu", body: msg + " Your last few edits weren't saved.",
+          ok: "Reload", cancel: null }).then(loadEditor);
+  }
+
+  async function publish() {
+    try { await flush(); } catch (e) { return toast("Couldn't save: " + e.message); }
+    const c = S.ed.check || {};
+    if (c.errors && c.errors.length) return toast("Fix the errors at the top first.");
+    const lines = [];
+    if (c.blockers && c.blockers.length) lines.push("Still to confirm: " + c.blockers.join(" · "));
+    const ok = await ask({ title: "Publish these changes?",
+      body: "Callers will hear the new menu from the next call. " + lines.join(" "), ok: "Publish" });
+    if (!ok) return;
+    let overwrite = false;
+    for (;;) {
+      try {
+        const r = await api("POST", `/restaurants/${S.rid}/publish`, { revision: S.revision, overwrite });
+        S.ed = r; S.menu = structuredClone(r.menu); S.revision = null; S.versions = null;
+        toast("Published. The next call uses the new menu.");
+        return render();
+      } catch (e) {
+        if (e.status === 409 && e.data && e.data.code === "live_changed") {
+          const yes = await ask({ title: "A newer menu was published",
+            body: "Someone published a menu after you started this draft. Publishing yours replaces it.", ok: "Publish mine anyway" });
+          if (!yes) return;
+          overwrite = true; continue;
+        }
+        if (e.status === 409) return conflict(e.message);
+        if (e.status === 422) { S.ed.check = e.data.check; render(); return toast("Fix the errors at the top first."); }
+        return toast(e.message);
+      }
+    }
+  }
+
+  async function discard() {
+    const ok = await ask({ title: "Discard all unpublished changes?", body: "The menu goes back to what callers hear now.", ok: "Discard", danger: true });
+    if (!ok) return;
+    clearTimeout(S.saveTimer); S.dirty = false;
+    try { S.ed = await api("DELETE", `/restaurants/${S.rid}/draft`); } catch (e) { return toast(e.message); }
+    S.menu = structuredClone(S.ed.menu); S.revision = null;
+    render();
+  }
+
+  // ---- dialogs ----
+  function ask({ title, body, ok = "OK", cancel = "Cancel", danger = false, input = null }) {
+    return new Promise(resolve => {
+      const field = input ? el("input", { type: "text", value: input.value || "", style: "width:100%", "aria-label": title }) : null;
+      const done = v => { dlg.close(); resolve(v); };
+      dlg.replaceChildren(el("form", { method: "dialog", onsubmit: e => { e.preventDefault(); done(field ? field.value.trim() : true); } },
+        el("h2", {}, title), body ? el("p", { class: "sub" }, body) : null, field,
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:14px" },
+          cancel ? el("button", { class: "btn", type: "button", onclick: () => done(null) }, cancel) : null,
+          el("button", { class: "btn " + (danger ? "danger" : "primary"), type: "submit" }, ok))));
+      dlg.onclose = () => resolve(null);
+      dlg.showModal();
+      if (field) { field.focus(); field.select(); }
+    });
+  }
+
+  // ---- layout ----
+  function signOutBtn() {
+    return el("button", { class: "btn small", onclick: async () => {
+      try { await flush(); } catch {}
+      try { await api("POST", "/logout"); } catch {}
+      S.me = null; showLogin("Signed out.");
+    } }, "Sign out");
+  }
+
+  function render() {
+    const restaurants = S.me.restaurants;
+    const picker = restaurants.length > 1 ? el("select", { "aria-label": "Restaurant", onchange: async e => {
+      try { await flush(); } catch (x) { return toast("Couldn't save: " + x.message); }
+      S.rid = Number(e.target.value); store.set("manage.restaurant", S.rid); loadEditor();
+    } }, restaurants.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name))) : null;
+
+    app.replaceChildren(
+      el("header", {},
+        el("div", { class: "brand" }, el("h1", {}, S.menu.restaurant.name || S.ed.restaurant.slug), picker),
+        el("div", { class: "actions", id: "hdr" })),
+      el("main", {},
+        el("div", { class: "checks", id: "checks" }),
+        el("nav", { class: "tabs", role: "tablist" },
+          [["menu", "Menu"], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
+            el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
+                           onclick: () => { S.tab = k; render(); } }, label))),
+        el("div", { id: "view" })));
+    renderHeader(); renderChecks();
+    const view = document.getElementById("view");
+    if (S.tab === "menu") view.append(menuView());
+    else if (S.tab === "settings") view.append(settingsView());
+    else view.append(historyView());
+    if (S.drawer) renderDrawer();
+  }
+
+  function renderHeader() {
+    const hdr = document.getElementById("hdr");
+    if (!hdr) return;
+    const hasDraft = !!S.ed.draft || S.dirty;
+    let status;
+    if (S.saveError) status = el("span", { class: "status bad", title: S.saveError }, "Not saved");
+    else if (S.saving || S.dirty) status = el("span", { class: "status draft" }, "Saving…");
+    else if (hasDraft) status = el("span", { class: "status draft",
+      title: S.ed.draft && S.ed.draft.updated_by ? "Last edit by " + S.ed.draft.updated_by : "" },
+      "Draft saved" + (S.lastSaved ? " " + ago(S.lastSaved) : "") + " · not live yet");
+    else status = el("span", { class: "status live" }, "Live: callers hear this menu");
+    const errors = (S.ed.check && S.ed.check.errors.length) || 0;
+    hdr.replaceChildren(...[status,
+      hasDraft ? el("button", { class: "btn small", onclick: discard }, "Discard changes") : null,
+      el("button", { class: "btn primary", disabled: !hasDraft || errors > 0 || null,
+                     title: errors ? "Fix the errors first" : "", onclick: publish }, "Publish"),
+      signOutBtn()].filter(Boolean));
+  }
+
+  function renderChecks() {
+    const box = document.getElementById("checks");
+    if (!box) return;
+    const c = S.ed.check;
+    const parts = [];
+    if (S.ed.draft && S.ed.draft.live_changed)
+      parts.push(el("div", { class: "note warn" }, "A newer menu was published after this draft was started. Publishing this draft will replace it; discard the draft to start from the newest menu."));
+    if (c && c.errors.length) parts.push(el("div", { class: "note bad", role: "alert" },
+      el("strong", {}, "Fix before publishing"), el("ul", {}, c.errors.map(m => el("li", {}, m)))));
+    if (c && c.blockers.length) parts.push(el("div", { class: "note warn" },
+      el("strong", {}, "Please confirm"), el("ul", {}, c.blockers.map(m => el("li", {}, m)))));
+    if (c && c.warnings.length) {
+      const d = el("details", { class: "note info" }, el("summary", {}, `${c.warnings.length} suggestion${c.warnings.length > 1 ? "s" : ""}`),
+        el("ul", {}, c.warnings.map(m => el("li", {}, m))));
+      parts.push(d);
+    }
+    if (S.ed.pos_provider) parts.push(el("div", { class: "note info" },
+      `Orders go to ${S.ed.pos_provider[0].toUpperCase() + S.ed.pos_provider.slice(1)}. Items linked to it use the POS's own prices on the POS; change prices there too.`));
+    box.replaceChildren(...parts);
+  }
+
+  // ---- menu tab ----
+  const isEstimated = it => !!it.placeholder_price;
+  const isOff = it => it.available === false;
+
+  function menuView() {
+    const items = S.menu.items;
+    const q = S.q.trim().toLowerCase();
+    const shown = items.filter(it =>
+      (!q || (it.name + " " + (it.description || "") + " " + it.category).toLowerCase().includes(q)) &&
+      (S.filter === "all" || (S.filter === "off" && isOff(it)) || (S.filter === "est" && isEstimated(it))));
+    const cats = [];
+    const byCat = new Map();
+    for (const it of shown) {
+      if (!byCat.has(it.category)) { byCat.set(it.category, []); cats.push(it.category); }
+      byCat.get(it.category).push(it);
+    }
+    const search = el("input", { type: "search", placeholder: "Search dishes", value: S.q, "aria-label": "Search dishes",
+      oninput: e => { S.q = e.target.value; const v = document.getElementById("view"); v.replaceChildren(menuView());
+                      const s = v.querySelector("input[type=search]"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); } });
+    const chip = (k, label) => el("button", { class: "chip", "aria-pressed": S.filter === k ? "true" : "false",
+      onclick: () => { S.filter = k; render(); } }, label);
+    const nOff = items.filter(isOff).length, nEst = items.filter(isEstimated).length;
+    return el("div", {},
+      el("div", { class: "toolbar" }, search, chip("all", `All ${items.length}`),
+        nOff ? chip("off", `Sold out ${nOff}`) : null, nEst ? chip("est", `Estimated price ${nEst}`) : null,
+        el("span", { class: "grow" }),
+        el("button", { class: "btn primary", onclick: () => openItem(null) }, "+ Add dish")),
+      cats.length ? cats.map(cat => categoryBlock(cat, byCat.get(cat), !!q || S.filter !== "all"))
+        : el("div", { class: "empty" }, items.length ? "No dishes match." : "No dishes yet. Add your first one."));
+  }
+
+  function categoryBlock(cat, items, forceOpen) {
+    const open = forceOpen || !S.collapsed.has(cat);
+    return el("section", { class: "cat" },
+      el("div", { class: "cat-head" },
+        el("button", { class: "linkish", "aria-expanded": open ? "true" : "false",
+          onclick: () => { open ? S.collapsed.add(cat) : S.collapsed.delete(cat); render(); } }, open ? "▾" : "▸"),
+        el("h3", {}, cat), el("span", { class: "sub" }, items.length),
+        el("button", { class: "linkish", onclick: () => renameCategory(cat) }, "Rename")),
+      open ? el("div", { class: "items" }, items.map(itemRow)) : null);
+  }
+
+  function itemRow(it) {
+    const toggle = el("label", { class: "switch", onclick: e => e.stopPropagation() },
+      el("input", { type: "checkbox", checked: !isOff(it), "aria-label": `${it.name} available`,
+        onchange: e => { if (e.target.checked) delete it.available; else it.available = false; changed(); } }),
+      el("span", {}, isOff(it) ? "Sold out" : "Available"));
+    const opts = Object.keys(it.options || {}).length, extras = Object.keys(it.extras || {}).length;
+    return el("div", { class: "item" + (isOff(it) ? " off" : ""), tabindex: 0, role: "button",
+                       onclick: () => openItem(it), onkeydown: e => { if (e.key === "Enter") openItem(it); } },
+      el("div", { class: "main" },
+        el("div", { class: "name" }, it.name),
+        it.description ? el("div", { class: "desc" }, it.description) : null,
+        (opts || extras || isEstimated(it) || isOff(it) || it.pos) ? el("div", { class: "badges" },
+          isOff(it) ? el("span", { class: "badge bad" }, "Sold out") : null,
+          isEstimated(it) ? el("span", { class: "badge warn" }, "Estimated price") : null,
+          opts ? el("span", { class: "badge" }, opts + (opts > 1 ? " choices" : " choice")) : null,
+          extras ? el("span", { class: "badge" }, extras + (extras > 1 ? " extras" : " extra")) : null,
+          it.pos ? el("span", { class: "badge ok" }, "POS") : null) : null),
+      el("div", { class: "price" }, money(it.price)), toggle);
+  }
+
+  async function renameCategory(cat) {
+    const name = await ask({ title: "Rename section", body: `Renames "${cat}" for every dish in it.`, ok: "Rename", input: { value: cat } });
+    if (!name || name === cat) return;
+    S.menu.items.forEach(it => { if (it.category === cat) it.category = name; });
+    changed();
+  }
+
+  // ---- item drawer ----
+  const slug = s => (s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item");
+
+  function openItem(it) {
+    S.drawer = it ? { item: it, isNew: false }
+      : { item: { name: "", category: S.menu.items.length ? S.menu.items[S.menu.items.length - 1].category : "", price: 0, description: "" }, isNew: true };
+    renderDrawer();
+  }
+  function closeDrawer() {
+    S.drawer = null;
+    document.querySelectorAll(".drawer, .drawer-bg").forEach(n => n.remove());
+    render();
+  }
+
+  function renderDrawer() {
+    const oldBody = document.querySelector(".drawer-body");
+    const top = oldBody ? oldBody.scrollTop : 0;
+    const focusId = document.activeElement && document.activeElement.id;
+    document.querySelectorAll(".drawer, .drawer-bg").forEach(n => n.remove());
+    const { item: it, isNew } = S.drawer;
+    // Edits to existing dishes are live (autosaved to the draft); a new dish is added on "Add".
+    const edit = (structural = false) => {
+      if (!isNew) { changed(false); refreshListQuietly(); }
+      if (structural) renderDrawer();
+    };
+    const categories = [...new Set(S.menu.items.map(i => i.category))];
+    const tags = el("div", { class: "tags" }, TAGS.map(tag => {
+      const on = (it.description || "").includes(tag);
+      return el("button", { class: "chip", type: "button", "aria-pressed": on ? "true" : "false", onclick: () => {
+        let d = (it.description || "").replace(tag, "").replace(/\s{2,}/g, " ").trim();
+        if (!on) d = (d ? d + " " : "") + tag;
+        it.description = d; edit(true);
+      } }, tag.replace(".", ""));
+    }));
+    const body = el("div", { class: "drawer-body" },
+      el("div", { class: "field" }, el("label", { for: "f-name" }, "Name"),
+        el("input", { id: "f-name", type: "text", value: it.name, maxlength: 80, oninput: e => { it.name = e.target.value; edit(); } }),
+        el("span", { class: "help" }, "As callers would say it. Make it distinct from similar dishes.")),
+      el("div", { class: "row" },
+        el("div", { class: "field grow" }, el("label", { for: "f-cat" }, "Section"),
+          el("input", { id: "f-cat", type: "text", list: "cats", value: it.category, maxlength: 100,
+                        oninput: e => { it.category = e.target.value; edit(); } }),
+          el("datalist", { id: "cats" }, categories.map(c => el("option", { value: c })))),
+        el("div", { class: "field" }, el("label", { for: "f-price" }, "Price"),
+          moneyInput(it.price, v => { it.price = v; delete it.placeholder_price; edit(); }, "f-price"))),
+      isEstimated(it) ? el("div", { class: "placeholder" }, "This price was estimated. Change it, or confirm it's right.",
+        el("button", { class: "btn small", type: "button", onclick: () => { delete it.placeholder_price; edit(true); } }, "It's right")) : null,
+      el("div", { class: "field" }, el("label", { for: "f-desc" }, "Description"),
+        el("textarea", { id: "f-desc", rows: 3, maxlength: 400, oninput: e => { it.description = e.target.value; edit(); } }, it.description || ""),
+        el("span", { class: "help" }, "Short. The agent uses it to answer questions. Tap tags to add them:"), tags),
+      el("div", { class: "field" },
+        el("label", { class: "switch", style: "color:inherit" },
+          el("input", { type: "checkbox", checked: !isOff(it), onchange: e => { if (e.target.checked) delete it.available; else it.available = false; edit(true); } }),
+          el("span", {}, isOff(it) ? "Sold out: the agent says it's unavailable" : "Available to order"))),
+      optionsEditor(it, edit),
+      extrasEditor(it, edit),
+      !isNew ? el("p", { class: "sub" }, "Dish id: " + it.id + (it.pos ? " · linked to the POS" : "")) : null);
+
+    const foot = el("div", { class: "drawer-foot" },
+      isNew ? el("span") : el("button", { class: "btn danger", type: "button", onclick: async () => {
+        if (!await ask({ title: `Delete "${it.name}"?`, body: "Callers won't be able to order it once you publish.", ok: "Delete", danger: true })) return;
+        S.menu.items.splice(S.menu.items.indexOf(it), 1);
+        changed(false); closeDrawer();
+      } }, "Delete dish"),
+      el("div", { class: "row" },
+        el("button", { class: "btn", type: "button", onclick: closeDrawer }, isNew ? "Cancel" : "Done"),
+        isNew ? el("button", { class: "btn primary", type: "button", onclick: () => {
+          if (!it.name.trim()) return toast("Give the dish a name.");
+          if (!it.category.trim()) return toast("Choose a section.");
+          if (!(it.price > 0)) return toast("Set a price.");
+          const ids = new Set(S.menu.items.map(i => i.id));
+          let id = slug(it.name), n = 2;
+          while (ids.has(id)) id = slug(it.name) + "_" + n++;
+          S.menu.items.push({ id, ...it });
+          S.drawer = null; changed(); toast(`Added "${it.name}".`);
+        } }, "Add dish") : null));
+
+    const bg = el("div", { class: "drawer-bg", onclick: closeDrawer });
+    const drawer = el("aside", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": isNew ? "New dish" : it.name,
+                                 onkeydown: e => { if (e.key === "Escape") closeDrawer(); } },
+      el("div", { class: "drawer-head" }, el("h2", { style: "margin:0" }, isNew ? "New dish" : "Edit dish"),
+        el("button", { class: "btn small", onclick: closeDrawer, "aria-label": "Close" }, "✕")),
+      body, foot);
+    document.body.append(bg, drawer);
+    body.scrollTop = top;
+    const f = focusId && document.getElementById(focusId);
+    (f || drawer.querySelector("input")).focus();
+  }
+
+  let listTimer = null;
+  function refreshListQuietly() {  // update the list behind the drawer without stealing focus
+    clearTimeout(listTimer);
+    listTimer = setTimeout(() => {
+      const v = document.getElementById("view");
+      if (v && S.tab === "menu") v.replaceChildren(menuView());
+    }, 300);
+  }
+
+  function moneyInput(value, onset, id) {
+    return el("span", { class: "money" }, el("span", {}, "$"),
+      el("input", { id, type: "number", min: 0, step: "0.01", inputmode: "decimal", value: Number(value || 0).toFixed(2),
+                    oninput: e => { const v = parseFloat(e.target.value); onset(isFinite(v) ? round2(v) : 0); } }));
+  }
+
+  function optionsEditor(it, edit) {
+    const opts = it.options || {};
+    let n = 0;
+    return el("div", { class: "field" },
+      el("span", { class: "lbl" }, "Choices"),
+      el("span", { class: "help" }, "Things the caller picks, like size or protein. Price is added to the dish price; the cheapest should be $0."),
+      Object.entries(opts).map(([name, grp]) => {
+        const gid = "g" + (n++);
+        const rename = v => {
+          const entries = Object.entries(it.options).map(([k, g]) => [k === name ? v : k, g]);
+          it.options = Object.fromEntries(entries);
+        };
+        return el("div", { class: "group" },
+          el("div", { class: "row" },
+            el("input", { id: gid + "-n", type: "text", class: "grow", value: name, "aria-label": "Choice name", placeholder: "e.g. size",
+                          onchange: e => { const v = e.target.value.trim(); if (v && v !== name && !(v in it.options)) { rename(v); edit(true); } } }),
+            el("label", { class: "switch" }, el("input", { type: "checkbox", checked: !!grp.required,
+              onchange: e => { grp.required = e.target.checked; edit(); } }), el("span", {}, "Must choose")),
+            el("button", { class: "btn small danger", type: "button", "aria-label": "Remove " + name,
+              onclick: () => { delete it.options[name]; if (!Object.keys(it.options).length) delete it.options; edit(true); } }, "✕")),
+          Object.entries(grp.choices).map(([choice, delta], ci) => el("div", { class: "row" },
+            el("input", { id: `${gid}-c${ci}`, type: "text", class: "grow", value: choice, "aria-label": "Option",
+              onchange: e => {
+                const v = e.target.value.trim();
+                if (!v || v === choice || v in grp.choices) return;
+                grp.choices = Object.fromEntries(Object.entries(grp.choices).map(([k, d]) => [k === choice ? v : k, d]));
+                edit(true);
+              } }),
+            moneyInput(delta, v => { grp.choices[choice] = v; edit(); }, `${gid}-p${ci}`),
+            el("button", { class: "btn small", type: "button", "aria-label": "Remove " + choice,
+              onclick: () => { delete grp.choices[choice]; edit(true); } }, "✕"))),
+          el("button", { class: "linkish", type: "button", onclick: async () => {
+            const v = await ask({ title: "Add an option", ok: "Add", input: { value: "" } });
+            if (v && !(v in grp.choices)) { grp.choices[v] = 0; edit(true); }
+          } }, "+ Add option"));
+      }),
+      el("button", { class: "btn small", type: "button", onclick: async () => {
+        const v = await ask({ title: "New choice", body: "What does the caller choose? e.g. size, protein, spice level", ok: "Add", input: { value: "" } });
+        if (!v) return;
+        it.options = it.options || {};
+        if (v in it.options) return toast("That choice already exists.");
+        it.options[v] = { choices: {}, required: true };
+        edit(true);
+      } }, "+ Add a choice"));
+  }
+
+  function extrasEditor(it, edit) {
+    const extras = it.extras || {};
+    return el("div", { class: "field" },
+      el("span", { class: "lbl" }, "Extras"),
+      el("span", { class: "help" }, "Optional add-ons, each with its price."),
+      Object.entries(extras).map(([name, price], i) => el("div", { class: "row" },
+        el("input", { id: "x" + i, type: "text", class: "grow", value: name, "aria-label": "Extra",
+          onchange: e => {
+            const v = e.target.value.trim();
+            if (!v || v === name || v in it.extras) return;
+            it.extras = Object.fromEntries(Object.entries(it.extras).map(([k, p]) => [k === name ? v : k, p]));
+            edit(true);
+          } }),
+        moneyInput(price, v => { it.extras[name] = v; edit(); }, "xp" + i),
+        el("button", { class: "btn small", type: "button", "aria-label": "Remove " + name,
+          onclick: () => { delete it.extras[name]; if (!Object.keys(it.extras).length) delete it.extras; edit(true); } }, "✕"))),
+      el("button", { class: "btn small", type: "button", onclick: async () => {
+        const v = await ask({ title: "Add an extra", body: "e.g. extra cheese", ok: "Add", input: { value: "" } });
+        if (!v) return;
+        it.extras = it.extras || {};
+        if (!(v in it.extras)) it.extras[v] = 0;
+        edit(true);
+      } }, "+ Add an extra"));
+  }
+
+  // ---- settings tab (built from the server's schema) ----
+  const getPath = (o, p) => p.split(".").reduce((c, k) => (c && typeof c === "object" ? c[k] : undefined), o);
+  function setPath(o, p, v) {
+    const keys = p.split("."); let c = o;
+    keys.slice(0, -1).forEach(k => { if (!c[k] || typeof c[k] !== "object") c[k] = {}; c = c[k]; });
+    if (v === undefined || v === "") delete c[keys[keys.length - 1]]; else c[keys[keys.length - 1]] = v;
+  }
+
+  function settingsView() {
+    const r = S.menu.restaurant;
+    const groups = new Map();
+    for (const f of S.ed.schema) { if (!groups.has(f.group)) groups.set(f.group, []); groups.get(f.group).push(f); }
+    const confirm = f => {
+      r.placeholders = (r.placeholders || []).filter(p => p !== f.path);
+      if (!r.placeholders.length) delete r.placeholders;
+    };
+    const set = (f, v, rerender = false) => {
+      setPath(r, f.path, v); confirm(f);
+      if (f.path === "name") document.querySelector("header h1").textContent = v || S.ed.restaurant.slug;
+      changed(rerender);
+    };
+    return el("div", { class: "panel" }, [...groups].map(([group, fields]) => el("section", { class: "settings-group" },
+      el("h2", {}, group),
+      fields.map(f => {
+        const id = "s-" + f.path.replace(/\./g, "-");
+        let v = getPath(r, f.path);
+        if (typeof v === "string" && v.includes("not available on this line yet")) v = "";  // old "unset" marker
+        let input;
+        if (f.type === "text") input = el("input", { id, type: "text", value: v ?? "", maxlength: f.max_length, placeholder: f.required ? null : "Not set",
+          oninput: e => set(f, e.target.value) });
+        else if (f.type === "textarea") input = el("textarea", { id, rows: 3, maxlength: f.max_length, placeholder: "Not set", oninput: e => set(f, e.target.value) }, v ?? "");
+        else if (f.type === "integer") input = el("input", { id, type: "number", step: 1, min: f.min, max: f.max, value: v ?? "", style: "max-width:140px",
+          oninput: e => { const n = parseInt(e.target.value, 10); set(f, isFinite(n) ? n : undefined); } });
+        else if (f.type === "percent") input = el("span", { class: "row" },
+          el("input", { id, type: "number", step: "0.001", min: (f.min || 0) * 100, max: (f.max || 1) * 100, style: "max-width:140px",
+            value: v == null ? "" : String(round2(v * 100 * 1000) / 1000),
+            oninput: e => { const n = parseFloat(e.target.value); set(f, isFinite(n) ? Math.round(n * 1000) / 100000 : undefined); } }),
+          el("span", { class: "muted" }, "%"));
+        else if (f.type === "boolean") input = el("label", { class: "switch", style: "color:inherit" },
+          el("input", { id, type: "checkbox", checked: !!v, onchange: e => set(f, e.target.checked, true) }), el("span", {}, v ? "On" : "Off"));
+        else if (f.type === "string_list") input = el("textarea", { id, rows: Math.max(4, (v || []).length + 1),
+          oninput: e => set(f, e.target.value.split("\n").map(s => s.trim()).filter(Boolean)) }, (v || []).join("\n"));
+        const unconfirmed = (r.placeholders || []).includes(f.path);
+        return el("div", { class: "field" },
+          el("label", { for: id }, f.label, f.required ? el("span", { class: "muted" }, " *") : null),
+          input,
+          unconfirmed ? el("div", { class: "placeholder" }, "This was estimated when the menu was set up. Change it, or confirm it's right.",
+            el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
+          f.help ? el("span", { class: "help" }, f.help) : null);
+      }))),
+      el("p", { class: "sub" }, "Callers hear changes after you publish."));
+  }
+
+  // ---- history tab ----
+  function historyView() {
+    const box = el("div", { class: "panel versions" }, el("p", { class: "muted" }, "Loading…"));
+    (async () => {
+      try { S.versions = S.versions || await api("GET", `/restaurants/${S.rid}/versions`); }
+      catch (e) { box.replaceChildren(el("p", {}, e.message)); return; }
+      box.replaceChildren(el("h2", {}, "Published versions"),
+        el("p", { class: "sub" }, "Restoring copies an old version into your draft; nothing changes for callers until you publish."),
+        S.versions.map(v => el("div", { class: "v" },
+          el("div", {}, el("div", {}, fmtTime(v.created_at), v.live ? el("span", { class: "badge ok", style: "margin-left:8px" }, "Live") : null),
+            el("div", { class: "sub" }, `by ${v.created_by} · ${v.items} dishes`)),
+          v.live ? null : el("button", { class: "btn small", onclick: async () => {
+            if (!await ask({ title: "Restore this version?", body: "It replaces your current draft (if any). Publish to make it live.", ok: "Restore" })) return;
+            try { await flush(); } catch {}
+            try {
+              S.ed = await api("POST", `/restaurants/${S.rid}/versions/${v.id}/restore`, { revision: S.revision });
+              S.menu = structuredClone(S.ed.menu); S.revision = S.ed.draft.revision; S.tab = "menu";
+              toast("Restored into the draft. Review it, then publish."); render();
+            } catch (e) { e.status === 409 ? conflict(e.message) : toast(e.message); }
+          } }, "Restore"))));
+    })();
+    return box;
+  }
+
+  window.addEventListener("hashchange", () => { if (/invite=/.test(location.hash)) boot(); });
+  boot();
+})();
+</script>
+</body>
+</html>

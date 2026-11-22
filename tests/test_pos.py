@@ -371,7 +371,8 @@ def test_pos_failure_never_breaks_placing_the_order():
     assert session.order_number == 1
 
 
-def test_connect_callback_stores_the_connection():
+def test_connect_callback_stores_the_connection(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
     store, directory, rid = setup_restaurant()
     api = square_api()
     api.routes[("POST", "/oauth2/token")] = (200, {"access_token": "EAAA", "refresh_token": "R",

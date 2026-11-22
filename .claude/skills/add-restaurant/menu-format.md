@@ -34,7 +34,8 @@ readable.
 | Field | Rule |
 |---|---|
 | `name` | Required. Spoken in the greeting and texts. |
-| `hours`, `address` | Free text the agent reads out. If unknown, use `"not available on this line yet; say you don't have that information"`. |
+| `hours`, `address` | Free text the agent reads out. If unknown, leave the key out; the agent then says it doesn't have it. |
+| `greeting` | Optional. The opening line; default "Thanks for calling <name>! What can I get started for you today?". |
 | `order_types` | Always `["pickup"]`; delivery isn't supported. |
 | `pickup_minutes` | Typical minutes until ready. |
 | `tax_rate` | A fraction (`0.0825` for 8.25%), not a percent. |
@@ -54,6 +55,7 @@ readable.
 | `description` | Short. End with tags the agent uses: `Vegetarian.` / `Non-veg.`, `Spicy.` / `Extra spicy.`, `Contains nuts.`, `Chef special.` |
 | `options` | Choices the caller must or may make. `{"<name>": {"choices": {"<choice>": <price delta>}, "required": true}}`. Deltas are added to `price`; the cheapest choice is `0.0`. At least 2 choices. |
 | `extras` | Optional paid add-ons: `{"extra cheese": 1.5}`. |
+| `available` | Optional. `false` = sold out for now (staff toggle this in `/manage`); the agent won't take it. |
 | `placeholder_price` | `true` when the price wasn't on the menu and you estimated it. The checker blocks on these. |
 
 ## Turning menu photos into items

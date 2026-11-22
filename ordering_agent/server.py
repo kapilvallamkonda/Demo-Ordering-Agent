@@ -32,6 +32,7 @@ from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
 from .agent import OrderingAgent
+from .manage import router as manage_router
 from .menu import Menu
 from .payments import handle_stripe_event, payment_service_from_env
 from .pos import PosError, PosHub, check_state, providers_from_env
@@ -113,6 +114,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Restaurant ordering agent", lifespan=lifespan)
+app.include_router(manage_router)  # /manage: restaurant staff edit menus and settings
 
 
 def _public_base(request: Request) -> str:
