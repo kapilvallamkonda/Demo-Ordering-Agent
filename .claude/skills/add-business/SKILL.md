@@ -5,6 +5,11 @@ description: Onboard a new business (a restaurant, or a shop selling products) o
 
 # Add a business
 
+**Businesses can now set themselves up** at `/` (sign in with Google, upload menu photos,
+test, go live; docs/DESIGN.md section 16). Use this skill when the operator is doing it
+for them, or for things the web app doesn't do (importing a big catalog from a file,
+reusing an existing Twilio number, a POS import).
+
 One server serves every business. A call is routed by the number dialed, so a business
 is live once it has (1) a catalog in the database and (2) a Twilio number whose voice
 webhook is our `/voice`, registered on that business. Background: `docs/DESIGN.md`

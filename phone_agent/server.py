@@ -34,7 +34,10 @@ from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
 from .agent import PhoneAgent
+from .google_auth import router as google_router
 from .manage import router as manage_router
+from .numbers import TwilioNumbers
+from .onboarding import router as onboarding_router
 from .catalog import Catalog
 from .payments import handle_stripe_event, payment_service_from_env
 from .pos import PosError, PosHub, check_state, providers_from_env
@@ -118,6 +121,9 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "pos"):
         app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env())
                          if os.environ.get("POS_SECRET_KEY", "").strip() else None)
+    # Buying phone numbers when a business goes live; None without Twilio credentials.
+    if not hasattr(app.state, "numbers"):
+        app.state.numbers = TwilioNumbers.from_env()
     if app.state.pos:
         log.info("POS integrations on: %s; resending %d unsent orders",
                  ", ".join(app.state.pos.providers) or "no provider apps configured",
@@ -127,6 +133,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Phone Agent", lifespan=lifespan)
 app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
+app.include_router(onboarding_router)  # self-serve: create a business, read a menu, go live, team ...
+app.include_router(google_router)  # /auth/google: sign in with Google
+LANDING_HTML = Path(__file__).parent / "static" / "landing.html"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def landing() -> HTMLResponse:
+    from .manage import PAGE_HEADERS
+
+    return HTMLResponse(LANDING_HTML.read_text(), headers=PAGE_HEADERS)
 
 
 def _public_base(request: Request) -> str:

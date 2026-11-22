@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Phone Agent Manager</title>
+<title>Phone Agent</title>
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
@@ -120,6 +120,63 @@
   dialog::backdrop { background: rgba(0,0,0,.35); }
   .muted { color: var(--muted); }
   .empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+  /* ---- app shell, onboarding and the new views ---- */
+  .logo { font-weight: 750; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-text);
+         display: inline-grid; place-items: center; font-size: 15px; flex: none; }
+  .btn.google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px 16px;
+                font-weight: 600; text-decoration: none; color: var(--text); }
+  .gicon { display: inline-flex; background: #fff; border-radius: 50%; padding: 3px; }
+  .btn.big { padding: 11px 20px; font-size: 15px; }
+  details.pwlogin { margin-top: 16px; } details.pwlogin summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+  .card.wide { width: min(640px, 100%); }
+  .kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .kindcard { text-align: left; display: grid; gap: 4px; align-content: start; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px;
+              background: var(--panel); cursor: pointer; }
+  .kindcard[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .kindcard:disabled { opacity: .55; cursor: not-allowed; }
+  .kindcard .badge { justify-self: start; }
+  .picker { font-weight: 650; font-size: 16px; border: 1px solid transparent; background: transparent; max-width: 60vw; }
+  .picker:hover { border-color: var(--line); }
+  .usermenu { position: relative; } .usermenu summary { list-style: none; cursor: pointer; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--neutral-bg); display: grid; place-items: center; font-weight: 700; }
+  .usermenu summary::-webkit-details-marker { display: none; }
+  .usermenu .menu { position: absolute; right: 0; top: 40px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; display: grid; gap: 10px; min-width: 220px; box-shadow: var(--shadow); z-index: 10; }
+  .row.wrap { flex-wrap: wrap; }
+  .home { display: grid; gap: 12px; }
+  .hello { font-size: 24px; margin: 4px 0 0; white-space: normal; overflow: visible; }
+  ol.steps { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 10px; }
+  .step { display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .step h3 { margin: 0 0 4px; font-size: 16px; } .step p { margin: 0 0 10px; }
+  .step.current { border-color: var(--accent); }
+  .step.done h3 { color: var(--muted); } .step.done .sub { display: none; }
+  .tick { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
+          background: var(--neutral-bg); color: var(--muted); }
+  .step.done .tick { background: var(--ok-bg); color: var(--ok); } .step.current .tick { background: var(--accent); color: var(--accent-text); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { color: var(--muted); font-size: 13px; } .tile .value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .liveline { display: grid; gap: 12px; }
+  .bigphone { font-size: 30px; font-weight: 750; letter-spacing: .01em; font-variant-numeric: tabular-nums; margin: 2px 0 6px; }
+  .orders, .calls { display: grid; gap: 10px; }
+  .ocard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; }
+  .ohead { display: flex; gap: 10px; align-items: baseline; }
+  .olines { margin: 2px 0 4px; padding-left: 18px; font-size: 14px; }
+  .who { font-weight: 600; }
+  details.call summary { cursor: pointer; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .transcript { margin-top: 10px; display: grid; gap: 4px; font-size: 14px; }
+  .transcript .role { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-right: 4px; }
+  .transcript .line.tool, .transcript .line.event { color: var(--muted); font-size: 13px; }
+  ul.people { list-style: none; padding: 0; margin: 12px 0 0; }
+  ul.people li { display: flex; gap: 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .chatlog { display: grid; gap: 8px; align-content: start; min-height: 240px; max-height: 60vh; overflow-y: auto; padding: 4px 0 12px; }
+  .msg { display: grid; gap: 3px; } .msg.caller { justify-items: end; }
+  .bubble { max-width: 85%; padding: 8px 12px; border-radius: 14px; background: var(--neutral-bg); }
+  .msg.caller .bubble { background: var(--accent); color: var(--accent-text); }
+  .toolnote { font-size: 12px; color: var(--muted); padding-left: 4px; }
+  .chatform { position: sticky; bottom: 0; background: var(--panel); padding-top: 8px; }
   @media (max-width: 640px) {
     header, main { padding-left: 16px; padding-right: 16px; }
     .item { grid-template-columns: 1fr auto; }
@@ -195,34 +252,41 @@
   const S = {
     me: null, rid: null, ed: null,       // ed: editor state from the server
     catalog: null, revision: null,          // working copy and draft revision
-    tab: "catalog", q: "", filter: "all", collapsed: new Set(),
+    tab: "home", q: "", filter: "all", collapsed: new Set(), line: null, chat: null,
     dirty: false, saving: false, saveTimer: null, saveError: null, lastSaved: null,
     drawer: null,                        // {item, isNew}
     versions: null,
   };
 
-  // ---- sign in, invite ----
+  // ---- sign in ----
+  let CONFIG = { google: false, password_login: true };
+  const G_ICON = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>';
+  function icon(svg) { const s = el("span", { class: "gicon" }); s.innerHTML = svg; return s; }  // constant markup only
+  const logo = () => el("div", { class: "logo" }, el("span", { class: "dot", "aria-hidden": "true" }, "☎"), "Phone Agent");
+
   function screen(...kids) { app.replaceChildren(el("div", { class: "center" }, el("div", { class: "panel card" }, ...kids))); }
 
   function showLogin(msg) {
-    const email = el("input", { type: "email", id: "email", autocomplete: "username", required: true });
-    const pw = el("input", { type: "password", id: "pw", autocomplete: "current-password", required: true });
     const err = el("div", { class: "err", role: "alert" }, msg || "");
-    const submit = el("button", { class: "btn primary", type: "submit" }, "Sign in");
-    screen(el("form", {
-      onsubmit: async e => {
-        e.preventDefault(); submit.disabled = true; err.textContent = "";
-        try { await api("POST", "/login", { email: email.value, password: pw.value }); boot(); }
-        catch (x) { err.textContent = x.message; submit.disabled = false; }
-      }
-    },
-      el("h2", {}, "Phone agent manager"),
-      el("p", { class: "sub" }, "Sign in to edit what your phone agent offers and how it answers."),
-      el("div", { class: "field" }, el("label", { for: "email" }, "Email"), email),
-      el("div", { class: "field" }, el("label", { for: "pw" }, "Password"), pw),
-      err, el("div", { class: "row" }, submit),
-      el("p", { class: "sub" }, "Forgot your password? Ask us for a new sign-in link.")));
-    email.focus();
+    const kids = [logo(), el("h2", { style: "margin-top:18px" }, "Sign in"),
+      el("p", { class: "sub" }, "Manage your phone agent: orders, calls, what you sell and how it answers.")];
+    if (CONFIG.google) kids.push(el("a", { class: "btn google", href: "/auth/google" }, icon(G_ICON), "Continue with Google"),
+      el("p", { class: "sub", style: "margin-top:12px" }, "New here? Signing in creates your account."));
+    if (CONFIG.password_login) {
+      const email = el("input", { type: "email", id: "email", autocomplete: "username", required: true });
+      const pw = el("input", { type: "password", id: "pw", autocomplete: "current-password", required: true });
+      const submit = el("button", { class: "btn primary", type: "submit" }, "Sign in");
+      const form = el("form", { onsubmit: async e => {
+          e.preventDefault(); submit.disabled = true; err.textContent = "";
+          try { await api("POST", "/login", { email: email.value, password: pw.value }); boot(); }
+          catch (x) { err.textContent = x.message; submit.disabled = false; }
+        } },
+        el("div", { class: "field" }, el("label", { for: "email" }, "Email"), email),
+        el("div", { class: "field" }, el("label", { for: "pw" }, "Password"), pw), el("div", { class: "row" }, submit));
+      kids.push(CONFIG.google ? el("details", { class: "pwlogin" }, el("summary", {}, "Use email and password instead"), form) : form);
+    }
+    kids.push(err);
+    screen(...kids);
   }
 
   function showInvite(token) {
@@ -243,8 +307,8 @@
         } catch (x) { err.textContent = x.message; submit.disabled = false; }
       }
     },
-      el("h2", {}, "Welcome"),
-      el("p", { class: "sub" }, "Choose a password for the phone agent manager. Use at least 10 characters."),
+      logo(), el("h2", { style: "margin-top:18px" }, "Welcome"),
+      el("p", { class: "sub" }, "Choose a password. Use at least 10 characters."),
       el("div", { class: "field" }, el("label", { for: "nm" }, "Your name"), name),
       el("div", { class: "field" }, el("label", { for: "pw1" }, "Password"), pw),
       el("div", { class: "field" }, el("label", { for: "pw2" }, "Password again"), pw2),
@@ -253,25 +317,59 @@
   }
 
   async function boot() {
+    try { CONFIG = await api("GET", "/config"); } catch {}
     const m = location.hash.match(/invite=([\w-]+)/);
     if (m) return showInvite(m[1]);
     try { S.me = await api("GET", "/me"); }
     catch (e) { if (e.status === 401) return showLogin(); return screen(el("p", {}, e.message)); }
-    if (!S.me.businesses.length) {
-      return screen(el("h2", {}, "No businesses yet"),
-        el("p", { class: "sub" }, "Your account isn't linked to a business. Ask us to add you."), signOutBtn());
-    }
+    if (!S.me.businesses.length) return showCreate(true);
     const saved = Number(store.get("manage.business"));
     S.rid = S.me.businesses.some(r => r.id === saved) ? saved : S.me.businesses[0].id;
     await loadEditor();
   }
 
+  // ---- create a business ----
+  async function showCreate(first) {
+    let templates = [];
+    try { templates = await api("GET", "/templates"); } catch (e) { return screen(el("p", {}, e.message)); }
+    let chosen = (templates.find(t => t.status === "available") || {}).id;
+    const name = el("input", { type: "text", id: "bname", maxlength: 80, placeholder: "e.g. Rosa's Bakery", required: true });
+    const err = el("div", { class: "err", role: "alert" });
+    const cards = el("div", { class: "kinds", role: "radiogroup", "aria-label": "Type of business" });
+    const drawCards = () => cards.replaceChildren(...templates.map(t => {
+      const soon = t.status !== "available";
+      return el("button", { type: "button", class: "kindcard", role: "radio", "aria-checked": t.id === chosen ? "true" : "false",
+        disabled: soon || null, onclick: () => { chosen = t.id; drawCards(); } },
+        el("strong", {}, t.label.replace(" (coming soon)", "")), soon ? el("span", { class: "badge" }, "Coming soon") : null,
+        el("span", { class: "sub" }, t.description));
+    }));
+    drawCards();
+    const submit = el("button", { class: "btn primary big", type: "submit" }, "Create my phone agent");
+    screen(el("form", { onsubmit: async e => {
+        e.preventDefault(); err.textContent = ""; submit.disabled = true;
+        try {
+          const r = await api("POST", "/businesses", { name: name.value, template: chosen });
+          S.me = await api("GET", "/me"); S.rid = r.id; store.set("manage.business", r.id); S.tab = "home";
+          await loadEditor();
+        } catch (x) { err.textContent = x.message; submit.disabled = false; }
+      } },
+      logo(),
+      el("h2", { style: "margin-top:18px" }, first ? "Let's set up your phone agent" : "Add a business"),
+      el("p", { class: "sub" }, "It takes about ten minutes. You can change everything later."),
+      el("div", { class: "field" }, el("span", { class: "lbl" }, "What kind of business is it?"), cards),
+      el("div", { class: "field" }, el("label", { for: "bname" }, "Business name"), name),
+      err, el("div", { class: "row", style: "justify-content:space-between" },
+        first ? signOutBtn() : el("button", { class: "btn", type: "button", onclick: () => loadEditor() }, "Cancel"), submit)));
+    app.querySelector(".card").classList.add("wide");
+    name.focus();
+  }
+
   async function loadEditor() {
     app.replaceChildren(el("div", { class: "center" }, el("p", { class: "muted" }, "Loading…")));
     S.ed = await api("GET", `/businesses/${S.rid}/editor`);
-    S.catalog = structuredClone(S.ed.catalog || { business: { name: "" }, items: [] });
+    S.catalog = structuredClone(S.ed.catalog || { settings: { name: "" }, items: [] });
     S.revision = S.ed.draft ? S.ed.draft.revision : null;
-    S.dirty = false; S.saveError = null; S.versions = null; S.drawer = null;
+    S.dirty = false; S.saveError = null; S.versions = null; S.drawer = null; S.line = null; S.chat = null;
     render();
   }
 
@@ -320,18 +418,20 @@
   async function publish() {
     try { await flush(); } catch (e) { return toast("Couldn't save: " + e.message); }
     const c = S.ed.check || {};
-    if (c.errors && c.errors.length) return toast("Fix the errors at the top first.");
+    if (c.errors && c.errors.length) return toast("Fix the items marked “Fix before publishing” first.");
     const lines = [];
     if (c.blockers && c.blockers.length) lines.push("Still to confirm: " + c.blockers.join(" · "));
+    const live = S.line && S.line.phone_number;
     const ok = await ask({ title: "Publish these changes?",
-      body: `Callers will hear the new ${W().catalog} from the next call. ` + lines.join(" "), ok: "Publish" });
+      body: (live ? `Callers will hear the new ${W().catalog} from the next call. ` : "This is the version your agent will use. ") + lines.join(" "),
+      ok: "Publish" });
     if (!ok) return;
     let overwrite = false;
     for (;;) {
       try {
         const r = await api("POST", `/businesses/${S.rid}/publish`, { revision: S.revision, overwrite });
-        S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = null; S.versions = null;
-        toast(`Published. The next call uses the new ${W().catalog}.`);
+        S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = null; S.versions = null; S.line = null;
+        toast(live ? `Published. The next call uses the new ${W().catalog}.` : "Published.");
         return render();
       } catch (e) {
         if (e.status === 409 && e.data && e.data.code === "live_changed") {
@@ -341,14 +441,14 @@
           overwrite = true; continue;
         }
         if (e.status === 409) return conflict(e.message);
-        if (e.status === 422) { S.ed.check = e.data.check; render(); return toast("Fix the errors at the top first."); }
+        if (e.status === 422) { S.ed.check = e.data.check; render(); return toast("Fix the items marked “Fix before publishing” first."); }
         return toast(e.message);
       }
     }
   }
 
   async function discard() {
-    const ok = await ask({ title: "Discard all unpublished changes?", body: `The ${W().catalog} goes back to what callers hear now.`, ok: "Discard", danger: true });
+    const ok = await ask({ title: "Discard all unpublished changes?", body: `The ${W().catalog} goes back to the published version.`, ok: "Discard", danger: true });
     if (!ok) return;
     clearTimeout(S.saveTimer); S.dirty = false;
     try { S.ed = await api("DELETE", `/businesses/${S.rid}/draft`); } catch (e) { return toast(e.message); }
@@ -372,38 +472,58 @@
     });
   }
 
+  // A panel that slides in from the right (test chat, reading a menu). Returns its body element.
+  function sidePanel(title, onClose) {
+    document.querySelectorAll(".side, .side-bg").forEach(n => n.remove());
+    const close = () => { document.querySelectorAll(".side, .side-bg").forEach(n => n.remove()); if (onClose) onClose(); };
+    const body = el("div", { class: "drawer-body" });
+    const panel = el("aside", { class: "drawer side", role: "dialog", "aria-modal": "true", "aria-label": title,
+                                onkeydown: e => { if (e.key === "Escape") close(); } },
+      el("div", { class: "drawer-head" }, el("h2", { style: "margin:0" }, title),
+        el("button", { class: "btn small", onclick: close, "aria-label": "Close" }, "✕")), body);
+    document.body.append(el("div", { class: "drawer-bg side-bg", onclick: close }), panel);
+    return { body, panel, close };
+  }
+
   // ---- layout ----
   function signOutBtn() {
-    return el("button", { class: "btn small", onclick: async () => {
+    return el("button", { class: "btn small", type: "button", onclick: async () => {
       try { await flush(); } catch {}
       try { await api("POST", "/logout"); } catch {}
       S.me = null; showLogin("Signed out.");
     } }, "Sign out");
   }
 
+  let refreshTimer = null;
+  const TABS = () => [["home", "Home"], ["orders", "Orders"], ["calls", "Calls"], ["catalog", cap(W().catalog)],
+    ["settings", "Settings"], ["team", "Team"], ["history", "History"]].concat(S.me.operator ? [["operator", "Operator"]] : []);
+
   function render() {
+    clearInterval(refreshTimer);
     const businesses = S.me.businesses;
-    const picker = businesses.length > 1 ? el("select", { "aria-label": "Business", onchange: async e => {
+    const picker = el("select", { class: "picker", "aria-label": "Business", onchange: async e => {
+      if (e.target.value === "new") { e.target.value = S.rid; try { await flush(); } catch {} return showCreate(false); }
       try { await flush(); } catch (x) { return toast("Couldn't save: " + x.message); }
-      S.rid = Number(e.target.value); store.set("manage.business", S.rid); loadEditor();
-    } }, businesses.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name))) : null;
+      S.rid = Number(e.target.value); store.set("manage.business", S.rid); S.tab = "home"; loadEditor();
+    } }, businesses.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name)),
+      el("option", { value: "new" }, "+ Add a business"));
+    if (!TABS().some(([k]) => k === S.tab)) S.tab = "home";
 
     app.replaceChildren(
       el("header", {},
-        el("div", { class: "brand" }, el("h1", {}, S.catalog.settings.name || S.ed.business.slug), picker),
+        el("div", { class: "brand" }, el("span", { class: "dot", "aria-hidden": "true" }, "☎"), picker),
         el("div", { class: "actions", id: "hdr" })),
       el("main", {},
-        el("div", { class: "checks", id: "checks" }),
         el("nav", { class: "tabs", role: "tablist" },
-          [["catalog", cap(W().catalog)], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
-            el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
-                           onclick: () => { S.tab = k; render(); } }, label))),
+          TABS().map(([k, label]) => el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
+            onclick: () => { S.tab = k; render(); } }, label))),
+        el("div", { class: "checks", id: "checks" }),
         el("div", { id: "view" })));
     renderHeader(); renderChecks();
     const view = document.getElementById("view");
-    if (S.tab === "catalog") view.append(catalogView());
-    else if (S.tab === "settings") view.append(settingsView());
-    else view.append(historyView());
+    const views = { home: homeView, orders: ordersView, calls: callsView, catalog: catalogView, settings: settingsView,
+                    team: teamView, history: historyView, operator: operatorView };
+    view.append(views[S.tab]());
     if (S.drawer) renderDrawer();
   }
 
@@ -411,24 +531,26 @@
     const hdr = document.getElementById("hdr");
     if (!hdr) return;
     const hasDraft = !!S.ed.draft || S.dirty;
-    let status;
+    let status = null;
     if (S.saveError) status = el("span", { class: "status bad", title: S.saveError }, "Not saved");
     else if (S.saving || S.dirty) status = el("span", { class: "status draft" }, "Saving…");
     else if (hasDraft) status = el("span", { class: "status draft",
       title: S.ed.draft && S.ed.draft.updated_by ? "Last edit by " + S.ed.draft.updated_by : "" },
-      "Draft saved" + (S.lastSaved ? " " + ago(S.lastSaved) : "") + " · not live yet");
-    else status = el("span", { class: "status live" }, `Live: callers hear this ${W().catalog}`);
+      "Unpublished changes" + (S.lastSaved ? " · saved " + ago(S.lastSaved) : ""));
     const errors = (S.ed.check && S.ed.check.errors.length) || 0;
+    const user = el("details", { class: "usermenu" }, el("summary", { "aria-label": "Account" }, (S.me.email || S.me.who || "?")[0].toUpperCase()),
+      el("div", { class: "menu" }, el("div", { class: "sub" }, S.me.email || S.me.who), signOutBtn()));
     hdr.replaceChildren(...[status,
-      hasDraft ? el("button", { class: "btn small", onclick: discard }, "Discard changes") : null,
-      el("button", { class: "btn primary", disabled: !hasDraft || errors > 0 || null,
-                     title: errors ? "Fix the errors first" : "", onclick: publish }, "Publish"),
-      signOutBtn()].filter(Boolean));
+      hasDraft && S.ed.live_catalog_id ? el("button", { class: "btn small", onclick: discard }, "Discard") : null,
+      hasDraft ? el("button", { class: "btn primary", disabled: errors > 0 || null,
+                                title: errors ? "Fix the errors first" : "", onclick: publish }, "Publish") : null,
+      user].filter(Boolean));
   }
 
   function renderChecks() {
     const box = document.getElementById("checks");
     if (!box) return;
+    if (!["catalog", "settings"].includes(S.tab)) return box.replaceChildren();
     const c = S.ed.check;
     const parts = [];
     if (S.ed.draft && S.ed.draft.live_changed)
@@ -443,7 +565,7 @@
       parts.push(d);
     }
     if (S.ed.pos_provider) parts.push(el("div", { class: "note info" },
-      `Orders go to ${S.ed.pos_provider[0].toUpperCase() + S.ed.pos_provider.slice(1)}. Items linked to it use the POS's own prices on the POS; change prices there too.`));
+      `Orders go to ${cap(S.ed.pos_provider)}. Items linked to it use the POS's own prices on the POS; change prices there too.`));
     box.replaceChildren(...parts);
   }
 
@@ -473,6 +595,7 @@
       el("div", { class: "toolbar" }, search, chip("all", `All ${items.length}`),
         nOff ? chip("off", `${W().unavailable_short} ${nOff}`) : null, nEst ? chip("est", `Estimated price ${nEst}`) : null,
         el("span", { class: "grow" }),
+        el("button", { class: "btn", onclick: openImport }, "Read from photos or PDF"),
         el("button", { class: "btn primary", onclick: () => openItem(null) }, "+ Add " + W().item)),
       cats.length ? cats.map(cat => categoryBlock(cat, byCat.get(cat), !!q || S.filter !== "all"))
         : el("div", { class: "empty" }, items.length ? `No ${W().items} match.` : `No ${W().items} yet. Add your first one.`));
@@ -713,7 +836,7 @@
       changed(rerender);
     };
     const t = S.ed.template;
-    return el("div", { class: "panel" },
+    return el("div", {}, el("div", { class: "panel" },
       el("section", { class: "settings-group" }, el("h2", {}, "Business type"),
         el("div", {}, el("strong", {}, t.label)), el("span", { class: "sub" }, t.description)),
       [...groups].map(([group, fields]) => el("section", { class: "settings-group" },
@@ -745,7 +868,7 @@
             el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
           f.help ? el("span", { class: "help" }, f.help) : null);
       }))),
-      el("p", { class: "sub" }, "Callers hear changes after you publish."));
+      el("p", { class: "sub" }, "Callers hear changes after you publish.")), posPanel());
   }
 
   // ---- history tab ----
@@ -770,6 +893,314 @@
           } }, "Restore"))));
     })();
     return box;
+  }
+
+  // ---- shared bits for the new views ----
+  const fmtPhone = p => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(p || ""); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (p || ""); };
+  const isOwner = () => (S.me.businesses.find(b => b.id === S.rid) || {}).role === "owner" || S.me.operator;
+  const loading = () => el("p", { class: "muted" }, "Loading…");
+  function later(box, load) {  // fill `box` once `load()` resolves; show its error otherwise
+    load().then(kids => box.replaceChildren(...[].concat(kids))).catch(e => box.replaceChildren(el("p", { class: "err" }, e.message)));
+    return box;
+  }
+  const PAY = { paid: ["Paid", "ok"], unpaid: ["Unpaid", "warn"], expired: ["Link expired", "bad"], not_requested: ["Pay at pickup", ""] };
+  const STATUS = { confirmed: ["Confirmed", "ok"], awaiting_payment: ["Awaiting payment", "warn"], cancelled: ["Cancelled", "bad"] };
+  const badge = ([label, cls]) => el("span", { class: "badge " + (cls || "") }, label);
+  const today = t => new Date(t * 1000).toDateString() === new Date().toDateString();
+
+  function orderCard(o) {
+    return el("article", { class: "ocard" },
+      el("div", { class: "ohead" }, el("strong", {}, "#" + o.order_number), el("span", { class: "sub" }, fmtTime(o.created_at)),
+        el("span", { class: "grow" }), el("strong", {}, money(o.total))),
+      el("div", {}, el("span", { class: "who" }, o.customer_name || "No name"),
+        o.customer_phone ? el("span", { class: "sub" }, " · " + fmtPhone(o.customer_phone)) : null),
+      el("ul", { class: "olines" }, (o.lines || []).map(l => el("li", {}, l.description.replace(/ \| /g, " · ")))),
+      el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status, ""]), badge(PAY[o.payment_status] || [o.payment_status, ""]),
+        o.pos_status ? badge({ sent: ["On POS", "ok"], held: ["To POS when paid", ""], pending: ["Sending to POS", ""],
+                                failed: ["Not on POS", "bad"] }[o.pos_status] || [o.pos_status, ""]) : null));
+  }
+
+  // ---- home: setup checklist, or the live line at a glance ----
+  function homeView() {
+    const box = el("div", {}, loading());
+    return later(box, async () => {
+      S.line = S.line || await api("GET", `/businesses/${S.rid}/line`);
+      return S.line.phone_number ? liveHome() : setupHome();
+    });
+  }
+
+  function setupHome() {
+    const st = S.catalog.settings || {};
+    const tried = store.get("tried." + S.rid) === "1";
+    const published = !!S.ed.live_catalog_id && !S.ed.draft;
+    const steps = [
+      { done: typeof st.tax_rate === "number" && st.tax_rate > 0 && !!st.pickup_minutes, title: "Add your business details",
+        text: "Sales tax, pickup time and opening hours, so the agent can quote totals and times.",
+        action: el("button", { class: "btn", onclick: () => { S.tab = "settings"; render(); } }, "Edit details") },
+      { done: S.catalog.items.length > 0, title: `Add your ${W().catalog}`,
+        text: `Upload photos or a PDF of your ${W().catalog} and we'll read it for you. Or add ${W().items} by hand.`,
+        action: el("div", { class: "row wrap" },
+          el("button", { class: "btn primary", onclick: openImport }, "Upload photos or PDF"),
+          el("button", { class: "btn", onclick: () => { S.tab = "catalog"; render(); } }, "Add by hand")) },
+      { done: tried, title: "Try it out",
+        text: "Chat with your agent the way a caller would. Nothing is saved and no one is charged.",
+        action: el("button", { class: "btn", disabled: !S.catalog.items.length || null, onclick: openTestChat }, "Talk to my agent") },
+      { done: published, title: "Publish",
+        text: "Lock in this version. You can keep editing and publish again any time.",
+        action: el("button", { class: "btn", disabled: !(S.ed.draft && !(S.ed.check && S.ed.check.errors.length)) || null, onclick: publish }, "Publish"),
+        problem: S.ed.check && S.ed.check.errors.length ? `${S.ed.check.errors.length} thing(s) to fix first: ${S.ed.check.errors[0]}` : null },
+      { done: false, title: "Go live", text: "Get your own phone number. Calls to it are answered by your agent.",
+        action: goLiveWidget(published) },
+    ];
+    const next = steps.findIndex(s => !s.done);
+    return el("div", { class: "home" },
+      el("h1", { class: "hello" }, `Let's get ${S.catalog.settings.name || "your business"} answering calls`),
+      el("p", { class: "sub" }, `${steps.filter(s => s.done).length} of ${steps.length} done`),
+      el("ol", { class: "steps" }, steps.map((s, i) => el("li", { class: "step" + (s.done ? " done" : "") + (i === next ? " current" : "") },
+        el("span", { class: "tick", "aria-hidden": "true" }, s.done ? "✓" : String(i + 1)),
+        el("div", { class: "grow" }, el("h3", {}, s.title, s.done ? el("span", { class: "sr" }, " (done)") : null),
+          el("p", { class: "sub" }, s.text), s.problem ? el("p", { class: "err" }, s.problem) : null,
+          !s.done || i === 1 || i === 2 ? s.action : null)))));
+  }
+
+  function goLiveWidget(published) {
+    if (!isOwner()) return el("p", { class: "sub" }, "Ask the business owner to take the line live.");
+    if (S.line.pending) return el("div", { class: "note info" }, "Requested. We'll switch your line on shortly, usually within a day. You'll see the number here.");
+    const area = el("input", { type: "text", inputmode: "numeric", maxlength: 3, placeholder: "913", "aria-label": "Area code",
+                               style: "width:90px" });
+    const btn = el("button", { class: "btn primary", disabled: !published || null, onclick: async () => {
+      btn.disabled = true;
+      try {
+        const r = await api("POST", `/businesses/${S.rid}/go-live`, { area_code: area.value.trim() });
+        S.line = null; S.me = await api("GET", "/me");
+        toast(r.status === "live" ? `You're live on ${fmtPhone(r.phone_number)}!` : "Requested. We'll switch it on shortly.");
+        render();
+      } catch (e) { toast(e.message); btn.disabled = false; }
+    } }, "Get my phone number");
+    return el("div", {}, el("div", { class: "row wrap" }, el("label", { class: "sub" }, "Area code (optional) ", area), btn),
+      !published ? el("p", { class: "sub" }, "Publish first.") : null,
+      S.line.last_error ? el("p", { class: "err" }, S.line.last_error) : null);
+  }
+
+  function liveHome() {
+    const line = S.line;
+    const stats = el("div", { class: "tiles" }, loading());
+    const recent = el("div", { class: "orders" });
+    const load = async () => {
+      const [orders, calls] = await Promise.all([api("GET", `/businesses/${S.rid}/orders?limit=200`),
+                                                 api("GET", `/businesses/${S.rid}/calls?limit=200`)]);
+      const t = orders.filter(o => today(o.created_at));
+      const tile = (label, value) => el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+      stats.replaceChildren(tile("Orders today", t.length), tile("Sales today", money(t.reduce((s, o) => s + o.total, 0))),
+        tile("Calls today", calls.filter(c => today(c.started_at)).length));
+      recent.replaceChildren(...(orders.length ? orders.slice(0, 5).map(orderCard)
+        : [el("div", { class: "empty" }, "No orders yet. Call your number to place a test order.")]));
+    };
+    load().catch(e => stats.replaceChildren(el("p", { class: "err" }, e.message)));
+    refreshTimer = setInterval(() => load().catch(() => {}), 15000);
+    const toggle = isOwner() ? el("button", { class: "btn small", onclick: async () => {
+      try { await api("POST", `/businesses/${S.rid}/${line.active ? "pause" : "resume"}`); S.line = null; render(); }
+      catch (e) { toast(e.message); }
+    } }, line.active ? "Pause line" : "Turn line back on") : null;
+    return el("div", { class: "home" },
+      el("section", { class: "panel liveline" },
+        el("div", {}, el("div", { class: "sub" }, "Your agent answers"), el("div", { class: "bigphone" }, fmtPhone(line.phone_number)),
+          el("div", { class: "row wrap" }, badge(line.active ? ["Live", "ok"] : ["Paused", "warn"]),
+            el("span", { class: "sub" }, line.active ? "Callers can order now." : "Callers hear that you're not taking orders."))),
+        el("div", { class: "row wrap" }, el("button", { class: "btn", onclick: openTestChat }, "Talk to my agent"), toggle),
+        el("details", { class: "sub" }, el("summary", {}, "Use your existing number"),
+          el("p", {}, `Keep your current number: ask your phone company to forward calls to ${fmtPhone(line.phone_number)}, `,
+            "either always or only when nobody picks up."))),
+      stats,
+      el("div", { class: "row", style: "justify-content:space-between;margin-top:18px" }, el("h2", {}, "Latest orders"),
+        el("button", { class: "linkish", onclick: () => { S.tab = "orders"; render(); } }, "See all")),
+      recent);
+  }
+
+  // ---- orders and calls ----
+  function ordersView() {
+    const box = el("div", { class: "orders" }, loading());
+    const load = () => later(box, async () => {
+      const orders = await api("GET", `/businesses/${S.rid}/orders?limit=200`);
+      return orders.length ? orders.map(orderCard) : el("div", { class: "empty" }, "No orders yet. They appear here as soon as a caller places one.");
+    });
+    load();
+    refreshTimer = setInterval(load, 15000);
+    return el("div", {}, el("p", { class: "sub" }, "Updates every 15 seconds."), box);
+  }
+
+  function callsView() {
+    const box = el("div", { class: "calls" }, loading());
+    return later(box, async () => {
+      const calls = await api("GET", `/businesses/${S.rid}/calls?limit=200`);
+      if (!calls.length) return el("div", { class: "empty" }, "No calls yet.");
+      return calls.map(c => {
+        const body = el("div", { class: "transcript" });
+        return el("details", { class: "panel call", ontoggle: e => {
+            if (e.target.open && !body.childElementCount) later(body, async () => {
+              const t = await api("GET", `/businesses/${S.rid}/calls/${encodeURIComponent(c.call_id)}`);
+              return t.events.map(ev => el("div", { class: "line " + ev.role }, el("span", { class: "role" }, ev.role), " ", ev.text));
+            });
+          } },
+          el("summary", {}, el("strong", {}, fmtTime(c.started_at)), " ", el("span", { class: "sub" }, fmtPhone(c.caller_phone) || "Unknown caller"),
+            " ", c.order_number ? badge(["Order #" + c.order_number, "ok"]) : badge([c.ended_at ? "No order" : "Live", c.ended_at ? "" : "warn"])),
+          body);
+      });
+    });
+  }
+
+  // ---- team ----
+  function teamView() {
+    const box = el("div", {}, loading());
+    const draw = members => {
+      const email = el("input", { type: "email", placeholder: "name@example.com", "aria-label": "Email", class: "grow" });
+      const add = isOwner() ? el("form", { class: "row wrap", onsubmit: async e => {
+          e.preventDefault();
+          try { draw(await api("POST", `/businesses/${S.rid}/team`, { email: email.value })); toast("Added. They can sign in now."); }
+          catch (x) { toast(x.message); }
+        } }, email, el("button", { class: "btn primary", type: "submit" }, "Add")) : null;
+      box.replaceChildren(el("div", { class: "panel" },
+        el("h2", {}, "People who can manage this business"),
+        el("p", { class: "sub" }, "Add someone's email, then send them this page's link. They sign in with Google using that email."),
+        add,
+        el("ul", { class: "people" }, members.map(m => el("li", {},
+          el("div", { class: "grow" }, el("strong", {}, m.name || m.email), m.name ? el("div", { class: "sub" }, m.email) : null),
+          badge([m.role === "owner" ? "Owner" : "Manager", m.role === "owner" ? "ok" : ""]),
+          m.joined ? null : badge(["Hasn't signed in yet", "warn"]),
+          isOwner() && m.email !== S.me.email ? el("button", { class: "btn small danger", onclick: async () => {
+            if (!await ask({ title: `Remove ${m.email}?`, body: "They won't be able to see or edit this business.", ok: "Remove", danger: true })) return;
+            try { draw(await api("DELETE", `/businesses/${S.rid}/team/${m.user_id}`)); } catch (x) { toast(x.message); }
+          } }, "Remove") : null)))));
+    };
+    api("GET", `/businesses/${S.rid}/team`).then(draw).catch(e => box.replaceChildren(el("p", { class: "err" }, e.message)));
+    return box;
+  }
+
+  // ---- POS (shown on the settings tab) ----
+  function posPanel() {
+    const box = el("section", { class: "panel", style: "margin-top:14px" }, loading());
+    return later(box, async () => {
+      const pos = await api("GET", `/businesses/${S.rid}/pos`);
+      const head = [el("h2", {}, "Point of sale"), el("p", { class: "sub" }, "Send phone orders straight to your Square or Clover register.")];
+      if (pos.connected) return [...head, el("p", {}, badge(["Connected", "ok"]), " ", cap(pos.connected.provider)),
+        isOwner() ? el("button", { class: "btn small danger", onclick: async () => {
+          if (!await ask({ title: "Disconnect your POS?", body: "New orders will only show here.", ok: "Disconnect", danger: true })) return;
+          await api("DELETE", `/businesses/${S.rid}/pos`); render();
+        } }, "Disconnect") : null];
+      if (!pos.available.length) return [...head, el("p", { class: "sub" }, "Coming soon.")];
+      return [...head, isOwner() ? el("div", { class: "row wrap" }, pos.available.map(p => el("button", { class: "btn", onclick: async () => {
+        try { location.href = (await api("POST", `/businesses/${S.rid}/pos`, { provider: p })).url; } catch (e) { toast(e.message); }
+      } }, "Connect " + cap(p)))) : el("p", { class: "sub" }, "Ask the owner to connect it.")];
+    });
+  }
+
+  // ---- operator ----
+  function operatorView() {
+    const box = el("div", {}, loading());
+    const load = () => later(box, async () => {
+      const reqs = await api("GET", "/admin/requests");
+      return el("div", { class: "panel" }, el("h2", {}, "Waiting to go live"),
+        el("p", { class: "sub" }, "Businesses past the automatic number limit. Approving buys their number."),
+        reqs.length ? el("ul", { class: "people" }, reqs.map(r => el("li", {},
+          el("div", { class: "grow" }, el("strong", {}, r.name), el("div", { class: "sub" }, `${r.email || "?"} · area ${r.area_code || "any"} · ${fmtTime(r.created_at)}`)),
+          el("button", { class: "btn small primary", onclick: async () => {
+            try { const x = await api("POST", `/admin/requests/${r.id}/approve`); toast(`Live on ${fmtPhone(x.phone_number)}`); load(); } catch (e) { toast(e.message); }
+          } }, "Approve"),
+          el("button", { class: "btn small", onclick: async () => { await api("POST", `/admin/requests/${r.id}/reject`); load(); } }, "Decline"))))
+          : el("p", { class: "muted" }, "Nothing waiting."));
+    });
+    load();
+    return box;
+  }
+
+  // ---- talk to my agent ----
+  async function openTestChat() {
+    try { await flush(); } catch (e) { return toast("Couldn't save: " + e.message); }
+    const { body } = sidePanel("Talk to your agent");
+    const log = el("div", { class: "chatlog", "aria-live": "polite" });
+    const input = el("input", { type: "text", class: "grow", placeholder: "Type what a caller would say", "aria-label": "Message", maxlength: 500 });
+    const send = el("button", { class: "btn primary", type: "submit" }, "Send");
+    const bubble = (who, text, events) => log.append(el("div", { class: "msg " + who }, el("div", { class: "bubble" }, text),
+      (events || []).filter(e => !e.error && e.tool !== "view_order").map(e => el("div", { class: "toolnote" }, toolLabel(e)))));
+    S.chat = { business: S.rid, session: null };
+    body.append(el("p", { class: "sub" }, "Uses your latest changes, even unpublished ones. Nothing is saved and no texts are sent."),
+      log, el("form", { class: "row chatform", onsubmit: async e => {
+        e.preventDefault();
+        const text = input.value.trim(); if (!text) return;
+        input.value = ""; bubble("caller", text); send.disabled = true;
+        const typing = el("div", { class: "msg agent" }, el("div", { class: "bubble muted" }, "…")); log.append(typing);
+        log.scrollTop = log.scrollHeight;
+        try {
+          const r = await api("POST", `/businesses/${S.rid}/test-chat`, { text, session: S.chat.session });
+          typing.remove();
+          if (!S.chat.session && r.greeting) log.prepend(el("div", { class: "msg agent" }, el("div", { class: "bubble" }, r.greeting)));
+          S.chat.session = r.session;
+          bubble("agent", r.reply || "(no reply)", r.events);
+          if (r.ended) log.append(el("p", { class: "sub" }, "The agent ended the call."));
+          store.set("tried." + S.rid, "1");
+        } catch (x) { typing.remove(); bubble("agent", x.message); }
+        send.disabled = false; log.scrollTop = log.scrollHeight; input.focus();
+      } }, input, send));
+    input.focus();
+  }
+  const toolLabel = e => {
+    const a = e.args || {};
+    const item = (S.catalog.items.find(i => i.id === a.item_id) || {}).name || a.item_id;
+    return { add_item: `Added ${a.quantity || 1} × ${item}`, remove_item: "Removed an item", update_quantity: "Changed a quantity",
+             set_customer_name: `Name: ${a.name}`, set_customer_phone: "Updated the phone number", place_order: "Placed the order (test only)",
+             end_call: "Hung up" }[e.tool] || e.tool;
+  };
+
+  // ---- read a menu from photos or a PDF ----
+  async function shrink(file) {  // big phone photos -> JPEG under 2000px, so uploads are quick
+    if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bmp.width * scale); canvas.height = Math.round(bmp.height * scale);
+      canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.85));
+      return blob ? new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" }) : file;
+    } catch { return file; }  // the server says which formats it takes
+  }
+
+  async function openImport() {
+    try { await flush(); } catch (e) { return toast("Couldn't save: " + e.message); }
+    const { body, close } = sidePanel(`Read your ${W().catalog}`);
+    const files = el("input", { type: "file", multiple: true, accept: "image/*,application/pdf", id: "files" });
+    const hasItems = S.catalog.items.length > 0;
+    const mode = el("select", { "aria-label": "What to do with what's there" },
+      el("option", { value: "append" }, `Add to my ${W().catalog}`), el("option", { value: "replace" }, `Replace my ${W().catalog}`));
+    const status = el("div", { "aria-live": "polite" });
+    const go = el("button", { class: "btn primary big", onclick: async () => {
+      if (!files.files.length) return toast("Choose at least one photo or PDF.");
+      go.disabled = true;
+      status.replaceChildren(el("div", { class: "note info" }, el("strong", {}, "Reading…"),
+        ` This usually takes under a minute. We're turning ${files.files.length} file(s) into ${W().items}.`));
+      try {
+        const form = new FormData();
+        for (const f of files.files) form.append("files", await shrink(f));
+        const r = await upload(`/businesses/${S.rid}/import?mode=${mode.value}` + (S.revision ? `&revision=${S.revision}` : ""), form);
+        S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = r.draft ? r.draft.revision : null;
+        close(); S.tab = "catalog"; render();
+        toast(`Added ${r.added} ${W().items}. Check prices, then publish.`);
+        if (r.unreadable && r.unreadable.length) ask({ title: "A few things couldn't be read", body: r.unreadable.join(" · "), cancel: null });
+      } catch (e) { status.replaceChildren(el("p", { class: "err" }, e.message)); go.disabled = false; }
+    } }, `Read my ${W().catalog}`);
+    body.append(...[
+      el("p", { class: "sub" }, `Take clear photos of every page of your ${W().catalog} (or upload a PDF). We'll list every ${W().item} with its price and choices. You review everything before it goes live.`),
+      el("div", { class: "field" }, el("label", { for: "files" }, "Photos or PDF (up to 10)"), files),
+      hasItems ? el("div", { class: "field" }, el("span", { class: "lbl" }, `You already have ${S.catalog.items.length} ${W().items}`), mode) : null,
+      el("p", { class: "sub" }, "Prices we can't read are marked “estimated” for you to check."),
+      go, status].filter(Boolean));
+  }
+
+  async function upload(path, form) {
+    const r = await fetch(API + path, { method: "POST", body: form, headers: { "X-Manage": "1" }, credentials: "same-origin" });
+    let data = null; try { data = await r.json(); } catch {}
+    if (!r.ok) { const e = new Error((data && data.detail) || `Upload failed (${r.status})`); e.status = r.status; throw e; }
+    return data;
   }
 
   window.addEventListener("hashchange", () => { if (/invite=/.test(location.hash)) boot(); });

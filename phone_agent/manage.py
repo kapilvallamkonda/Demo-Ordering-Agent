@@ -57,13 +57,29 @@ async def manage_page() -> HTMLResponse:
 
 
 class Who:
-    def __init__(self, label: str, business_ids: list[int] | None, user: dict | None = None):
+    def __init__(self, label: str, business_ids: list[int] | None, user: dict | None = None, store=None):
         self.label = label  # recorded on drafts and published versions
         self.business_ids = business_ids  # None: every business (operator)
         self.user = user
+        self.store = store
+
+    @property
+    def operator(self) -> bool:
+        return self.business_ids is None
 
     def can(self, business_id: int) -> bool:
         return self.business_ids is None or business_id in self.business_ids
+
+    def role(self, business_id: int) -> str | None:
+        """"owner" (phone line, team, POS, everything) or "manager" (catalog, settings,
+        orders and calls). The operator counts as an owner everywhere."""
+        if self.operator:
+            return "owner"
+        return self.store.user_role(self.user["id"], business_id) if self.user else None
+
+
+def operator_emails() -> set[str]:
+    return {e.strip().lower() for e in os.environ.get("OPERATOR_EMAILS", "").split(",") if e.strip()}
 
 
 def _accounts(request: Request) -> Accounts:
@@ -74,11 +90,14 @@ def _who(request: Request) -> Who:
     token = os.environ.get("ADMIN_API_TOKEN", "")
     auth = request.headers.get("authorization", "")
     if token and auth and hmac.compare_digest(auth, f"Bearer {token}"):
-        return Who("operator", None)
+        return Who("operator", None, None, request.app.state.store)
     user = _accounts(request).session_user(request.cookies.get(COOKIE))
     if user is None:
         raise HTTPException(status_code=401, detail="sign in first")
-    return Who(user["email"], request.app.state.store.user_business_ids(user["id"]), user)
+    store = request.app.state.store
+    if user["email"] in operator_emails():
+        return Who(user["email"], None, user, store)
+    return Who(user["email"], store.user_business_ids(user["id"]), user, store)
 
 
 def _check_write(request: Request) -> None:
@@ -98,6 +117,10 @@ def _base(request: Request) -> str:
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
     return f"{proto}://{host}"
+
+
+def secure_cookie(request: Request) -> bool:
+    return _secure(request)
 
 
 def _secure(request: Request) -> bool:
@@ -184,15 +207,31 @@ async def accept_invite(request: Request) -> JSONResponse:
     return _signed_in(request, user)
 
 
+@router.get("/api/manage/config")
+async def config() -> dict:
+    """What the sign-in page needs (no sign-in required)."""
+    from .google_auth import configured
+
+    return {"google": configured(), "password_login": not configured() or bool(os.environ.get("ALLOW_PASSWORD_LOGIN"))}
+
+
 @router.get("/api/manage/me")
 async def me(request: Request) -> dict:
     who = _who(request)
-    directory = request.app.state.businesses
-    businesses = [{"id": r["id"], "slug": r["slug"], "name": r["name"] or r["slug"], "active": r["active"],
-                    "phone_number": r["phone_number"]}
-                   for r in directory.listing() if who.can(r["id"])]
-    return {"who": who.label, "name": who.user["name"] if who.user else "Operator",
-            "operator": who.business_ids is None, "businesses": businesses}
+    store, directory = request.app.state.store, request.app.state.businesses
+    businesses = []
+    for r in directory.listing():
+        if not who.can(r["id"]):
+            continue
+        name = r["name"]
+        if not name:  # a new business that hasn't published yet: its draft has the name
+            draft = store.draft(r["id"])
+            name = ((draft or {}).get("catalog") or {}).get("settings", {}).get("name")
+        businesses.append({"id": r["id"], "slug": r["slug"], "name": name or r["slug"], "active": r["active"],
+                           "phone_number": r["phone_number"], "role": who.role(r["id"]),
+                           "template": r["template"], "status": r["status"]})
+    return {"who": who.label, "name": (who.user or {}).get("name") or ("Operator" if who.operator else ""),
+            "email": (who.user or {}).get("email"), "operator": who.operator, "businesses": businesses}
 
 
 # ---- the editor -----------------------------------------------------------------------------

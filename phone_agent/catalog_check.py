@@ -48,7 +48,7 @@ def check_catalog(raw: dict) -> dict:
     r = catalog.settings
     if len(raw["items"]) > MAX_ITEMS:
         errors.append(f"at most {MAX_ITEMS} items")
-    if not isinstance(r.get("tax_rate"), (int, float)) or r.get("tax_rate", 0) <= 0:
+    if isinstance(r.get("tax_rate"), (int, float)) and r["tax_rate"] <= 0:  # missing is an error already
         blockers.append("Sales tax is 0: every total would leave tax out")
     if r.get("order_types", ["pickup"]) != ["pickup"]:
         errors.append("order_types must be [\"pickup\"] (delivery isn't supported)")

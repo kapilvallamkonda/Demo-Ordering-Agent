@@ -3,8 +3,9 @@
 A demo AI phone agent for businesses. Callers dial a business's Twilio number and talk
 to Claude, which takes their pickup order with tools, reads it back, places it and
 gives an order number. Each business picks a **template** (restaurant or shop today;
-salons and other appointment-based services are coming soon) and edits its own catalog
-and settings in the web manager at `/manage`.
+salons and other appointment-based services are coming soon). Businesses sign up
+themselves: sign in with Google, upload photos of the menu (Claude reads them into a
+catalog), test the agent in the browser, and get a phone number, all at `/manage`.
 
 ```
 Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──TwiML <ConversationRelay>
@@ -50,6 +51,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 | `phone_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a business's Square or Clover, send each placed order to it, import its catalog. Admin commands: `python -m phone_agent.pos --help`. |
 | `phone_agent/templates.py` | Kinds of business (restaurant, retail shop; salon coming soon): modules, wording, prompt rules, tags, settings. Add a kind of business here. |
 | `data/templates/<id>.json` | Starter catalogs for each template. |
+| `phone_agent/onboarding.py` | Self-serve API: create a business, read a menu from photos, test chat, go live (buys a number), team, orders and calls, POS, operator approvals; usage limits. |
+| `phone_agent/google_auth.py` | Sign in with Google (`/auth/google`). |
+| `phone_agent/catalog_import.py` | Reads menu or price-list photos and PDFs into catalog items (one Claude call with a JSON schema). |
+| `phone_agent/numbers.py` | Buys a Twilio number for a business going live and points it at `/voice`. |
+| `phone_agent/static/landing.html` | The public home page at `/`. |
 | `phone_agent/manage.py`, `static/manage.html` | Manager at `/manage`: business staff sign in and edit their catalog and settings (draft, publish, history). |
 | `phone_agent/accounts.py` | Staff accounts: invite links, passwords, sessions. `python -m phone_agent.accounts --help`. |
 | `phone_agent/settings_schema.py` | The business settings staff can edit; the settings form is built from it. Add a setting here. |
@@ -191,6 +197,15 @@ They include a full phone order over the WebSocket.
 | `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |
 | `CATALOG_PATH` | `data/businesses/hyderabad-house.json` | Catalog file for the terminal chat when `--business` isn't given. Live calls use catalogs in the database. |
 | `ADMIN_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | unset | Sign in with Google for business owners and staff. Without them, `/manage` falls back to email + password (invited accounts only). |
+| `OPERATOR_EMAILS` | unset | Comma-separated emails of operators: they see every business and approve go-live requests. |
+| `ALLOW_PASSWORD_LOGIN` | unset | Also offer email + password sign-in when Google is configured. |
+| `IMPORT_MODEL` | `claude-opus-5-5` | Model that reads menu photos and PDFs. |
+| `MAX_BUSINESSES_PER_ACCOUNT` | `3` | Businesses one account can create. |
+| `FREE_NUMBERS_PER_ACCOUNT` | `1` | Phone numbers bought automatically for one account (in total); more wait for an operator. |
+| `NUMBERS_PER_DAY` | `5` | Phone numbers bought automatically per day across all accounts; more wait for an operator. |
+| `IMPORTS_PER_BUSINESS_PER_DAY` | `10` | Menu reads from photos per business per day. |
+| `TEST_TURNS_PER_BUSINESS_PER_DAY` | `60` | Test-chat messages per business per day. |
 | `MAX_CALLS_PER_BUSINESS` | `20` | Calls one business can have at once; past this its callers hear "all our lines are busy", so one busy business can't crowd out the others. |
 | `POS_SECRET_KEY` | unset | Turns on POS integrations and encrypts their tokens. A Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it safe: without it every business must reconnect. |
 | `SQUARE_APPLICATION_ID`, `SQUARE_APPLICATION_SECRET` | unset | Square app credentials (Developer Console), for connect links. |
@@ -228,6 +243,23 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
 - DTMF (keypad) input is ignored.
 - Square and Clover integrations are tested against fake APIs only so far; Toast needs
   its partner program first (`docs/toast-partner-application.md`).
+
+## For businesses: self-serve sign-up
+
+Owners start at `/` → "Get started with Google", then:
+
+1. Pick the kind of business (restaurant or shop) and type its name.
+2. Upload photos or a PDF of the menu or price list. Claude reads it into a catalog
+   (prices it can't read are marked "estimated"); edit anything by hand.
+3. Fill in tax, pickup time and hours, and try the agent in the browser chat.
+4. Publish, then "Get my phone number". The first number per account is bought
+   automatically (within a daily limit); others wait for an operator to approve
+   (Operator tab). Owners can forward their existing line to the new number.
+5. Watch orders and calls (with transcripts), add teammates by email, connect Square or
+   Clover.
+
+Operators (`OPERATOR_EMAILS`) see every business and the go-live queue. See
+[docs/DESIGN.md](docs/DESIGN.md) section 16.
 
 ## Manager (for business staff)
 

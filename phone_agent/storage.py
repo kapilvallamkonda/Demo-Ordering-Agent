@@ -178,8 +178,65 @@ class Store:
         c.execute("CREATE INDEX IF NOT EXISTS calls_business ON calls(business_id, started_at)")
         c.execute("CREATE INDEX IF NOT EXISTS call_events_call ON call_events(call_id, id)")
         c.commit()
+        self._migrate()
+
+    # ---- schema changes ----------------------------------------------------------------
+    # The tables above are version 1. Each later change is a numbered step here, applied
+    # once to an existing database (PRAGMA user_version records how far it has got). Never
+    # edit a step that has shipped; add a new one.
+
+    def _migrate(self) -> None:
+        steps = [self._v2_self_serve]
+        with self._lock:
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0] or 1
+            for number, step in enumerate(steps, start=2):
+                if version < number:
+                    step(self._conn)
+                    self._conn.execute(f"PRAGMA user_version = {number}")
+                    self._conn.commit()
+
+    @staticmethod
+    def _v2_self_serve(c: sqlite3.Connection) -> None:
+        """Sign in with Google, go-live requests, and daily usage counters."""
+        cols = {row[1] for row in c.execute("PRAGMA table_info(users)")}
+        if "google_sub" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub ON users(google_sub)")
+        # A business asking for a phone number; "pending" ones wait for the operator.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS go_live_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_id INTEGER NOT NULL REFERENCES businesses(id),
+                user_id INTEGER REFERENCES users(id),
+                area_code TEXT,
+                status TEXT NOT NULL,  -- pending, done, rejected, failed
+                phone_number TEXT,
+                error TEXT,
+                created_at REAL NOT NULL,
+                decided_at REAL
+            )"""
+        )
+        # Counters for limits: scope is "global", "user:<id>" or "business:<id>".
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS usage (
+                scope TEXT NOT NULL,
+                day TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (scope, day, kind)
+            )"""
+        )
 
     # ---- businesses and catalogs -------------------------------------------------------
+
+    def create_business(self, slug: str) -> int:
+        """A new self-serve business: no catalog, no number, not taking calls yet."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO businesses (slug, phone_number, active, created_at) VALUES (?, NULL, 0, ?)",
+                (slug, time.time()))
+            self._conn.commit()
+            return int(cur.lastrowid)
 
     def add_business(self, slug: str, phone_number: str | None, catalog: dict) -> int:
         """Create a business with its first catalog. Returns the business id."""
@@ -330,11 +387,12 @@ class Store:
     def _user(self, col: str, value) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                f"SELECT id, email, name, password_hash, active FROM users WHERE {col} = ?", (value,)
+                f"SELECT id, email, name, password_hash, active, google_sub FROM users WHERE {col} = ?", (value,)
             ).fetchone()
         if row is None:
             return None
-        return {"id": row[0], "email": row[1], "name": row[2], "password_hash": row[3], "active": bool(row[4])}
+        return {"id": row[0], "email": row[1], "name": row[2], "password_hash": row[3], "active": bool(row[4]),
+                "google_sub": row[5]}
 
     def set_password_hash(self, user_id: int, password_hash: str) -> None:
         with self._lock:
@@ -363,6 +421,34 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM user_businesses WHERE user_id = ? AND business_id = ?",
                                (user_id, business_id))
+            self._conn.commit()
+
+    def user_role(self, user_id: int, business_id: int) -> str | None:
+        with self._lock:
+            row = self._conn.execute("SELECT role FROM user_businesses WHERE user_id = ? AND business_id = ?",
+                                     (user_id, business_id)).fetchone()
+        return row[0] if row else None
+
+    def team(self, business_id: int) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT u.id, u.email, u.name, ub.role, u.google_sub IS NOT NULL OR u.password_hash IS NOT NULL"
+                " FROM user_businesses ub JOIN users u ON u.id = ub.user_id WHERE ub.business_id = ?"
+                " ORDER BY ub.role = 'owner' DESC, u.email", (business_id,)).fetchall()
+        return [{"user_id": r[0], "email": r[1], "name": r[2], "role": r[3], "joined": bool(r[4])} for r in rows]
+
+    def owned_business_count(self, user_id: int) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM user_businesses WHERE user_id = ? AND role = 'owner'",
+                                      (user_id,)).fetchone()[0]
+
+    def user_by_google(self, sub: str) -> dict | None:
+        return self._user("google_sub", sub)
+
+    def link_google(self, user_id: int, sub: str, name: str = "") -> None:
+        with self._lock:
+            self._conn.execute("UPDATE users SET google_sub = ?, name = CASE WHEN name = '' THEN ? ELSE name END"
+                               " WHERE id = ?", (sub, name[:80], user_id))
             self._conn.commit()
 
     def user_business_ids(self, user_id: int) -> list[int]:
@@ -639,6 +725,69 @@ class Store:
             ).fetchall()
         return [{"call_id": r[0], "started_at": r[1], "ended_at": r[2], "caller_phone": r[3],
                  "order_number": r[4], "business_id": r[5], "caller_turns": r[6]} for r in rows]
+
+    # ---- go-live requests and usage limits ------------------------------------------------
+
+    def add_go_live_request(self, business_id: int, user_id: int | None, area_code: str | None,
+                            status: str, phone_number: str | None = None, error: str | None = None) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO go_live_requests (business_id, user_id, area_code, status, phone_number, error,"
+                " created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_id, user_id, area_code, status, phone_number, error, time.time(),
+                 None if status == "pending" else time.time()))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def update_go_live_request(self, request_id: int, status: str, phone_number: str | None = None,
+                               error: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE go_live_requests SET status = ?, phone_number = ?, error = ?, decided_at = ?"
+                               " WHERE id = ?", (status, phone_number, error, time.time(), request_id))
+            self._conn.commit()
+
+    def go_live_requests(self, status: str | None = None, business_id: int | None = None) -> list[dict]:
+        where, args = [], []
+        if status:
+            where.append("r.status = ?"); args.append(status)
+        if business_id is not None:
+            where.append("r.business_id = ?"); args.append(business_id)
+        sql = ("SELECT r.id, r.business_id, b.slug, r.user_id, u.email, r.area_code, r.status, r.phone_number,"
+               " r.error, r.created_at, r.decided_at FROM go_live_requests r JOIN businesses b ON b.id = r.business_id"
+               " LEFT JOIN users u ON u.id = r.user_id"
+               + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY r.id DESC")
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        keys = ("id", "business_id", "slug", "user_id", "email", "area_code", "status", "phone_number",
+                "error", "created_at", "decided_at")
+        return [dict(zip(keys, r)) for r in rows]
+
+    def usage(self, scope: str, kind: str, day: str) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT count FROM usage WHERE scope = ? AND day = ? AND kind = ?",
+                                     (scope, day, kind)).fetchone()
+        return row[0] if row else 0
+
+    def take_usage(self, scope: str, kind: str, day: str, limit: int) -> bool:
+        """Count one use if that stays within the limit. Returns False (and counts
+        nothing) when the limit is reached. Atomic, so concurrent requests can't overshoot."""
+        with self._lock:
+            row = self._conn.execute("SELECT count FROM usage WHERE scope = ? AND day = ? AND kind = ?",
+                                     (scope, day, kind)).fetchone()
+            if (row[0] if row else 0) >= limit:
+                return False
+            self._conn.execute(
+                "INSERT INTO usage (scope, day, kind, count) VALUES (?, ?, ?, 1)"
+                " ON CONFLICT(scope, day, kind) DO UPDATE SET count = count + 1", (scope, day, kind))
+            self._conn.commit()
+            return True
+
+    def live_business_count(self, user_id: int) -> int:
+        """Businesses this user owns that have a phone number."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM user_businesses ub JOIN businesses b ON b.id = ub.business_id"
+                " WHERE ub.user_id = ? AND ub.role = 'owner' AND b.phone_number IS NOT NULL", (user_id,)).fetchone()[0]
 
     def call_business(self, call_id: str) -> int | None:
         with self._lock:

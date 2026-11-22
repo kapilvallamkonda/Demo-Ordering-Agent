@@ -1,6 +1,6 @@
 # High-Level Design: Phone Agent for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (modules and isolation between businesses).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (self-serve sign-up and onboarding).
 
 ## 1. Goal
 
@@ -10,7 +10,9 @@ builds the order, reads it back, places it after the caller confirms, and gives 
 order number and pickup time. It then texts the order details and a secure payment
 link to the caller, so card details are never shared over the phone.
 
-The agent is generic: a **template** (section 15) says what kind of business it is
+Businesses set themselves up in the browser (section 16): sign in with Google, upload
+menu photos, test the agent, go live with their own number. The agent is generic: a
+**template** (section 15) says what kind of business it is
 (restaurant, shop; salons and other services are coming soon) and which **modules** it
 uses (orders now; bookings later). The business itself enters its details and
 catalog in the web manager (section 14). Restaurants were first, so examples below
@@ -66,6 +68,7 @@ flowchart LR
 | Storage | `phone_agent/storage.py` | Businesses, catalog versions, placed orders (order and payment status, per-business order numbers) and call transcripts, in SQLite. All SQL is in this file. |
 | POS integrations | `phone_agent/pos.py`, `pos_square.py`, `pos_clover.py`; `server.py` `/pos/<provider>/callback` | Connects a business's Square or Clover account (OAuth, encrypted tokens), sends each placed order to it in the background with retries, records the online payment there, imports the POS catalog into a catalog file. Section 13. |
 | Terminal client | `phone_agent/cli.py` | Same agent without a phone, for testing. |
+| Self-serve | `phone_agent/onboarding.py`, `google_auth.py`, `catalog_import.py`, `numbers.py`; `static/landing.html`, `static/manage.html` | Sign in with Google, create a business, read a menu from photos (Claude), test chat, go live (buys a Twilio number or queues it for approval), team, orders and calls per business, POS connect, operator approvals, usage limits. Section 16. |
 | Templates | `phone_agent/templates.py`; starters in `data/templates/` | What kind of business it is: modules (which tools a call gets), words, prompt role and rules, greeting, tags and settings changes. Section 15. |
 | Catalog manager | `phone_agent/manage.py` (`/manage`, `/api/manage/...`), `static/manage.html`, `accounts.py`, `settings_schema.py`, `catalog_check.py` | Web page where business staff sign in and edit their own catalog (items, descriptions, prices, choices, extras, sold out) and settings. Edits autosave to a draft; publishing makes a new catalog version used from the next call. History with restore. Section 14. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `phone_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
@@ -184,7 +187,7 @@ reach another:
 | Background work | POS jobs never sleep in a worker (retries wait on timers), and a business has at most 2 POS jobs running, so a slow or failing POS only delays its own orders. |
 | Errors | Lookups and agent start-up are wrapped per call; logs name the business. |
 
-Still shared, and the limits that come with it (section 16): one Anthropic API key and
+Still shared, and the limits that come with it (section 17): one Anthropic API key and
 rate limit, one Stripe account and one SMS sender number (phase 3), one SQLite file with
 one lock, and one machine.
 
@@ -224,6 +227,15 @@ one lock, and one machine.
 - **Catalog draft:** one per business: the edited catalog JSON, the live version it started
   from, a revision number (for conflict checks), who and when last saved. Published
   catalog versions record who published them (`created_by`: an email or `operator`).
+- **Self-serve (schema version 2):** `users.google_sub` (the Google account, unique);
+  `user_businesses.role` is `owner` or `manager`; `go_live_requests` (business, who,
+  area code, status `pending`/`done`/`failed`/`rejected`/`approved`, number, error);
+  `usage` (scope `global` / `user:<id>` / `business:<id>`, day, kind, count) for limits.
+  A new self-serve business has no catalog version and no number until it publishes and
+  goes live.
+- **Schema changes:** numbered steps in `Store._migrate`, applied once per database
+  (`PRAGMA user_version`). Version 1 is the base schema; version 2 added the self-serve
+  tables. Add a new step for every change; never edit a shipped one.
 - **Template:** the catalog JSON's top-level `template` key (`restaurant` when missing);
   it's versioned with the catalog.
 - **Catalog JSON:** `{"template": ..., "settings": {...}, "items": [...]}` (plus `pos` after a
@@ -297,6 +309,19 @@ hours, notes) live in each business's catalog, not in environment variables.
   Bearer token. The page is served with a strict CSP, `X-Frame-Options: DENY` and
   `no-store`. Every save is validated on the server (catalog_check.py), whatever the page
   sends.
+- Sign in with Google: authorization code flow with PKCE; state and verifier in a
+  signed, HttpOnly, 10-minute cookie; only Google-verified emails; an email already on a
+  team (or with an older account) is linked to the Google account on first sign-in, and
+  an email linked to a different Google account is refused. Then the same session cookie
+  as password sign-in.
+- Roles: owners take the line live, pause it, manage the team and connect the POS;
+  managers edit the catalog and settings and see orders and calls. Operators
+  (`OPERATOR_EMAILS`, or the admin token) are owners everywhere and approve go-live
+  requests.
+- Spending limits (env-tunable, counted atomically in `usage`): businesses per account,
+  automatic phone numbers per account and per day across everyone (the rest wait for an
+  operator), menu reads and test-chat turns per business per day, team size. Uploads are
+  capped (10 files, 20 MB) and only JPEG/PNG/WebP/GIF/PDF are accepted.
 - `RELAY_EXTRA_ATTRS` can't override `url` or `welcomeGreeting`.
 - POS access tokens are encrypted at rest (Fernet, `POS_SECRET_KEY`); losing the key
   means reconnecting every business. Connect links carry an HMAC-signed state naming
@@ -322,6 +347,8 @@ hours, notes) live in each business's catalog, not in environment variables.
 | POS rejects the order (other 4xx) | Not retried; shown as "Not on POS" with the error for staff. |
 | One business's catalog can't be loaded | Only that business goes offline: its callers hear "this number isn't taking orders", it's logged at startup and shown as `broken` in `/businesses` and `businesses list`. Every other business keeps working. |
 | Unexpected error looking up or starting a call | Caught per call: that caller hears the short apology; other calls aren't affected. |
+| Reading menu photos fails, is refused, or is too long | The owner sees a plain message (try clearer photos, fewer pages, or again); the draft is unchanged. |
+| Buying a number fails (none in that area code, Twilio error) | The owner sees a message (try a nearby area code); a `failed` request is recorded; no number, nothing charged. |
 | One business gets more calls than `MAX_CALLS_PER_BUSINESS` | New callers to that business hear "all our lines are busy"; other businesses still answer. |
 
 ## 11. Testing
@@ -343,7 +370,13 @@ ids on re-import), and admin commands. Not yet tried against the real sandboxes.
 CSRF header and Origin checks, access to other businesses, operator token, draft
 revisions and conflicts, publish reaching the next call (greeting, new item, sold-out
 item refused), errors blocking publish, publishing over a newer catalog, restore and
-discard, page security headers, and the checks on the real catalog. Template tests: valid starters, the
+discard, page security headers, and the checks on the real catalog. Self-serve tests
+(`tests/test_onboarding.py`, fake Google, Claude and Twilio): Google sign-in (new account,
+linking a teammate added by email, unverified email, forged state, failed token
+exchange), creating a business and its limits, reading menu photos into the draft (and
+file type and daily limits), test chat without saving, going live within the free
+limit, queuing past it and operator approval, the daily number limit, owner-only actions,
+team management, and orders and calls scoped to the business. Template tests: valid starters, the
 retail wording in the prompt and greeting, out-of-stock refusal, the coming-soon and
 unknown templates refused, tools per module, settings labels per template, the editor
 API sending the template, and the business prompt unchanged by the refactor. Isolation tests
@@ -572,8 +605,56 @@ and "menu" appear only where they mean the restaurant template.
 - Bookings are "coming soon"; the extension points exist, the module doesn't
   (2026-11-22).
 
-## 16. Open issues and next steps
+## 16. Self-serve sign-up and onboarding
 
+A business sets itself up without us, like creating any online account.
+
+1. **Sign in** at `/` or `/manage` with Google (`google_auth.py`). The first sign-in
+   creates the account.
+2. **Create a business**: pick a template (restaurant, shop; salon shows "coming soon")
+   and type the name. That creates the business with no number, inactive, owned by the
+   person, with a draft catalog holding the name and default settings.
+3. **Home: a five-step checklist**: details (tax, pickup time, hours), catalog, try it,
+   publish, go live. Each step has its button.
+4. **Read the menu** (`catalog_import.py`): up to 10 photos (resized to JPEG in the browser)
+   or PDFs go to Claude (`claude-opus-5-5`, effort medium, server-side refusal fallback)
+   in one streaming call with a JSON-schema output: items with price, category,
+   description tags from the template, options with added prices, extras; plus the
+   address, hours and notes it could read. Items are added to (or replace) the draft with
+   unique ids; unprinted prices are marked `placeholder_price` so the checks ask the owner
+   to confirm. Address and hours only fill empty fields.
+5. **Try it**: a typed conversation in the browser with the real agent on the draft
+   catalog (`test-chat`), no store, payments or POS, so nothing is saved or texted.
+   Sessions live in memory for 30 minutes.
+6. **Publish**, then **go live** (`onboarding.go_live`): requires a published catalog
+   without errors. Within the limits (first number per account, `NUMBERS_PER_DAY`
+   overall) the server buys a US local number in the requested area code
+   (`numbers.TwilioNumbers`), points its voice webhook at `/voice`, sets it on the
+   business and turns the line on. Otherwise a `pending` request waits in the Operator
+   tab; approving buys the number the same way. Owners can pause and resume the line.
+7. **Run it**: Home shows the number, today's orders, sales and calls and the latest
+   orders; Orders and Calls (with transcripts) are scoped to the business; Team adds
+   people by email (they sign in with Google); Settings has the POS connect buttons.
+
+**Decisions** (2026-11-22)
+
+- Sign in with Google only for new accounts (no email sending needed); email and
+  password stays for older invited accounts and local development.
+- Numbers are bought automatically within small limits; more need operator approval.
+  Raising the limit by adding a card comes with billing (not built; free pilot).
+- The menu is read by one structured-output call, and always reviewed by the owner
+  before it's published; nothing reaches callers without a publish.
+
+## 17. Open issues and next steps
+
+- Self-serve (section 16): needs a Google OAuth client (`GOOGLE_CLIENT_ID` and
+  `GOOGLE_CLIENT_SECRET`) and `OPERATOR_EMAILS` on the server before anyone can sign up.
+  Not built yet: billing and the card-raises-the-limit flow, releasing a number when a
+  business leaves (numbers keep costing money until released in Twilio), deleting a
+  business, emails (go-live approved, new team member), new-order notifications (the
+  pages poll), US numbers only, menu photos in HEIC from some phones (converted in Safari
+  only; other browsers should upload JPEG). Test-chat sessions are in memory (lost on
+  restart, one machine).
 - Shared between businesses (section 5): one Anthropic key (a rate-limit or billing
   problem stops every business; per-business keys or limits would need a gateway), one
   Stripe account and SMS number (phase 3), one SQLite file behind one lock (Postgres),
@@ -625,13 +706,11 @@ and "menu" appear only where they mean the restaurant template.
   Square OAuth apps can go live without the App Marketplace.
 - Toast: submit the partner application (`docs/toast-partner-application.md`); expect
   discovery, an agreement, sandbox credentials, certification, then an alpha business.
-- Bookings module and the salon template (section 15), then self-serve signup where a
-  business picks a template and enters its details itself.
-- Rename business/catalog in code and storage to business/catalog with the Postgres move.
+- Bookings module and the salon template (section 15).
 - Possible features: delivery, kitchen display, order status from the POS back to the
   dashboard ("ready").
 
-## 17. Change log
+## 18. Change log
 
 | Date | Change |
 |---|---|
@@ -654,3 +733,4 @@ and "menu" appear only where they mean the restaurant template.
 | 2026-11-22 | Business templates: the agent is generic, with a template per kind of business (`phone_agent/templates.py`: modules, words, prompt rules, greeting, tags, settings). `restaurant` (unchanged behavior) and `retail` available, `salon` coming soon (bookings module). Tools come from the template's modules; the manager's wording, tags and settings form follow the template; starter catalogs in `data/templates/`; `restaurants templates` command. |
 | 2026-11-22 | Renamed to **Phone Agent**: package `phone_agent`, repo `phone-agent`, Fly app `phone-agent-604b` (new app and volume; the old app and its test data were retired). Generic names throughout: `businesses.py`, `catalog.py`, `catalog_check.py`, `Store`, `PhoneAgent`; tables `businesses`, `catalog_versions`, `catalog_drafts`, `user_businesses`; `business_id`/`catalog_id`; catalog JSON `settings` block; `/businesses` and `?business=`; env `DATABASE_PATH`, `ADMIN_API_TOKEN`, `CATALOG_PATH`; CLI `set-catalog`, `--catalog`, `--business`, `import-catalog`; skill `add-business`. Schema created in full, with the old upgrade code removed. |
 | 2026-11-22 | Modules and isolation: call logic split into modules (`phone_agent/modules/`, orders built, bookings registered as coming soon) with a generic agent, dispatcher and call session (`session.py`); the prompt is unchanged. Businesses isolated: a broken catalog only takes its own business offline; `/ws` requires a per-call token from `/voice` and a matching dialed number; `MAX_CALLS_PER_BUSINESS`; POS retries on timers with at most 2 jobs per business; catalog versions looked up within their business. |
+| 2026-11-22 | Self-serve sign-up and onboarding: landing page, sign in with Google, create a business from a template, read the menu from photos or PDF with Claude, test chat in the browser, go live (automatic number purchase within limits, operator approval past them), pause/resume, team by email with owner/manager roles, per-business orders and calls, POS connect buttons, operator queue. Database schema versioning (`Store._migrate`, version 2). |
