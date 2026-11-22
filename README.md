@@ -32,7 +32,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
 | Path | What it is |
 |---|---|
-| `data/menu.json` | Hyderabad House's menu and settings (about 210 items), the format every restaurant's menu uses. Optional `restaurant.notes` lines are added to the prompt. Menus are stored in the database; this file is what you load in. |
+| `data/restaurants/<slug>.json` | One menu file per restaurant (menu plus settings), e.g. `hyderabad-house.json` (about 210 items). Optional `restaurant.notes` lines are added to the prompt. Live calls use the copy stored in the database; these files are what you load in. |
+| `.claude/skills/add-restaurant/` | Claude Code skill (`/add-restaurant`) that onboards a restaurant end to end: menu photos to menu file, checks, Twilio number, registration on Fly, verification. Includes `scripts/check_menu.py` and the menu format guide. |
 | `tests/fixtures/menu.json` | Small fixed menu the tests use, so they don't depend on the real menu. |
 | `ordering_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
 | `ordering_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
@@ -57,7 +58,7 @@ set -a; . ./.env; set +a
 ### 1. Try it in the terminal
 
 ```bash
-python -m ordering_agent.cli                            # uses data/menu.json
+python -m ordering_agent.cli                            # uses data/restaurants/hyderabad-house.json
 python -m ordering_agent.cli --restaurant hyderabad-house  # a restaurant saved in the database
 ```
 
@@ -67,12 +68,16 @@ One server serves many restaurants. Each has a slug, the Twilio number callers d
 (that's how a call finds its restaurant) and a menu:
 
 ```bash
-python -m ordering_agent.restaurants add hyderabad-house --phone +19135783983 --menu data/menu.json
+python -m ordering_agent.restaurants add hyderabad-house --phone +19135783983 --menu data/restaurants/hyderabad-house.json
 python -m ordering_agent.restaurants list
-python -m ordering_agent.restaurants set-menu hyderabad-house --menu data/menu.json  # publish an edited menu
+python -m ordering_agent.restaurants set-menu hyderabad-house --menu data/restaurants/hyderabad-house.json  # publish an edited menu
 python -m ordering_agent.restaurants set-phone hyderabad-house --phone +19135551234
 python -m ordering_agent.restaurants deactivate hyderabad-house                     # stop taking calls
 ```
+
+In Claude Code, `/add-restaurant` walks through the whole onboarding (menu, checks,
+number, registration, test). To check a menu file by hand:
+`.venv/bin/python .claude/skills/add-restaurant/scripts/check_menu.py data/restaurants/<slug>.json`.
 
 Menus are checked before they're saved, and every version is kept. A new menu is used
 from the next call on, no restart needed. A call to a number no restaurant has hears a
@@ -172,7 +177,7 @@ They include a full phone order over the WebSocket.
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
 | `ORDERS_DB` | `data/orders.db` | SQLite file: restaurants, menus, orders, transcripts. |
-| `MENU_PATH` | `data/menu.json` | Menu file for the terminal chat when `--restaurant` isn't given. Live calls use menus in the database. |
+| `MENU_PATH` | `data/restaurants/hyderabad-house.json` | Menu file for the terminal chat when `--restaurant` isn't given. Live calls use menus in the database. |
 | `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
 
 Voice settings are read on every incoming call, so changing them only needs a server

@@ -1,6 +1,6 @@
 """Talk to the ordering agent in the terminal, no phone needed.
 
-    python -m ordering_agent.cli                      # menu from MENU_PATH or data/menu.json
+    python -m ordering_agent.cli                      # menu from MENU_PATH or data/restaurants/hyderabad-house.json
     python -m ordering_agent.cli --restaurant SLUG    # a restaurant saved in ORDERS_DB
 """
 

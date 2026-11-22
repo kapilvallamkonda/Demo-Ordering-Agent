@@ -4,7 +4,7 @@ Card details are never taken over the phone. After the order is placed we create
 Stripe Checkout Session with the exact line items and tax, text the link (with the
 order details) to the caller, and a Stripe webhook tells us when it's paid.
 
-Whether the kitchen waits for payment is a restaurant rule in data/menu.json:
+Whether the kitchen waits for payment is a restaurant rule in its menu file:
   "payment": {"required_before_cooking": false, "pay_within_minutes": 30}
 """
 

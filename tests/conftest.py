@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-# Tests use a small fixed menu so they don't break when the real menu (data/menu.json) changes.
+# Tests use a small fixed menu so they don't break when the real menu (data/restaurants/) changes.
 FIXTURE_MENU = Path(__file__).parent / "fixtures" / "menu.json"
 BELLA_PHONE = "+15550009999"  # the test restaurant's Twilio number
 

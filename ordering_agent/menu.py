@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_MENU_PATH = Path(__file__).resolve().parent.parent / "data" / "menu.json"
+DEFAULT_MENU_PATH = Path(__file__).resolve().parent.parent / "data" / "restaurants" / "hyderabad-house.json"
 
 
 @dataclass(frozen=True)

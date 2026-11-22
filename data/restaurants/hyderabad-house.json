@@ -8,6 +8,7 @@
     ],
     "pickup_minutes": 25,
     "tax_rate": 0.08,
+    "placeholders": ["tax_rate"],
     "payment": {
       "required_before_cooking": false,
       "pay_within_minutes": 30

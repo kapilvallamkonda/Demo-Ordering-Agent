@@ -51,7 +51,7 @@ flowchart LR
 | System prompt | `ordering_agent/prompts.py` | Speaking style for phone, ordering procedure, the full menu. |
 | Tools | `ordering_agent/tools.py` | Tool schemas for Claude, input type checks, dispatch to the order. |
 | Order | `ordering_agent/order.py` | Cart state and all business rules: valid items, required options, extras, quantities, tax, totals. |
-| Menu | `ordering_agent/menu.py`; menus stored per restaurant in the database, loaded from files like `data/menu.json` | Restaurant info and settings, optional restaurant notes, and menu, rendered into the prompt deterministically. Validated before it's saved. Dishes sold in several versions (e.g. chicken/fish/shrimp) are one item with a required option priced as deltas from the cheapest version. Tests use `tests/fixtures/menu.json`. |
+| Menu | `ordering_agent/menu.py`; menus stored per restaurant in the database, loaded from `data/restaurants/<slug>.json` files | Restaurant info and settings, optional restaurant notes, and menu, rendered into the prompt deterministically. Validated before it's saved. Dishes sold in several versions (e.g. chicken/fish/shrimp) are one item with a required option priced as deltas from the cheapest version. Tests use `tests/fixtures/menu.json`. |
 | Payments | `ordering_agent/payments.py` | Creates a Stripe Checkout link per order, texts it with the order details via Twilio, applies Stripe webhook events (paid / expired) to the order. |
 | Stripe webhook | `server.py` `/stripe/webhook`, `/paid` | Verifies Stripe's signature and updates payment and order status; `/paid` is the page shown after paying. |
 | Storage | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders (order and payment status, per-restaurant order numbers) and call transcripts, in SQLite. All SQL is in this file. Adds new columns to older databases on startup. |
@@ -92,7 +92,7 @@ sequenceDiagram
     S->>S: POST /stripe/webhook -> order paid (and confirmed), "payment received" text
 ```
 
-**Payment rule (per restaurant, `restaurant.payment` in `data/menu.json`):**
+**Payment rule (per restaurant, `restaurant.payment` in the restaurant's menu):**
 - `required_before_cooking: false` (default): the order is confirmed right away; paying
   by link is optional and the caller can pay at pickup.
 - `required_before_cooking: true`: the order is saved as `awaiting_payment` and only
@@ -255,7 +255,7 @@ validation.
 Goal: one deployment serves many restaurants. Each call is routed to one restaurant,
 and each restaurant's menu, settings, orders, transcripts, staff and money are kept
 separate. The agent, tools and order rules are already restaurant-neutral (everything
-restaurant-specific is in `data/menu.json`), so the change is mostly data, routing and
+restaurant-specific is in the restaurant's menu file), so the change is mostly data, routing and
 accounts.
 
 **What changes**
@@ -307,6 +307,11 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 2. Staff logins and per-restaurant dashboards.
 3. Stripe Connect and per-restaurant SMS (needed before payment links go live for anyone).
 4. Onboarding from photos and the admin page, so restaurant #2 needs no hand-edited JSON.
+   Until then, onboarding is done with the Claude Code skill
+   `.claude/skills/add-restaurant/` (menu file from photos, `check_menu.py`, Twilio
+   number, registration on Fly, signed test call). Menu files live in git at
+   `data/restaurants/<slug>.json` and ship in the image; `restaurant.placeholders` and
+   `placeholder_price` mark guessed values, which the checker blocks on.
 5. POS integrations as restaurants ask for them.
 
 **Decisions**
@@ -322,7 +327,7 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
 - Menu gaps: address and hours are not set. Drinks, shakes, desserts and pastries (17
-  items tagged `"placeholder_price": true` in `data/menu.json`) use typical prices, not the
+  items tagged `"placeholder_price": true` in `data/restaurants/hyderabad-house.json`) use typical prices, not the
   restaurant's; confirm or correct them before real customers order. Daily specials
   aren't on the phone menu; the agent offers them at the counter.
 - The full menu adds roughly 6k tokens to the (cached) system prompt; watch first-turn latency.
@@ -365,3 +370,4 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 | 2026-11-22 | Drinks, shakes, desserts and pastries added to the phone menu with placeholder prices (`placeholder_price` tag). Only daily specials are still counter-only. |
 | 2026-11-22 | Multi-restaurant plan (section 12); note on simultaneous calls in section 5. |
 | 2026-11-22 | Multi-restaurant phase 1 on SQLite: restaurants and versioned menus in the database, calls routed by dialed number, `restaurant_id` on orders and calls, per-restaurant order numbers, admin commands (`ordering_agent/restaurants.py`), `/restaurants` API, restaurant filter on `/orders` and `/calls`, dashboard restaurant picker. |
+| 2026-11-22 | `add-restaurant` skill and menu checker; menus moved to `data/restaurants/<slug>.json`; `restaurant.placeholders` marks unconfirmed settings (Hyderabad House's tax rate). |

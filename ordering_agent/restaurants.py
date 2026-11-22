@@ -7,7 +7,7 @@ number that was dialed.
 Admin commands (run on the server, e.g. `fly ssh console -C "python -m ..."`):
 
     python -m ordering_agent.restaurants list
-    python -m ordering_agent.restaurants add SLUG --phone +19135551234 --menu data/menu.json
+    python -m ordering_agent.restaurants add SLUG --phone +19135551234 --menu data/restaurants/hyderabad-house.json
     python -m ordering_agent.restaurants set-menu SLUG --menu new-menu.json
     python -m ordering_agent.restaurants set-phone SLUG --phone +19135551234   (or --none)
     python -m ordering_agent.restaurants deactivate SLUG   /   activate SLUG
