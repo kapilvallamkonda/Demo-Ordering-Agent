@@ -9,7 +9,7 @@ from ordering_agent.agent import OrderingAgent
 from ordering_agent.menu import load_menu
 from ordering_agent.storage import OrderStore
 
-from .conftest import FIXTURE_MENU
+from .conftest import BELLA_PHONE, FIXTURE_MENU, seed_restaurant
 from .fakes import FakeClient, message, text_block, tool_block
 
 
@@ -78,16 +78,17 @@ def app_client(tmp_path, monkeypatch):
     fake = FakeClient([])
     server.app.state.client = fake
     with TestClient(server.app) as c:
+        seed_restaurant(server.app.state.store)
         yield c, fake
     del server.app.state.client
 
 
 def test_voice_webhook_returns_conversation_relay_twiml(app_client):
     c, _ = app_client
-    r = c.post("/voice", data={"CallSid": "CA1"}, headers={"host": "example.ngrok.app",
+    r = c.post("/voice", data={"CallSid": "CA1", "To": BELLA_PHONE}, headers={"host": "example.ngrok.app",
                                                            "x-forwarded-proto": "https"})
     assert r.status_code == 200
-    assert '<ConversationRelay url="wss://example.ngrok.app/ws"' in r.text
+    assert '<ConversationRelay url="wss://example.ngrok.app/ws?restaurant=1"' in r.text
     assert "Thanks for calling Bella Cucina" in r.text
 
 
@@ -110,8 +111,8 @@ def test_full_phone_order_over_websocket(app_client, monkeypatch):
                 tool_block("end_call", {}, id="t3"), stop_reason="tool_use"),
     ]
     monkeypatch.setattr(server, "WORDS_PER_SECOND", 1e9)  # skip the goodbye wait
-    with c.websocket_connect("/ws") as ws:
-        ws.send_text(json.dumps({"type": "setup", "callSid": "CA9", "from": "+15550001111"}))
+    with c.websocket_connect("/ws?restaurant=1") as ws:
+        ws.send_text(json.dumps({"type": "setup", "callSid": "CA9", "from": "+15550001111", "to": BELLA_PHONE}))
         ws.send_text(json.dumps({"type": "prompt", "voicePrompt": "Two tiramisu, name is Lee",
                                  "last": True}))
         tokens = []
@@ -137,7 +138,7 @@ def test_full_phone_order_over_websocket(app_client, monkeypatch):
 
 def test_voice_settings_from_env(app_client, monkeypatch):
     c, _ = app_client
-    r = c.post("/voice", data={})
+    r = c.post("/voice", data={"To": BELLA_PHONE})
     assert "ttsProvider" not in r.text and "voice=" not in r.text  # Twilio defaults
 
     monkeypatch.setenv("TTS_PROVIDER", "ElevenLabs")
@@ -145,7 +146,7 @@ def test_voice_settings_from_env(app_client, monkeypatch):
     monkeypatch.setenv("VOICE_LANGUAGE", "en-US")
     monkeypatch.setenv("STT_PROVIDER", "Deepgram")
     monkeypatch.setenv("RELAY_EXTRA_ATTRS", '{"interruptible": "speech", "url": "evil", "bad name": "x"}')
-    r = c.post("/voice", data={})
+    r = c.post("/voice", data={"To": BELLA_PHONE})
     for attr in ['ttsProvider="ElevenLabs"', 'voice="abc123"', 'language="en-US"',
                  'transcriptionProvider="Deepgram"', 'interruptible="speech"']:
         assert attr in r.text
@@ -155,7 +156,7 @@ def test_voice_settings_from_env(app_client, monkeypatch):
 def test_bad_extra_attrs_json_is_ignored(app_client, monkeypatch):
     c, _ = app_client
     monkeypatch.setenv("RELAY_EXTRA_ATTRS", "{not json")
-    assert c.post("/voice", data={}).status_code == 200
+    assert c.post("/voice", data={"To": BELLA_PHONE}).status_code == 200
 
 
 def test_dashboard_and_orders_need_token(app_client, monkeypatch):

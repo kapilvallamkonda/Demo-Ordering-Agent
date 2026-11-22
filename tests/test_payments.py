@@ -11,7 +11,7 @@ from ordering_agent.payments import PaymentLink, PaymentService, handle_stripe_e
 from ordering_agent.storage import OrderStore
 from ordering_agent.tools import CallSession, run_tool
 
-from .conftest import FIXTURE_MENU
+from .conftest import FIXTURE_MENU, seed_restaurant
 from .fakes import FakeClient
 
 
@@ -94,8 +94,8 @@ def test_required_payment_holds_order_until_paid():
 
     event = {"type": "checkout.session.completed",
              "data": {"object": {"id": "cs_test_1", "payment_status": "paid"}}}
-    assert handle_stripe_event(event, store, menu, sms) == "paid"
-    assert handle_stripe_event(event, store, menu, sms) == "duplicate"  # Stripe retries
+    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "paid"
+    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "duplicate"  # Stripe retries
     saved = store.recent()[0]
     assert saved["status"] == "confirmed" and saved["payment_status"] == "paid"
     assert len(sms.sent) == 2 and "payment received" in sms.sent[1][1]
@@ -106,7 +106,7 @@ def test_required_payment_expiry_cancels_order():
     sms = FakeSms()
     _, store, _, _ = placed_session(menu, PaymentService(FakeLinks(), sms))
     event = {"type": "checkout.session.expired", "data": {"object": {"id": "cs_test_1"}}}
-    assert handle_stripe_event(event, store, menu, sms) == "expired"
+    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "expired"
     assert store.recent()[0]["status"] == "cancelled"
     assert "cancelled" in sms.sent[-1][1]
 
@@ -116,7 +116,7 @@ def test_optional_payment_expiry_keeps_order():
     sms = FakeSms()
     _, store, _, _ = placed_session(menu, PaymentService(FakeLinks(), sms))
     event = {"type": "checkout.session.expired", "data": {"object": {"id": "cs_test_1"}}}
-    handle_stripe_event(event, store, menu, sms)
+    handle_stripe_event(event, store, lambda rid: menu, sms)
     saved = store.recent()[0]
     assert saved["status"] == "confirmed" and saved["payment_status"] == "expired"
     assert len(sms.sent) == 1  # no cancellation text
@@ -183,11 +183,12 @@ def test_stripe_webhook_route_accepts_signed_event(tmp_path, monkeypatch):
     try:
         with TestClient(server.app) as c:
             store = server.app.state.store
-            order = Order(menu=server.app.state.menu)
+            rid = seed_restaurant(store)
+            order = Order(menu=server.app.state.restaurants.get(rid))
             order.add_item("tiramisu")
             order.set_customer("Ana")
-            n = store.save(order, status="awaiting_payment", payment_status="unpaid")
-            store.set_payment_link(n, "cs_test_x", "https://pay.example/x")
+            saved = store.save(order, status="awaiting_payment", payment_status="unpaid")
+            store.set_payment_link(saved.id, "cs_test_x", "https://pay.example/x")
 
             payload = json.dumps({"id": "evt_1", "object": "event", "type": "checkout.session.completed",
                                   "data": {"object": {"id": "cs_test_x", "object": "checkout.session",

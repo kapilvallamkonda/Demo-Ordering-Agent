@@ -44,16 +44,17 @@ flowchart LR
 | Component | File | Responsibility |
 |---|---|---|
 | Twilio ConversationRelay | (Twilio) | Phone line, speech-to-text, text-to-speech, interruption detection. |
-| Voice webhook | `ordering_agent/server.py` `/voice` | Answers the call with TwiML that connects it to ConversationRelay, including voice settings. |
+| Voice webhook | `ordering_agent/server.py` `/voice` | Finds the restaurant by the dialed number (`To`) and answers with that restaurant's greeting and TwiML that connects the call to ConversationRelay (restaurant id in the `/ws` URL), including voice settings. Unknown numbers get a short apology and hang-up. |
+| Restaurant directory | `ordering_agent/restaurants.py` | Maps a dialed number or id to the restaurant's current menu (parsed menus cached by menu version). Also the admin commands: add a restaurant, publish a menu, set its number, activate/deactivate. |
 | Relay session | `server.py` `RelayCall`, `/ws` | One per call. Turns relay messages into agent turns, streams reply text back, handles interruptions and hang-up. |
 | Agent | `ordering_agent/agent.py` | Streaming Claude tool-use loop for one call. Yields text chunks as they arrive. |
 | System prompt | `ordering_agent/prompts.py` | Speaking style for phone, ordering procedure, the full menu. |
 | Tools | `ordering_agent/tools.py` | Tool schemas for Claude, input type checks, dispatch to the order. |
 | Order | `ordering_agent/order.py` | Cart state and all business rules: valid items, required options, extras, quantities, tax, totals. |
-| Menu | `data/menu.json`, `ordering_agent/menu.py` | Restaurant info, optional restaurant notes, and menu, rendered into the prompt deterministically. Dishes sold in several versions (e.g. chicken/fish/shrimp) are one item with a required option priced as deltas from the cheapest version. Tests use `tests/fixtures/menu.json`. |
+| Menu | `ordering_agent/menu.py`; menus stored per restaurant in the database, loaded from files like `data/menu.json` | Restaurant info and settings, optional restaurant notes, and menu, rendered into the prompt deterministically. Validated before it's saved. Dishes sold in several versions (e.g. chicken/fish/shrimp) are one item with a required option priced as deltas from the cheapest version. Tests use `tests/fixtures/menu.json`. |
 | Payments | `ordering_agent/payments.py` | Creates a Stripe Checkout link per order, texts it with the order details via Twilio, applies Stripe webhook events (paid / expired) to the order. |
 | Stripe webhook | `server.py` `/stripe/webhook`, `/paid` | Verifies Stripe's signature and updates payment and order status; `/paid` is the page shown after paying. |
-| Storage | `ordering_agent/storage.py` | Saves placed orders (SQLite) with order status and payment status. Adds new columns to older databases on startup. |
+| Storage | `ordering_agent/storage.py` | Restaurants, menu versions, placed orders (order and payment status, per-restaurant order numbers) and call transcripts, in SQLite. All SQL is in this file. Adds new columns to older databases on startup. |
 | Terminal client | `ordering_agent/cli.py` | Same agent without a phone, for testing. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `ordering_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
 
@@ -65,12 +66,13 @@ sequenceDiagram
     participant T as Twilio
     participant S as Server
     participant A as Claude
-    C->>T: dials number
-    T->>S: POST /voice
-    S-->>T: TwiML <Connect><ConversationRelay url=/ws ...>
-    T->>C: speaks welcome greeting
-    T->>S: WS {"type":"setup", callSid, from}
-    S->>S: create OrderingAgent for this call
+    C->>T: dials a restaurant's number
+    T->>S: POST /voice (To = dialed number)
+    S->>S: look up restaurant by To
+    S-->>T: TwiML <Connect><ConversationRelay url=/ws?restaurant=ID ...>
+    T->>C: speaks that restaurant's greeting
+    T->>S: WS {"type":"setup", callSid, from, to}
+    S->>S: create OrderingAgent with that restaurant's menu
     C->>T: "Two pepperoni pizzas"
     T->>S: {"type":"prompt", voicePrompt, last:true}
     S->>A: stream request (history + tools)
@@ -156,15 +158,21 @@ is how to find out why a call didn't produce an order.
 
 ## 6. Data model
 
+- **Restaurant:** id, slug (e.g. `hyderabad-house`), the Twilio number callers dial
+  (unique), active flag, current menu version.
+- **Menu version:** restaurant, time, the full menu JSON (items plus the `restaurant`
+  settings block: name, hours, address, tax rate, pickup minutes, payment rule, notes).
+  Publishing a menu adds a version; old ones are kept.
 - **Order:** lines, customer name, caller phone (from Twilio, not from the model),
   order type (pickup), placed flag. Subtotal, tax and total are computed.
 - **Line item:** line_id, menu item, quantity, chosen options, extras, kitchen notes,
   unit price (computed from the menu).
-- **Saved order row:** order number, time, Twilio call SID, name, phone, total, full
+- **Saved order row:** internal id, restaurant, per-restaurant order number (each
+  restaurant's first order is #1), time, Twilio call SID, name, phone, total, full
   order summary as JSON, order status (`confirmed` / `awaiting_payment` / `cancelled`),
   payment status (`not_requested` / `unpaid` / `paid` / `expired`), Stripe Checkout
   Session ID and URL, paid time.
-- **Call row:** Twilio call SID, start and end time, caller phone, order number (if any).
+- **Call row:** Twilio call SID, restaurant, start and end time, caller phone, order number (if any).
 - **Call event:** call SID, time, role (`caller` / `agent` / `tool` / `event`), text
   (at most 4,000 characters).
 - **Phone numbers** are stored in E.164 form (`+15551234567`).
@@ -188,14 +196,20 @@ All settings are environment variables; see `.env.example` and the README table.
 Groups: Claude (model, effort, fast mode), voice (text-to-speech and speech-to-text
 provider, voice, language, extra ConversationRelay attributes), Twilio (auth token,
 public URL, account SID and SMS sender number), Stripe (secret key, webhook secret),
-storage (orders database, menu path), admin (`/orders` token). Payment links are on
+storage (database file; menu file for the terminal chat), admin (`/orders` token). Payment links are on
 only when `STRIPE_SECRET_KEY` and the Twilio SMS settings are all set; otherwise
-customers pay at pickup. The pay-first rule is per restaurant, in `data/menu.json`.
+customers pay at pickup. Per-restaurant settings (tax, pickup time, pay-first rule,
+hours, notes) live in each restaurant's menu, not in environment variables.
 
 ## 9. Security
 
 - `/voice` validates Twilio's request signature when `TWILIO_AUTH_TOKEN` is set.
-- `/ws` rejects a bad signature, but doesn't yet require one (open issue).
+- `/ws` rejects a bad signature (checked over the full URL, including the restaurant
+  id), but doesn't yet require one (open issue). The restaurant id in the URL is
+  cross-checked against the dialed number in the setup message; a mismatch is logged.
+- Every order and call row carries its restaurant, and the APIs filter by it. Until
+  staff logins exist, the single `ORDERS_API_TOKEN` sees every restaurant, so only the
+  operator should have it.
 - `/orders`, `/calls` and `/dashboard` (customer names, phone numbers, call
   transcripts) are off unless `ORDERS_API_TOKEN` is set. The dashboard page has no data in it; it sends the token
   (kept in the browser's local storage) as a Bearer header, compared in constant time.
@@ -230,10 +244,13 @@ API key or network. Coverage: order rules, tool validation, the agent loop, TwiM
 voice settings, signature rejection, a full phone order over the WebSocket, phone
 number checks, both payment rules (optional and pay-first), link/SMS failure, Stripe
 webhook signature checks and duplicate events (with fake Stripe and SMS), an
-interruption during `place_order` (order still saved, history stays valid), and call
-transcripts through `/calls`.
+interruption during `place_order` (order still saved, history stays valid), call
+transcripts through `/calls`, and multiple restaurants: routing by dialed number,
+unknown and inactive numbers, per-restaurant order numbers, API filtering, payment texts
+in the right restaurant's name, migrating a pre-restaurant database, and admin-command
+validation.
 
-## 12. Multi-restaurant plan (not built yet)
+## 12. Multi-restaurant plan (phase 1 built, except Postgres)
 
 Goal: one deployment serves many restaurants. Each call is routed to one restaurant,
 and each restaurant's menu, settings, orders, transcripts, staff and money are kept
@@ -281,19 +298,24 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 
 **Phases**
 
-1. Restaurants table, routing by dialed number, Postgres, `restaurant_id` everywhere,
-   menus in the database. Hyderabad House becomes restaurant #1. No change for callers.
+1. **Done 2026-11-22 (on SQLite):** restaurants table, routing by dialed number,
+   `restaurant_id` on orders and calls, per-restaurant order numbers, versioned menus
+   in the database, admin commands, restaurant picker on the dashboard. Hyderabad House
+   is restaurant #1. **Still to do:** move to Postgres (provider not chosen; Netlify
+   Database was looked at and isn't a fit, since it's tied to apps deployed on Netlify;
+   Neon directly or Fly Managed Postgres are the candidates).
 2. Staff logins and per-restaurant dashboards.
 3. Stripe Connect and per-restaurant SMS (needed before payment links go live for anyone).
 4. Onboarding from photos and the admin page, so restaurant #2 needs no hand-edited JSON.
 5. POS integrations as restaurants ask for them.
 
-**Decisions still open**
+**Decisions**
 
-- Phone numbers bought in our main Twilio account (simplest) or a Twilio subaccount per
-  restaurant (cleaner billing and isolation).
-- Whether chains are in scope: if so, model brand -> locations from the start, with menu
-  and hours per location.
+- Phone numbers: bought in our main Twilio account, one per restaurant (decided
+  2026-11-22). Subaccounts can come later if billing needs separating.
+- Chains: not in scope for now; each restaurant is one location (decided 2026-11-22).
+  A chain's locations can be separate restaurants; a brand level can be added later.
+- Database: Postgres provider still to choose.
 
 ## 13. Open issues and next steps
 
@@ -311,15 +333,19 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
   US SMS registration (A2P 10DLC) for the Twilio number, or US carriers block the texts.
 - The dashboard is read-only: no "ready" / "picked up" status, and it polls rather than
   pushing new orders. Cancelled pay-first orders show there but aren't announced.
-- The dashboard token is one shared secret; use real staff logins before production.
+- The dashboard token is one shared secret that sees every restaurant; staff logins
+  scoped to one restaurant are phase 2.
 - Refunds and order changes after payment are handled manually in Stripe.
-- Before scaling past one Fly machine, move orders to Postgres (SQLite is on one volume),
-  and set up volume snapshots/backups for `orders.db`.
+- Before scaling past one Fly machine, move to Postgres (SQLite is on one volume). Order
+  numbers are assigned as max + 1 under a process lock, which is only safe on one
+  machine; Postgres needs a per-restaurant counter or a unique constraint with retry.
 - Transcripts are kept forever and include names and phone numbers; add a retention
   period (delete after N days) before real customers call.
 - The first live order that wasn't saved (call `CA277d47…`, before transcripts) is still
   unexplained; the next failed call will have a transcript to check.
-- Multi-restaurant support (section 12): phase 1 is next.
+- Multi-restaurant support (section 12): finish phase 1 with Postgres, then phase 2
+  (staff logins). Payment texts still come from one `TWILIO_SMS_FROM` number for every
+  restaurant until phase 3.
 - Possible features: delivery, POS integration, kitchen display.
 
 ## 14. Change log
@@ -338,3 +364,4 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 | 2026-11-18 | Restaurant named Hyderabad House. Agent no longer tells callers to phone the restaurant; unpriced desserts/drinks/specials are offered at the counter instead. |
 | 2026-11-22 | Drinks, shakes, desserts and pastries added to the phone menu with placeholder prices (`placeholder_price` tag). Only daily specials are still counter-only. |
 | 2026-11-22 | Multi-restaurant plan (section 12); note on simultaneous calls in section 5. |
+| 2026-11-22 | Multi-restaurant phase 1 on SQLite: restaurants and versioned menus in the database, calls routed by dialed number, `restaurant_id` on orders and calls, per-restaurant order numbers, admin commands (`ordering_agent/restaurants.py`), `/restaurants` API, restaurant filter on `/orders` and `/calls`, dashboard restaurant picker. |

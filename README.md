@@ -32,17 +32,18 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
 | Path | What it is |
 |---|---|
-| `data/menu.json` | The restaurant and its menu (an Indian restaurant's menu, about 190 items). Edit this to make it yours. Optional `restaurant.notes` lines are added to the prompt. |
+| `data/menu.json` | Hyderabad House's menu and settings (about 210 items), the format every restaurant's menu uses. Optional `restaurant.notes` lines are added to the prompt. Menus are stored in the database; this file is what you load in. |
 | `tests/fixtures/menu.json` | Small fixed menu the tests use, so they don't depend on the real menu. |
 | `ordering_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
 | `ordering_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
 | `ordering_agent/prompts.py` | The phone-voice system prompt. |
 | `ordering_agent/agent.py` | Streaming tool-use loop: one `OrderingAgent` per call. |
 | `ordering_agent/server.py` | FastAPI app: `/voice` (Twilio webhook) and `/ws` (ConversationRelay). |
+| `ordering_agent/restaurants.py` | Routes each call to a restaurant by the number dialed; admin commands to add restaurants and publish menus. |
 | `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
 | `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
 | `ordering_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
-| `ordering_agent/storage.py` | Saves placed orders (SQLite) with order and payment status. |
+| `ordering_agent/storage.py` | Restaurants, menu versions, placed orders and call transcripts (SQLite). |
 
 ## Setup
 
@@ -56,15 +57,36 @@ set -a; . ./.env; set +a
 ### 1. Try it in the terminal
 
 ```bash
-python -m ordering_agent.cli
+python -m ordering_agent.cli                            # uses data/menu.json
+python -m ordering_agent.cli --restaurant hyderabad-house  # a restaurant saved in the database
 ```
+
+### Add a restaurant
+
+One server serves many restaurants. Each has a slug, the Twilio number callers dial
+(that's how a call finds its restaurant) and a menu:
+
+```bash
+python -m ordering_agent.restaurants add hyderabad-house --phone +19135783983 --menu data/menu.json
+python -m ordering_agent.restaurants list
+python -m ordering_agent.restaurants set-menu hyderabad-house --menu data/menu.json  # publish an edited menu
+python -m ordering_agent.restaurants set-phone hyderabad-house --phone +19135551234
+python -m ordering_agent.restaurants deactivate hyderabad-house                     # stop taking calls
+```
+
+Menus are checked before they're saved, and every version is kept. A new menu is used
+from the next call on, no restart needed. A call to a number no restaurant has hears a
+short apology and is hung up. On Fly.io, run these with
+`fly ssh console -C "python -m ordering_agent.restaurants list"`.
 
 ### 2. Take real phone calls
 
 1. Start the server: `uvicorn ordering_agent.server:app --port 8000`
 2. Expose it publicly, e.g. `ngrok http 8000`, and set `PUBLIC_BASE_URL` to the https URL.
-3. In the Twilio Console, buy a phone number with voice capability. Under *Voice
-   Configuration*, set **A call comes in** → Webhook → `https://<your-host>/voice` (HTTP POST).
+3. In the Twilio Console, buy a phone number with voice capability for each restaurant.
+   Under *Voice Configuration*, set **A call comes in** → Webhook → `https://<your-host>/voice`
+   (HTTP POST); every number uses the same URL. Register the number on its restaurant
+   (`restaurants add ... --phone` or `set-phone`).
    ConversationRelay may require accepting Twilio's AI/ML features terms in the Console first.
 4. Set `TWILIO_AUTH_TOKEN` so the server validates Twilio's request signatures.
 5. Call the number.
@@ -82,14 +104,14 @@ Stripe payment link, so no one reads card numbers over the phone.
    `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
    `checkout.session.async_payment_failed` and `checkout.session.expired`, and set
    `STRIPE_WEBHOOK_SECRET` to its signing secret.
-4. Choose the restaurant's rule in `data/menu.json`:
+4. Choose each restaurant's rule in its menu file (then `set-menu`):
    `"payment": {"required_before_cooking": false, "pay_within_minutes": 30}`.
    With `true`, orders wait as `awaiting_payment` until paid and are cancelled if the
    link expires.
 
 Without `STRIPE_SECRET_KEY`, customers pay at pickup.
 
-Placed orders land in `data/orders.db`.
+Restaurants, menus, orders and transcripts are in `data/orders.db`.
 
 ### 4. Orders dashboard
 
@@ -98,8 +120,11 @@ Set `ORDERS_API_TOKEN` to a long random string, restart, and open `/dashboard`
 The page shows today's order count and sales, and every order with items, total, order
 status and payment status. You can filter and search, and it refreshes every 10 seconds.
 The Calls tab lists every call, including ones that didn't end in an order; click one to
-read its transcript. The same data is at `GET /orders?limit=50`, `GET /calls?limit=50`
-and `GET /calls/<CallSid>`, all with `Authorization: Bearer <token>`.
+read its transcript. With more than one restaurant, a picker at the top shows one
+restaurant or all of them. The same data is at `GET /restaurants`,
+`GET /orders?limit=50&restaurant=<id>`, `GET /calls?limit=50&restaurant=<id>` and
+`GET /calls/<CallSid>`, all with `Authorization: Bearer <token>`. The token sees every
+restaurant; per-restaurant staff logins come next.
 
 ### 5. Host it on Fly.io
 
@@ -146,8 +171,8 @@ They include a full phone order over the WebSocket.
 | `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
-| `ORDERS_DB` | `data/orders.db` | SQLite file for placed orders. |
-| `MENU_PATH` | `data/menu.json` | Menu file. |
+| `ORDERS_DB` | `data/orders.db` | SQLite file: restaurants, menus, orders, transcripts. |
+| `MENU_PATH` | `data/menu.json` | Menu file for the terminal chat when `--restaurant` isn't given. Live calls use menus in the database. |
 | `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
 
 Voice settings are read on every incoming call, so changing them only needs a server

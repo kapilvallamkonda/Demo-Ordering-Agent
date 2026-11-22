@@ -13,7 +13,7 @@ from ordering_agent.menu import load_menu
 from ordering_agent.storage import OrderStore
 from ordering_agent.tools import run_tool
 
-from .conftest import FIXTURE_MENU
+from .conftest import BELLA_PHONE, FIXTURE_MENU, seed_restaurant
 from .fakes import FakeClient, message, text_block, tool_block
 
 
@@ -97,6 +97,7 @@ def app_client(tmp_path, monkeypatch):
     server.app.state.client = fake
     server.app.state.payments = None
     with TestClient(server.app) as c:
+        seed_restaurant(server.app.state.store)
         yield c, fake
     del server.app.state.client
     del server.app.state.payments
@@ -123,8 +124,8 @@ def test_interrupted_order_is_saved_and_transcribed(app_client, monkeypatch):
                 tool_block("place_order", {"caller_confirmed": True}, id="t3"), stop_reason="tool_use"),
         message(text_block("Sorry about that! You're order number 1.")),
     ]
-    with c.websocket_connect("/ws") as ws:
-        ws.send_text(json.dumps({"type": "setup", "callSid": "CA7", "from": "+15550001111"}))
+    with c.websocket_connect("/ws?restaurant=1") as ws:
+        ws.send_text(json.dumps({"type": "setup", "callSid": "CA7", "from": "+15550001111", "to": BELLA_PHONE}))
         ws.send_text(json.dumps({"type": "prompt", "voicePrompt": "a tiramisu, I'm Lee", "last": True}))
         assert read_until_last(ws) == "One tiramisu for Lee. Shall I place it?"
 

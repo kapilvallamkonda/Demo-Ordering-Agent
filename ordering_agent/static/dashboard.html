@@ -37,6 +37,8 @@
                        border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
   button.plain { border: 1px solid var(--line); background: var(--panel); color: var(--text);
                  border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  select.plain { border: 1px solid var(--line); background: var(--panel); color: var(--text);
+                 border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; margin-bottom: 6px; }
   .orders { display: grid; gap: 10px; }
   .order { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
            display: grid; grid-template-columns: 90px 1fr auto; gap: 4px 16px; }
@@ -109,6 +111,10 @@
   const statusEl = document.getElementById("status");
   let filter = "all", query = "", orders = [], seen = null, timer = null;
   let view = "orders", calls = [], openCall = null;
+  let restaurants = [], restaurantId = "";  // "" = all restaurants
+  const RKEY = "orders_dashboard_restaurant";
+  try { restaurantId = localStorage.getItem(RKEY) || ""; } catch {}
+  const restaurantName = id => (restaurants.find(r => r.id === id) || {}).name || "";
   const transcripts = new Map();  // call_id -> events
 
   const store = {
@@ -172,16 +178,26 @@
 
   async function load() {
     try {
-      const [r, rc] = await Promise.all([api("orders?limit=200"), api("calls?limit=200")]);
+      const scope = restaurantId ? "&restaurant=" + encodeURIComponent(restaurantId) : "";
+      const [r, rc, rr] = await Promise.all([api("orders?limit=200" + scope), api("calls?limit=200" + scope),
+                                             api("restaurants")]);
       if (r.status === 401) { store.clear(); return showLogin("That token didn't work."); }
       if (r.status === 404) { return showLogin("The orders API is off. Set ORDERS_API_TOKEN on the server and restart it."); }
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
       calls = rc.ok ? await rc.json() : [];
+      restaurants = rr.ok ? await rr.json() : [];
+      const own = restaurants.find(x => String(x.id) === restaurantId);
+      if (restaurantId && rr.ok && !own) {  // saved choice no longer exists
+        restaurantId = ""; try { localStorage.removeItem(RKEY); } catch {}
+        return load();
+      }
+      document.getElementById("title").textContent = own ? own.name + " · Phone Orders"
+        : restaurants.length === 1 ? restaurants[0].name + " · Phone Orders" : "Phone Orders";
       const live = calls.find(c => c.call_id === openCall);
       if (openCall && (!transcripts.has(openCall) || (live && !live.ended_at))) await loadTranscript(openCall);
-      const ids = new Set(data.map(o => o.order_number));
-      const fresh = seen ? data.filter(o => !seen.has(o.order_number)).map(o => o.order_number) : [];
+      const ids = new Set(data.map(o => o.id));
+      const fresh = seen ? data.filter(o => !seen.has(o.id)).map(o => o.id) : [];
       seen = ids;
       orders = data;
       render(new Set(fresh));
@@ -198,6 +214,17 @@
         class: "tab", role: "tab", "aria-selected": String(view === k),
         onclick: () => { view = k; render(); },
       }, label + (k === "calls" && calls.length ? ` (${calls.length})` : ""))));
+    const picker = restaurants.length > 1 ? el("select", {
+        "aria-label": "Restaurant", class: "plain", style: "margin-left:auto;align-self:center",
+        onchange: e => { restaurantId = e.target.value; try { localStorage.setItem(RKEY, restaurantId); } catch {}
+                         seen = null; openCall = null; load(); },
+      }, el("option", { value: "" }, "All restaurants"),
+      restaurants.map(x => {
+        const o = el("option", { value: String(x.id) }, x.name + (x.active ? "" : " (inactive)"));
+        if (String(x.id) === restaurantId) o.selected = true;
+        return o;
+      })) : null;
+    if (picker) tabs.append(picker);
     if (view === "calls") return app.replaceChildren(tabs, callList());
     const today = orders.filter(o => isToday(o.created_at) && o.status !== "cancelled");
     const tiles = el("section", { class: "tiles" },
@@ -229,7 +256,7 @@
                      ...(o.lines || []).map(l => l.description)].join(" ").toLowerCase();
         return hay.includes(q.replace(/^#/, ""));
       });
-      list.replaceChildren(...(shown.length ? shown.map(o => card(o, fresh.has(o.order_number)))
+      list.replaceChildren(...(shown.length ? shown.map(o => card(o, fresh.has(o.id)))
         : [el("div", { class: "empty" }, orders.length ? "No orders match." : "No phone orders yet. Call the number to place one.")]));
     }
     renderList();
@@ -258,7 +285,9 @@
             render();
           } },
           el("div", {}, el("div", { class: "who" }, fmtTime(c.started_at)), el("div", { class: "when" }, fmtDuration(c))),
-          el("div", {}, el("span", {}, fmtPhone(c.caller_phone) || "Unknown caller"),
+          el("div", {}, !restaurantId && restaurants.length > 1
+              ? el("div", { class: "when" }, restaurantName(c.restaurant_id)) : null,
+            el("span", {}, fmtPhone(c.caller_phone) || "Unknown caller"),
             el("span", { class: "phone" }, `${c.caller_turns} caller turn${c.caller_turns === 1 ? "" : "s"}`)),
           el("div", { class: "badges" }, outcome)),
         open ? el("div", { class: "transcript" }, !events ? el("div", { class: "sub" }, "Loading transcript…")
@@ -278,7 +307,8 @@
       l.description.replace(/ \| /g, " · "), " ", el("span", { class: "sub" }, money(l.line_total))));
     const pay = PAY[o.payment_status] || [o.payment_status || "", ""];
     return el("article", { class: "order" + (isNew ? " new" : "") },
-      el("div", {}, el("div", { class: "num" }, "#" + o.order_number), el("div", { class: "when" }, fmtTime(o.created_at))),
+      el("div", {}, el("div", { class: "num" }, "#" + o.order_number), el("div", { class: "when" }, fmtTime(o.created_at)),
+        !restaurantId && restaurants.length > 1 ? el("div", { class: "when" }, restaurantName(o.restaurant_id)) : null),
       el("div", {},
         el("span", { class: "who" }, o.customer_name || "No name"),
         o.customer_phone ? el("span", { class: "phone" }, fmtPhone(o.customer_phone)) : null,

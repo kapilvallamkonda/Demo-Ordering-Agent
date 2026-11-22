@@ -1,4 +1,9 @@
-"""Menu loading and lookup."""
+"""Menu loading and lookup.
+
+A Menu is one restaurant's menu plus its settings (the "restaurant" block: name, tax,
+pickup time, payment rule, notes). Menus come from the database for live calls (see
+restaurants.py) or from a JSON file for tests and the terminal chat.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +36,8 @@ class MenuItem:
 class Menu:
     restaurant: dict
     items: dict[str, MenuItem]
+    restaurant_id: int | None = None  # set when the menu belongs to a restaurant in the database
+    slug: str | None = None
 
     @property
     def tax_rate(self) -> float:
@@ -90,10 +97,31 @@ class Menu:
         return "\n".join(lines)
 
 
+class MenuError(ValueError):
+    pass
+
+
 def load_menu(path: str | Path = DEFAULT_MENU_PATH) -> Menu:
-    raw = json.loads(Path(path).read_text())
+    return parse_menu(json.loads(Path(path).read_text()))
+
+
+def parse_menu(raw: dict, restaurant_id: int | None = None, slug: str | None = None) -> Menu:
+    """Build a Menu from menu JSON. Raises MenuError if it isn't usable."""
+    try:
+        return _parse(raw, restaurant_id, slug)
+    except MenuError:
+        raise
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        raise MenuError(f"invalid menu: {e!r}") from e
+
+
+def _parse(raw: dict, restaurant_id: int | None, slug: str | None) -> Menu:
+    if not isinstance(raw.get("restaurant"), dict) or not raw["restaurant"].get("name"):
+        raise MenuError("menu needs a restaurant block with a name")
     items: dict[str, MenuItem] = {}
     for it in raw["items"]:
+        if it["id"] in items:
+            raise MenuError(f"duplicate item id {it['id']!r}")
         options = {
             name: OptionGroup(name=name, choices=dict(g["choices"]), required=bool(g.get("required")))
             for name, g in it.get("options", {}).items()
@@ -107,4 +135,6 @@ def load_menu(path: str | Path = DEFAULT_MENU_PATH) -> Menu:
             options=options,
             extras=dict(it.get("extras", {})),
         )
-    return Menu(restaurant=raw["restaurant"], items=items)
+    if not items:
+        raise MenuError("menu has no items")
+    return Menu(restaurant=raw["restaurant"], items=items, restaurant_id=restaurant_id, slug=slug)

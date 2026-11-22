@@ -1,9 +1,11 @@
 """Phone front end: Twilio ConversationRelay <-> OrderingAgent.
 
 Call flow:
-  1. A caller dials your Twilio number. Twilio POSTs to /voice.
+  1. A caller dials a restaurant's Twilio number. Twilio POSTs to /voice with the
+     dialed number (To), which picks the restaurant.
   2. /voice answers with TwiML that <Connect>s the call to ConversationRelay, pointing
-     it at our /ws WebSocket. Twilio does the speech-to-text and text-to-speech.
+     it at our /ws WebSocket (with the restaurant id in the URL). Twilio does the
+     speech-to-text and text-to-speech.
   3. For each caller utterance Twilio sends {"type": "prompt", "voicePrompt": ...}.
      We stream Claude's reply back as {"type": "text", "token": ...} messages, so
      the caller hears it while it is still being generated.
@@ -30,8 +32,9 @@ from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
 from .agent import OrderingAgent
-from .menu import DEFAULT_MENU_PATH, load_menu
+from .menu import Menu
 from .payments import handle_stripe_event, payment_service_from_env
+from .restaurants import RestaurantDirectory
 from .storage import OrderStore
 
 log = logging.getLogger("ordering_agent.server")
@@ -45,6 +48,7 @@ WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish be
 # An interrupted reply that is mid tool call (e.g. placing the order) is allowed this long
 # to finish before it is cancelled anyway.
 TOOL_FINISH_SECONDS = 30.0
+NOT_SET_UP_SECONDS = 4.0  # let "this number isn't taking orders" play before hanging up
 
 # Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
 # so Twilio's defaults apply.
@@ -85,8 +89,11 @@ def relay_voice_attrs() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.menu = load_menu(os.environ.get("MENU_PATH") or DEFAULT_MENU_PATH)
     app.state.store = OrderStore(os.environ.get("ORDERS_DB", "data/orders.db"))
+    app.state.restaurants = RestaurantDirectory(app.state.store)
+    listing = app.state.restaurants.listing()
+    log.info("%d restaurant(s): %s", len(listing),
+             ", ".join(f"{r['slug']} {r['phone_number'] or '(no number)'}" for r in listing) or "none")
     # One client shared by every call, so connections get pooled.
     app.state.client = getattr(app.state, "client", None) or anthropic.AsyncAnthropic()
     # Pay-by-text links; None means customers pay at pickup.
@@ -133,8 +140,17 @@ async def voice(request: Request) -> Response:
             log.warning("rejected /voice request with bad Twilio signature")
             raise HTTPException(status_code=403, detail="invalid signature")
 
-    greeting = OrderingAgent(request.app.state.menu, client=request.app.state.client).greeting
-    attrs = {"url": _ws_url(_public_base(request)), "welcomeGreeting": greeting, **relay_voice_attrs()}
+    menu = request.app.state.restaurants.for_number(form.get("To"))
+    if menu is None:
+        log.warning("call to %s: no active restaurant has this number", form.get("To"))
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, this number '
+                    "isn't taking orders right now. Goodbye.</Say><Hangup/></Response>",
+            media_type="application/xml")
+
+    greeting = OrderingAgent(menu, client=request.app.state.client).greeting
+    ws_url = f"{_ws_url(_public_base(request))}?restaurant={menu.restaurant_id}"
+    attrs = {"url": ws_url, "welcomeGreeting": greeting, **relay_voice_attrs()}
     rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -151,18 +167,24 @@ def _require_token(request: Request) -> None:
         raise HTTPException(status_code=401)
 
 
-@app.get("/orders")
-async def orders(request: Request, limit: int = 20) -> list[dict]:
-    """Recent placed orders, newest first."""
+@app.get("/restaurants")
+async def restaurants(request: Request) -> list[dict]:
     _require_token(request)
-    return request.app.state.store.recent(max(1, min(limit, 500)))
+    return request.app.state.restaurants.listing()
+
+
+@app.get("/orders")
+async def orders(request: Request, limit: int = 20, restaurant: int | None = None) -> list[dict]:
+    """Recent placed orders, newest first; all restaurants unless `restaurant` (id) is given."""
+    _require_token(request)
+    return request.app.state.store.recent(max(1, min(limit, 500)), restaurant_id=restaurant)
 
 
 @app.get("/calls")
-async def calls(request: Request, limit: int = 50) -> list[dict]:
+async def calls(request: Request, limit: int = 50, restaurant: int | None = None) -> list[dict]:
     """Recent phone calls, newest first, including ones that didn't place an order."""
     _require_token(request)
-    return request.app.state.store.recent_calls(max(1, min(limit, 500)))
+    return request.app.state.store.recent_calls(max(1, min(limit, 500)), restaurant_id=restaurant)
 
 
 @app.get("/calls/{call_id}")
@@ -197,16 +219,17 @@ async def stripe_webhook(request: Request) -> dict:
     state = request.app.state
     payments = state.payments
     outcome = await asyncio.to_thread(
-        handle_stripe_event, json.loads(payload), state.store, state.menu,
+        handle_stripe_event, json.loads(payload), state.store, state.restaurants.get,
         payments.sms if payments else None,
     )
     return {"ok": True, "result": outcome}
 
 
 @app.get("/paid", response_class=HTMLResponse)
-async def paid_page(request: Request, order: int = 0, cancelled: int = 0) -> str:
+async def paid_page(request: Request, order: int = 0, cancelled: int = 0, r: str = "") -> str:
     """Where Stripe sends the customer after the payment page."""
-    name = html.escape(request.app.state.menu.restaurant.get("name", "the restaurant"))
+    menu = request.app.state.restaurants.by_slug(r)
+    name = html.escape(menu.restaurant.get("name", "the restaurant") if menu else "Thank you")
     msg = ("Payment cancelled. You can use the link in your text again, or pay at pickup."
            if cancelled else f"Thank you! Your payment for order #{order} was received.")
     return (f"<!doctype html><meta name=viewport content='width=device-width'>"
@@ -272,8 +295,15 @@ class RelayCall:
         kind = msg.get("type")
         if kind == "setup":
             app_state = self.ws.app.state
+            menu = self.restaurant_for_call(app_state.restaurants, msg)
+            if menu is None:
+                await self.send({"type": "text", "last": True,
+                                 "token": "Sorry, this number isn't taking orders right now. Goodbye."})
+                await asyncio.sleep(NOT_SET_UP_SECONDS)
+                await self.send({"type": "end"})
+                return
             self.agent = OrderingAgent(
-                app_state.menu,
+                menu,
                 client=app_state.client,
                 store=app_state.store,
                 call_id=msg.get("callSid"),
@@ -285,11 +315,11 @@ class RelayCall:
             if self.call_id:
                 try:
                     self.store.start_call(self.call_id, self.agent.session.order.customer_phone
-                                          or msg.get("from"))
+                                          or msg.get("from"), menu.restaurant_id)
                 except Exception:
                     log.exception("couldn't record call start")
             self.record("agent", self.agent.greeting)
-            log.info("call %s started", msg.get("callSid"))
+            log.info("call %s started for %s", msg.get("callSid"), menu.slug)
         elif kind == "prompt":
             if self.agent is None or not msg.get("last", True):
                 return
@@ -314,6 +344,20 @@ class RelayCall:
         self.flush_spoken()  # keep the transcript in the order things happened
         args_text = json.dumps(args, ensure_ascii=False) if args else ""
         self.record("tool", f"{name}({args_text}) {'ERROR ' if is_error else ''}-> {result}")
+
+    def restaurant_for_call(self, directory: RestaurantDirectory, setup: dict) -> Menu | None:
+        """The restaurant /voice chose (in the URL), cross-checked with the dialed number."""
+        raw = self.ws.query_params.get("restaurant", "")
+        menu = directory.get(int(raw), active_only=True) if raw.isdigit() else None
+        dialed = directory.for_number(setup.get("to"))
+        if menu is None:
+            menu = dialed  # e.g. an old URL without the parameter
+        elif dialed is not None and dialed.restaurant_id != menu.restaurant_id:
+            log.warning("call %s: URL says restaurant %s but %s was dialed (restaurant %s)",
+                        setup.get("callSid"), menu.restaurant_id, setup.get("to"), dialed.restaurant_id)
+        if menu is None:
+            log.warning("call %s to %s: no restaurant", setup.get("callSid"), setup.get("to"))
+        return menu
 
     async def cancel_reply(self) -> None:
         """Stop the current reply. A reply that is mid tool call (say, placing the order)
@@ -370,9 +414,8 @@ class RelayCall:
 async def relay(ws: WebSocket) -> None:
     if TWILIO_AUTH_TOKEN and PUBLIC_BASE_URL:
         signature = ws.headers.get("x-twilio-signature")
-        if signature and not RequestValidator(TWILIO_AUTH_TOKEN).validate(
-            _ws_url(PUBLIC_BASE_URL), {}, signature
-        ):
+        url = _ws_url(PUBLIC_BASE_URL) + (f"?{ws.url.query}" if ws.url.query else "")
+        if signature and not RequestValidator(TWILIO_AUTH_TOKEN).validate(url, {}, signature):
             log.warning("rejected /ws connection with bad Twilio signature")
             await ws.close(code=1008)
             return

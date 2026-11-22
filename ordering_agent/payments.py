@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Protocol
 
 from .menu import Menu
@@ -67,16 +68,22 @@ class StripeLinks:
                 "price_data": {"currency": self.currency, "unit_amount": _cents(order.tax),
                                "product_data": {"name": "Sales tax"}},
             })
+        metadata = {"order_number": str(order_number)}
+        if order.menu.restaurant_id is not None:
+            metadata["restaurant_id"] = str(order.menu.restaurant_id)
+        page = f"{self.base_url}/paid?order={order_number}"
+        if order.menu.slug:
+            page += f"&r={order.menu.slug}"
         session = self._stripe.checkout.Session.create(
             api_key=self.secret_key,
             mode="payment",
             line_items=line_items,
             client_reference_id=str(order_number),
-            metadata={"order_number": str(order_number)},
-            payment_intent_data={"metadata": {"order_number": str(order_number)}},
+            metadata=metadata,
+            payment_intent_data={"metadata": metadata},
             expires_at=int(time.time()) + expires_minutes * 60,
-            success_url=f"{self.base_url}/paid?order={order_number}",
-            cancel_url=f"{self.base_url}/paid?order={order_number}&cancelled=1",
+            success_url=page,
+            cancel_url=page + "&cancelled=1",
         )
         return PaymentLink(id=session["id"], url=session["url"])
 
@@ -124,8 +131,11 @@ def payment_service_from_env(base_url: str) -> PaymentService | None:
 # ---- Stripe webhook -----------------------------------------------------------
 
 
-def handle_stripe_event(event: dict, store, menu: Menu, sms: SmsSender | None) -> str:
-    """Apply a (signature-verified) Stripe event to the order. Returns what happened."""
+def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Menu | None],
+                        sms: SmsSender | None) -> str:
+    """Apply a (signature-verified) Stripe event to the order. Returns what happened.
+
+    menu_for(restaurant_id) gives the order's restaurant, for the wording of the text."""
     kind = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
     payment_id = obj.get("id")
@@ -135,13 +145,15 @@ def handle_stripe_event(event: dict, store, menu: Menu, sms: SmsSender | None) -
         if obj.get("payment_status") != "paid":
             return "pending"  # delayed payment methods settle later
         changed = store.mark_paid(payment_id)
-        text = paid_text(menu, changed["order_number"]) if changed else None
+        menu = menu_for(changed["restaurant_id"]) if changed else None
+        text = paid_text(menu, changed["order_number"]) if menu else None
         outcome = "paid"
     elif kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
         changed = store.mark_expired(payment_id)
+        menu = menu_for(changed["restaurant_id"]) if changed else None
         # Only text when the order was cancelled; otherwise they can still pay at pickup.
         text = (expired_text(menu, changed["order_number"])
-                if changed and changed["status"] == "cancelled" else None)
+                if menu and changed["status"] == "cancelled" else None)
         outcome = "expired"
     else:
         return "ignored"

@@ -119,7 +119,8 @@ class CallSession:
     store: OrderStore | None = None
     call_id: str | None = None
     payments: PaymentService | None = None
-    order_number: int | None = None
+    order_number: int | None = None  # per-restaurant number, what the caller hears
+    order_id: int | None = None  # internal row id
     end_requested: bool = False
     log: list[dict] = field(default_factory=list)
 
@@ -134,11 +135,12 @@ def _place_order(session: CallSession) -> dict:
     menu = order.menu
     required = bool(payments) and menu.payment_required
     if session.store is not None:
-        session.order_number = session.store.save(
+        saved = session.store.save(
             order, call_id=session.call_id,
             status="awaiting_payment" if required else "confirmed",
             payment_status="unpaid" if payments else "not_requested",
         )
+        session.order_number, session.order_id = saved.number, saved.id
     result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
                     "ready_in_minutes": menu.restaurant.get("pickup_minutes")}
     if not payments:
@@ -154,7 +156,7 @@ def _place_order(session: CallSession) -> dict:
             + ("; the kitchen will start the order once they pay at the counter." if required else "."),
         }
         return result
-    session.store.set_payment_link(session.order_number, link.id, link.url)
+    session.store.set_payment_link(session.order_id, link.id, link.url)
     result["payment"] = {
         "link_sent": True,
         "texted_to_number_ending": order.customer_phone[-4:],
