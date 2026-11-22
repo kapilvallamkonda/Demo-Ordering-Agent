@@ -1,8 +1,8 @@
-"""Menu loading and lookup.
+"""Catalog loading and lookup.
 
-A Menu is one restaurant's menu plus its settings (the "restaurant" block: name, tax,
-pickup time, payment rule, notes). Menus come from the database for live calls (see
-restaurants.py) or from a JSON file for tests and the terminal chat.
+A Catalog is one business's catalog plus its settings (the "settings" block: name, tax,
+pickup time, payment rule, notes). Catalogs come from the database for live calls (see
+businesses.py) or from a JSON file for tests and the terminal chat.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .templates import DEFAULT as DEFAULT_TEMPLATE
 from .templates import Template, get_template
 
-DEFAULT_MENU_PATH = Path(__file__).resolve().parent.parent / "data" / "restaurants" / "hyderabad-house.json"
+DEFAULT_CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "businesses" / "hyderabad-house.json"
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ class OptionGroup:
 
 
 @dataclass(frozen=True)
-class MenuItem:
+class CatalogItem:
     id: str
     name: str
     category: str
@@ -32,21 +33,21 @@ class MenuItem:
     description: str = ""
     options: dict[str, OptionGroup] = field(default_factory=dict)
     extras: dict[str, float] = field(default_factory=dict)
-    # Point-of-sale ids, written by a menu import (see pos.py): {"item": id,
+    # Point-of-sale ids, written by a catalog import (see pos.py): {"item": id,
     # "choices": {option: {choice: {"variation"|"modifier": id}}}, "extras": {extra: id}}
     pos: dict = field(default_factory=dict)
-    available: bool = True  # False: sold out / off the menu for now (staff toggle it in /manage)
+    available: bool = True  # False: sold out / off the catalog for now (staff toggle it in /manage)
 
 
 @dataclass(frozen=True)
-class Menu:
-    restaurant: dict
-    items: dict[str, MenuItem]
-    restaurant_id: int | None = None  # set when the menu belongs to a restaurant in the database
+class Catalog:
+    settings: dict  # the "settings" block: name, tax, pickup time, payment rule, notes ...
+    items: dict[str, CatalogItem]
+    business_id: int | None = None  # set when the catalog belongs to a business in the database
     slug: str | None = None
-    menu_id: int | None = None  # the menu version in the database
+    catalog_id: int | None = None  # the catalog version in the database
     pos_provider: str | None = None  # the POS the item "pos" ids came from ("square", "clover")
-    template_id: str = "restaurant"  # the kind of business (templates.py)
+    template_id: str = DEFAULT_TEMPLATE  # the kind of business (templates.py)
 
     @property
     def template(self) -> Template:
@@ -54,28 +55,28 @@ class Menu:
 
     @property
     def tax_rate(self) -> float:
-        return float(self.restaurant.get("tax_rate", 0.0))
+        return float(self.settings.get("tax_rate", 0.0))
 
     @property
     def payment_required(self) -> bool:
-        """Restaurant rule: the order is only cooked after the payment link is paid."""
-        return bool(self.restaurant.get("payment", {}).get("required_before_cooking", False))
+        """Business rule: the order is only cooked after the payment link is paid."""
+        return bool(self.settings.get("payment", {}).get("required_before_cooking", False))
 
     @property
     def pay_within_minutes(self) -> int:
         """How long the payment link stays valid. Stripe allows 30 minutes to 24 hours."""
-        minutes = int(self.restaurant.get("payment", {}).get("pay_within_minutes", 30))
+        minutes = int(self.settings.get("payment", {}).get("pay_within_minutes", 30))
         return max(30, min(minutes, 24 * 60))
 
-    def get(self, item_id: str) -> MenuItem | None:
+    def get(self, item_id: str) -> CatalogItem | None:
         return self.items.get(item_id)
 
     def to_prompt_text(self) -> str:
-        """Render the menu as compact plain text for the system prompt.
+        """Render the catalog as compact plain text for the system prompt.
 
         Output is deterministic (stable ordering) so it stays prompt-cache friendly.
         """
-        r = self.restaurant
+        r = self.settings
         words = self.template.words
         unset = "not available on this line yet; say you don't have that information"
         lines = [
@@ -93,7 +94,7 @@ class Menu:
             "",
             f"{words['catalog'].upper()} (item_id | name | base price | description)",
         ]
-        by_cat: dict[str, list[MenuItem]] = {}
+        by_cat: dict[str, list[CatalogItem]] = {}
         for item in self.items.values():
             by_cat.setdefault(item.category, []).append(item)
         for cat, items in by_cat.items():
@@ -113,37 +114,37 @@ class Menu:
         return "\n".join(lines)
 
 
-class MenuError(ValueError):
+class CatalogError(ValueError):
     pass
 
 
-def load_menu(path: str | Path = DEFAULT_MENU_PATH) -> Menu:
-    return parse_menu(json.loads(Path(path).read_text()))
+def load_catalog(path: str | Path = DEFAULT_CATALOG_PATH) -> Catalog:
+    return parse_catalog(json.loads(Path(path).read_text()))
 
 
-def parse_menu(raw: dict, restaurant_id: int | None = None, slug: str | None = None,
-               menu_id: int | None = None) -> Menu:
-    """Build a Menu from menu JSON. Raises MenuError if it isn't usable."""
+def parse_catalog(raw: dict, business_id: int | None = None, slug: str | None = None,
+               catalog_id: int | None = None) -> Catalog:
+    """Build a Catalog from catalog JSON. Raises CatalogError if it isn't usable."""
     try:
-        return _parse(raw, restaurant_id, slug, menu_id)
-    except MenuError:
+        return _parse(raw, business_id, slug, catalog_id)
+    except CatalogError:
         raise
     except (KeyError, TypeError, ValueError, AttributeError) as e:
-        raise MenuError(f"invalid menu: {e!r}") from e
+        raise CatalogError(f"invalid catalog: {e!r}") from e
 
 
-def _parse(raw: dict, restaurant_id: int | None, slug: str | None, menu_id: int | None) -> Menu:
-    if not isinstance(raw.get("restaurant"), dict) or not raw["restaurant"].get("name"):
-        raise MenuError("menu needs a restaurant block with a name")
-    items: dict[str, MenuItem] = {}
+def _parse(raw: dict, business_id: int | None, slug: str | None, catalog_id: int | None) -> Catalog:
+    if not isinstance(raw.get("settings"), dict) or not raw["settings"].get("name"):
+        raise CatalogError("catalog needs a business block with a name")
+    items: dict[str, CatalogItem] = {}
     for it in raw["items"]:
         if it["id"] in items:
-            raise MenuError(f"duplicate item id {it['id']!r}")
+            raise CatalogError(f"duplicate item id {it['id']!r}")
         options = {
             name: OptionGroup(name=name, choices=dict(g["choices"]), required=bool(g.get("required")))
             for name, g in it.get("options", {}).items()
         }
-        items[it["id"]] = MenuItem(
+        items[it["id"]] = CatalogItem(
             id=it["id"],
             name=it["name"],
             category=it["category"],
@@ -155,16 +156,16 @@ def _parse(raw: dict, restaurant_id: int | None, slug: str | None, menu_id: int 
             available=it.get("available", True) is not False,
         )
     if not items:
-        raise MenuError("menu has no items")
-    template_id = raw.get("template") or "restaurant"
+        raise CatalogError("catalog has no items")
+    template_id = raw.get("template") or DEFAULT_TEMPLATE
     try:
         template = get_template(template_id)
     except KeyError:
-        raise MenuError(f"unknown template {template_id!r}")
+        raise CatalogError(f"unknown template {template_id!r}")
     if template.status != "available":
-        raise MenuError(f"the {template.label} template is coming soon "
+        raise CatalogError(f"the {template.label} template is coming soon "
                         f"(needs: {', '.join(template.modules)}); it can't be used yet")
     pos = raw.get("pos") or {}
-    return Menu(restaurant=raw["restaurant"], items=items, restaurant_id=restaurant_id, slug=slug,
-                menu_id=menu_id, pos_provider=pos.get("provider") if isinstance(pos, dict) else None,
+    return Catalog(settings=raw["settings"], items=items, business_id=business_id, slug=slug,
+                catalog_id=catalog_id, pos_provider=pos.get("provider") if isinstance(pos, dict) else None,
                 template_id=template_id)

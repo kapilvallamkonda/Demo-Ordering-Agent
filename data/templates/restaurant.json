@@ -1,6 +1,6 @@
 {
   "template": "restaurant",
-  "restaurant": {
+  "settings": {
     "name": "Example Pizzeria",
     "order_types": [
       "pickup"

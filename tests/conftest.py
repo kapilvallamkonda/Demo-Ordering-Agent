@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-# Tests use a small fixed menu so they don't break when the real menu (data/restaurants/) changes.
-FIXTURE_MENU = Path(__file__).parent / "fixtures" / "menu.json"
-BELLA_PHONE = "+15550009999"  # the test restaurant's Twilio number
+# Tests use a small fixed catalog so they don't break when the real catalog (data/businesses/) changes.
+FIXTURE_CATALOG = Path(__file__).parent / "fixtures" / "catalog.json"
+BELLA_PHONE = "+15550009999"  # the test business's Twilio number
 
 
-def seed_restaurant(store, slug="bella-cucina", phone=BELLA_PHONE, menu=None) -> int:
-    """Register a restaurant (default: the fixture menu) and return its id."""
-    return store.add_restaurant(slug, phone, menu or json.loads(FIXTURE_MENU.read_text()))
+def seed_business(store, slug="bella-cucina", phone=BELLA_PHONE, catalog=None) -> int:
+    """Register a business (default: the fixture catalog) and return its id."""
+    return store.add_business(slug, phone, catalog or json.loads(FIXTURE_CATALOG.read_text()))

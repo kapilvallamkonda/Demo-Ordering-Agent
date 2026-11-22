@@ -1,21 +1,21 @@
 import json
 import pytest
 
-from ordering_agent.menu import DEFAULT_MENU_PATH, load_menu
+from phone_agent.catalog import DEFAULT_CATALOG_PATH, load_catalog
 
-from .conftest import FIXTURE_MENU
-from ordering_agent.order import Order, OrderError
-from ordering_agent.storage import OrderStore
-from ordering_agent.tools import CallSession, run_tool
+from .conftest import FIXTURE_CATALOG
+from phone_agent.order import Order, OrderError
+from phone_agent.storage import Store
+from phone_agent.tools import CallSession, run_tool
 
 
 @pytest.fixture
-def menu():
-    return load_menu(FIXTURE_MENU)
+def catalog():
+    return load_catalog(FIXTURE_CATALOG)
 
 
-def test_add_item_prices_options_and_extras(menu):
-    order = Order(menu=menu)
+def test_add_item_prices_options_and_extras(catalog):
+    order = Order(catalog=catalog)
     line = order.add_item("margherita", 2, {"size": "16 inch"}, ["extra cheese"])
     assert line.unit_price == 14 + 4 + 2
     assert order.subtotal == 40.00
@@ -23,9 +23,9 @@ def test_add_item_prices_options_and_extras(menu):
     assert order.total == 43.20
 
 
-def test_required_option_missing(menu):
+def test_required_option_missing(catalog):
     with pytest.raises(OrderError, match="needs a 'size'"):
-        Order(menu=menu).add_item("margherita")
+        Order(catalog=catalog).add_item("margherita")
 
 
 @pytest.mark.parametrize(
@@ -39,13 +39,13 @@ def test_required_option_missing(menu):
         ({"item_id": "tiramisu", "options": {"size": "big"}}, "has no option"),
     ],
 )
-def test_add_item_rejects_bad_input(menu, kwargs, match):
+def test_add_item_rejects_bad_input(catalog, kwargs, match):
     with pytest.raises(OrderError, match=match):
-        Order(menu=menu).add_item(**kwargs)
+        Order(catalog=catalog).add_item(**kwargs)
 
 
-def test_update_remove_and_place(menu):
-    order = Order(menu=menu)
+def test_update_remove_and_place(catalog):
+    order = Order(catalog=catalog)
     a = order.add_item("garlic_knots")
     b = order.add_item("tiramisu")
     order.update_quantity(a.line_id, 3)
@@ -59,9 +59,9 @@ def test_update_remove_and_place(menu):
         order.add_item("tiramisu")
 
 
-def test_tools_validate_types_and_place_saves(menu):
-    store = OrderStore(":memory:")
-    session = CallSession(order=Order(menu=menu), store=store, call_id="CA123")
+def test_tools_validate_types_and_place_saves(catalog):
+    store = Store(":memory:")
+    session = CallSession(order=Order(catalog=catalog), store=store, call_id="CA123")
 
     text, err = run_tool(session, "add_item", {"item_id": "soda", "quantity": "two"})
     assert err and "wrong type" in text
@@ -79,28 +79,28 @@ def test_tools_validate_types_and_place_saves(menu):
     assert saved[0]["customer_name"] == "Ana" and saved[0]["call_id"] == "CA123"
 
 
-def test_menu_prompt_text_is_deterministic(menu):
-    assert menu.to_prompt_text() == load_menu(FIXTURE_MENU).to_prompt_text()
-    assert "margherita | Margherita Pizza" in menu.to_prompt_text()
+def test_catalog_prompt_text_is_deterministic(catalog):
+    assert catalog.to_prompt_text() == load_catalog(FIXTURE_CATALOG).to_prompt_text()
+    assert "margherita | Margherita Pizza" in catalog.to_prompt_text()
 
 
-def test_real_menu_loads_with_unique_ids():
-    raw = json.loads(DEFAULT_MENU_PATH.read_text())
+def test_real_catalog_loads_with_unique_ids():
+    raw = json.loads(DEFAULT_CATALOG_PATH.read_text())
     ids = [it["id"] for it in raw["items"]]
     assert len(ids) == len(set(ids))
-    menu = load_menu()
-    assert len(menu.items) == len(ids)
-    for item in menu.items.values():
+    catalog = load_catalog()
+    assert len(catalog.items) == len(ids)
+    for item in catalog.items.values():
         assert item.price > 0
         for grp in item.options.values():
             assert grp.choices and min(grp.choices.values()) >= 0
 
 
-def test_real_menu_drinks_and_desserts_are_orderable():
-    menu = load_menu()
-    order = Order(menu=menu)
+def test_real_catalog_drinks_and_desserts_are_orderable():
+    catalog = load_catalog()
+    order = Order(catalog=catalog)
     order.add_item("soda", options={"flavor": "coke"})
     order.add_item("mango_lassi")
     order.add_item("gulab_jamun")
     assert order.subtotal == 12.0
-    assert "Soda" in menu.to_prompt_text() and "placeholder" not in menu.to_prompt_text()
+    assert "Soda" in catalog.to_prompt_text() and "placeholder" not in catalog.to_prompt_text()

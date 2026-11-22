@@ -1,7 +1,7 @@
 """Order (cart) state and business rules.
 
 All validation lives here, so the model can never put something into an order
-that isn't on the menu, priced wrong, or missing a required choice.
+that isn't on the catalog, priced wrong, or missing a required choice.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import itertools
 import re
 from dataclasses import dataclass, field
 
-from .menu import Menu
+from .catalog import Catalog
 
 MAX_QUANTITY = 50
 
@@ -63,7 +63,7 @@ class LineItem:
 
 @dataclass
 class Order:
-    menu: Menu
+    catalog: Catalog
     lines: list[LineItem] = field(default_factory=list)
     customer_name: str = ""
     customer_phone: str = ""
@@ -82,11 +82,11 @@ class Order:
         notes: str = "",
     ) -> LineItem:
         self._ensure_open()
-        item = self.menu.get(item_id)
+        item = self.catalog.get(item_id)
         if item is None:
-            raise OrderError(f"Unknown item_id '{item_id}'. Use an item_id from the menu.")
+            raise OrderError(f"Unknown item_id '{item_id}'. Use an item_id from the catalog.")
         if not item.available:
-            raise OrderError(f"{item.name} is {self.menu.template.words['unavailable']}. "
+            raise OrderError(f"{item.name} is {self.catalog.template.words['unavailable']}. "
                              "Tell the caller and suggest something similar.")
         quantity = _check_quantity(quantity)
         options = dict(options or {})
@@ -174,7 +174,7 @@ class Order:
 
     @property
     def tax(self) -> float:
-        return round(self.subtotal * self.menu.tax_rate, 2)
+        return round(self.subtotal * self.catalog.tax_rate, 2)
 
     @property
     def total(self) -> float:

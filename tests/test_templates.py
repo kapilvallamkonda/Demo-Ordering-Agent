@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from ordering_agent.menu import MenuError, parse_menu
-from ordering_agent.menu_check import check_menu
-from ordering_agent.order import Order, OrderError
-from ordering_agent.prompts import build_greeting, build_system_prompt
-from ordering_agent.settings_schema import settings_for
-from ordering_agent.templates import TEMPLATES, get_template
-from ordering_agent.tools import CallSession, run_tool, tools_for
+from phone_agent.catalog import CatalogError, parse_catalog
+from phone_agent.catalog_check import check_catalog
+from phone_agent.order import Order, OrderError
+from phone_agent.prompts import build_greeting, build_system_prompt
+from phone_agent.settings_schema import settings_for
+from phone_agent.templates import TEMPLATES, get_template
+from phone_agent.tools import CallSession, run_tool, tools_for
 
 STARTERS = Path(__file__).resolve().parent.parent / "data" / "templates"
 
@@ -21,33 +21,33 @@ def starter(template_id):
 @pytest.mark.parametrize("template_id", ["restaurant", "retail"])
 def test_every_available_template_has_a_valid_starter(template_id):
     raw = starter(template_id)
-    result = check_menu(raw)
+    result = check_catalog(raw)
     assert result["errors"] == [] and result["summary"]["template"] == template_id
-    assert parse_menu(raw).template.id == template_id
+    assert parse_catalog(raw).template.id == template_id
 
 
 def test_catalogs_without_a_template_are_restaurants():
-    raw = json.loads(open("data/restaurants/hyderabad-house.json").read())
-    assert "template" not in raw and parse_menu(raw).template_id == "restaurant"
+    raw = json.loads(open("data/businesses/hyderabad-house.json").read())
+    assert "template" not in raw and parse_catalog(raw).template_id == "restaurant"
 
 
 def test_retail_wording_reaches_the_agent():
-    menu = parse_menu(starter("retail"))
+    menu = parse_catalog(starter("retail"))
     prompt = build_system_prompt(menu, payment_links=True)
     assert "a shop. You take orders for pickup." in prompt
     assert "CATALOG (item_id" in prompt and "MENU (" not in prompt
     assert "Never tell the caller to call the shop" in prompt and "restaurant" not in prompt
     assert build_greeting(menu) == "Thanks for calling Example Flowers & Gifts! How can I help you today?"
-    pay_first = parse_menu({**starter("retail"), "restaurant": {
-        **starter("retail")["restaurant"], "payment": {"required_before_cooking": True}}})
+    pay_first = parse_catalog({**starter("retail"), "settings": {
+        **starter("retail")["settings"], "payment": {"required_before_cooking": True}}})
     assert "starts preparing the order only after the link is paid" in build_system_prompt(pay_first, True)
 
 
 def test_retail_order_flow_and_out_of_stock():
     raw = starter("retail")
     raw["items"][0]["available"] = False
-    menu = parse_menu(raw)
-    session = CallSession(order=Order(menu=menu))
+    menu = parse_catalog(raw)
+    session = CallSession(order=Order(catalog=menu))
     _, err = run_tool(session, "add_item", {"item_id": "seasonal_bouquet", "options": {"size": "deluxe"}})
     assert not err and session.order.subtotal == 50.0
     text, err = run_tool(session, "add_item", {"item_id": "dozen_roses", "options": {"color": "red"}})
@@ -58,11 +58,11 @@ def test_retail_order_flow_and_out_of_stock():
 def test_coming_soon_template_cant_be_used():
     salon = get_template("salon")
     assert salon.status == "coming_soon" and salon.modules == ("bookings",)
-    with pytest.raises(MenuError, match="coming soon"):
-        parse_menu({**starter("retail"), "template": "salon"})
-    assert any("coming soon" in e for e in check_menu({**starter("retail"), "template": "salon"})["errors"])
-    with pytest.raises(MenuError, match="unknown template"):
-        parse_menu({**starter("retail"), "template": "spaceship"})
+    with pytest.raises(CatalogError, match="coming soon"):
+        parse_catalog({**starter("retail"), "template": "salon"})
+    assert any("coming soon" in e for e in check_catalog({**starter("retail"), "template": "salon"})["errors"])
+    with pytest.raises(CatalogError, match="unknown template"):
+        parse_catalog({**starter("retail"), "template": "spaceship"})
 
 
 def test_tools_come_from_the_modules():
@@ -85,18 +85,18 @@ def test_settings_labels_follow_the_template():
 def test_manage_editor_sends_the_template(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from ordering_agent import server
+    from phone_agent import server
     from .fakes import FakeClient
 
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    monkeypatch.setenv("ORDERS_API_TOKEN", "optok")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("ADMIN_API_TOKEN", "optok")
     server.app.state.client = FakeClient([])
     server.app.state.payments = None
     auth = {"Authorization": "Bearer optok"}
     try:
         with TestClient(server.app) as c:
-            rid = server.app.state.store.add_restaurant("flowers", "+15550004444", starter("retail"))
-            ed = c.get(f"/api/manage/restaurants/{rid}/editor", headers=auth).json()
+            rid = server.app.state.store.add_business("flowers", "+15550004444", starter("retail"))
+            ed = c.get(f"/api/manage/businesses/{rid}/editor", headers=auth).json()
             assert ed["template"]["id"] == "retail" and ed["template"]["words"]["item"] == "product"
             assert "Gift-wrappable." in ed["template"]["tags"]
             assert next(f for f in ed["schema"] if f["path"] == "name")["label"] == "Business name"
@@ -109,7 +109,7 @@ def test_manage_editor_sends_the_template(tmp_path, monkeypatch):
 
 
 def test_restaurant_prompt_keeps_its_wording():
-    menu = parse_menu(json.loads(open("data/restaurants/hyderabad-house.json").read()))
+    menu = parse_catalog(json.loads(open("data/businesses/hyderabad-house.json").read()))
     prompt = build_system_prompt(menu, payment_links=True)
     assert prompt.startswith("You are the phone ordering assistant for Hyderabad House. You are speaking")
     for line in ("answer menu questions from the menu below only",
@@ -118,6 +118,6 @@ def test_restaurant_prompt_keeps_its_wording():
                  "- Stay on the topic of ordering from this restaurant.",
                  "\nRestaurant: Hyderabad House\n", "MENU (item_id | name | base price | description)"):
         assert line in prompt
-    pay_first = parse_menu({**json.loads(open("data/restaurants/hyderabad-house.json").read())})
-    pay_first.restaurant["payment"] = {"required_before_cooking": True}
+    pay_first = parse_catalog({**json.loads(open("data/businesses/hyderabad-house.json").read())})
+    pay_first.settings["payment"] = {"required_before_cooking": True}
     assert "This restaurant starts cooking only after the link is paid" in build_system_prompt(pay_first, True)

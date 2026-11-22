@@ -111,10 +111,10 @@
   const statusEl = document.getElementById("status");
   let filter = "all", query = "", orders = [], seen = null, timer = null;
   let view = "orders", calls = [], openCall = null;
-  let restaurants = [], restaurantId = "";  // "" = all restaurants
-  const RKEY = "orders_dashboard_restaurant";
-  try { restaurantId = localStorage.getItem(RKEY) || ""; } catch {}
-  const restaurantName = id => (restaurants.find(r => r.id === id) || {}).name || "";
+  let businesses = [], businessId = "";  // "" = all businesses
+  const RKEY = "orders_dashboard_business";
+  try { businessId = localStorage.getItem(RKEY) || ""; } catch {}
+  const businessName = id => (businesses.find(r => r.id === id) || {}).name || "";
   const transcripts = new Map();  // call_id -> events
 
   const store = {
@@ -153,19 +153,19 @@
     paid: ["Paid", "ok"], unpaid: ["Unpaid", "warn"], expired: ["Link expired", "bad"],
     not_requested: ["Pay at pickup", ""],
   };
-  // Sending the order to the restaurant's point of sale (Square, Clover). No badge when none is connected.
+  // Sending the order to the business's point of sale (Square, Clover). No badge when none is connected.
   const POS = { held: ["To POS when paid", ""], sent: ["On POS", "ok"], pending: ["Sending to POS", ""], failed: ["Not on POS", "bad"] };
   const badge = ([label, cls]) => el("span", { class: "badge " + cls }, label);
 
   function showLogin(message) {
     clearInterval(timer);
     statusEl.textContent = "Sign in to view orders";
-    const input = el("input", { type: "password", placeholder: "ORDERS_API_TOKEN", autocomplete: "off" });
+    const input = el("input", { type: "password", placeholder: "ADMIN_API_TOKEN", autocomplete: "off" });
     const go = () => { token = input.value.trim(); if (token) { store.set(token); start(); } };
     input.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
     app.replaceChildren(el("div", { class: "login" },
       el("strong", {}, "Orders dashboard"),
-      el("div", { class: "sub" }, "Enter the ORDERS_API_TOKEN from the server's .env file."),
+      el("div", { class: "sub" }, "Enter the ADMIN_API_TOKEN from the server's .env file."),
       message ? el("div", { class: "msg err", style: "padding:8px;margin-top:10px" }, message) : null,
       input, el("button", { onclick: go }, "View orders")));
     input.focus();
@@ -180,22 +180,22 @@
 
   async function load() {
     try {
-      const scope = restaurantId ? "&restaurant=" + encodeURIComponent(restaurantId) : "";
+      const scope = businessId ? "&business=" + encodeURIComponent(businessId) : "";
       const [r, rc, rr] = await Promise.all([api("orders?limit=200" + scope), api("calls?limit=200" + scope),
-                                             api("restaurants")]);
+                                             api("businesses")]);
       if (r.status === 401) { store.clear(); return showLogin("That token didn't work."); }
-      if (r.status === 404) { return showLogin("The orders API is off. Set ORDERS_API_TOKEN on the server and restart it."); }
+      if (r.status === 404) { return showLogin("The orders API is off. Set ADMIN_API_TOKEN on the server and restart it."); }
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
       calls = rc.ok ? await rc.json() : [];
-      restaurants = rr.ok ? await rr.json() : [];
-      const own = restaurants.find(x => String(x.id) === restaurantId);
-      if (restaurantId && rr.ok && !own) {  // saved choice no longer exists
-        restaurantId = ""; try { localStorage.removeItem(RKEY); } catch {}
+      businesses = rr.ok ? await rr.json() : [];
+      const own = businesses.find(x => String(x.id) === businessId);
+      if (businessId && rr.ok && !own) {  // saved choice no longer exists
+        businessId = ""; try { localStorage.removeItem(RKEY); } catch {}
         return load();
       }
       document.getElementById("title").textContent = own ? own.name + " · Phone Orders"
-        : restaurants.length === 1 ? restaurants[0].name + " · Phone Orders" : "Phone Orders";
+        : businesses.length === 1 ? businesses[0].name + " · Phone Orders" : "Phone Orders";
       const live = calls.find(c => c.call_id === openCall);
       if (openCall && (!transcripts.has(openCall) || (live && !live.ended_at))) await loadTranscript(openCall);
       const ids = new Set(data.map(o => o.id));
@@ -216,14 +216,14 @@
         class: "tab", role: "tab", "aria-selected": String(view === k),
         onclick: () => { view = k; render(); },
       }, label + (k === "calls" && calls.length ? ` (${calls.length})` : ""))));
-    const picker = restaurants.length > 1 ? el("select", {
-        "aria-label": "Restaurant", class: "plain", style: "margin-left:auto;align-self:center",
-        onchange: e => { restaurantId = e.target.value; try { localStorage.setItem(RKEY, restaurantId); } catch {}
+    const picker = businesses.length > 1 ? el("select", {
+        "aria-label": "Business", class: "plain", style: "margin-left:auto;align-self:center",
+        onchange: e => { businessId = e.target.value; try { localStorage.setItem(RKEY, businessId); } catch {}
                          seen = null; openCall = null; load(); },
-      }, el("option", { value: "" }, "All restaurants"),
-      restaurants.map(x => {
+      }, el("option", { value: "" }, "All businesses"),
+      businesses.map(x => {
         const o = el("option", { value: String(x.id) }, x.name + (x.active ? "" : " (inactive)"));
-        if (String(x.id) === restaurantId) o.selected = true;
+        if (String(x.id) === businessId) o.selected = true;
         return o;
       })) : null;
     if (picker) tabs.append(picker);
@@ -287,8 +287,8 @@
             render();
           } },
           el("div", {}, el("div", { class: "who" }, fmtTime(c.started_at)), el("div", { class: "when" }, fmtDuration(c))),
-          el("div", {}, !restaurantId && restaurants.length > 1
-              ? el("div", { class: "when" }, restaurantName(c.restaurant_id)) : null,
+          el("div", {}, !businessId && businesses.length > 1
+              ? el("div", { class: "when" }, businessName(c.business_id)) : null,
             el("span", {}, fmtPhone(c.caller_phone) || "Unknown caller"),
             el("span", { class: "phone" }, `${c.caller_turns} caller turn${c.caller_turns === 1 ? "" : "s"}`)),
           el("div", { class: "badges" }, outcome)),
@@ -310,7 +310,7 @@
     const pay = PAY[o.payment_status] || [o.payment_status || "", ""];
     return el("article", { class: "order" + (isNew ? " new" : "") },
       el("div", {}, el("div", { class: "num" }, "#" + o.order_number), el("div", { class: "when" }, fmtTime(o.created_at)),
-        !restaurantId && restaurants.length > 1 ? el("div", { class: "when" }, restaurantName(o.restaurant_id)) : null),
+        !businessId && businesses.length > 1 ? el("div", { class: "when" }, businessName(o.business_id)) : null),
       el("div", {},
         el("span", { class: "who" }, o.customer_name || "No name"),
         o.customer_phone ? el("span", { class: "phone" }, fmtPhone(o.customer_phone)) : null,

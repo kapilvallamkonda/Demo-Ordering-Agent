@@ -15,9 +15,6 @@ A business's template is the top-level "template" key of its catalog JSON (defau
 "restaurant"). To add a kind of business: add a Template to TEMPLATES, and a starter
 catalog in data/templates/<id>.json. A template whose modules aren't all built has
 status "coming_soon": it's listed, but a business can't use it yet.
-
-(Internally, a business is still a "restaurant" row and its catalog is a "menu": the
-names predate templates. See docs/DESIGN.md section 15.)
 """
 
 from __future__ import annotations

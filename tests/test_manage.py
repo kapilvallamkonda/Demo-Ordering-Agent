@@ -3,52 +3,52 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from ordering_agent import accounts as accounts_cli
-from ordering_agent import manage, server
-from ordering_agent.accounts import Accounts, LoginLimiter, hash_password, verify_password
-from ordering_agent.menu import parse_menu
-from ordering_agent.menu_check import check_menu
-from ordering_agent.order import Order, OrderError
-from ordering_agent.prompts import build_greeting
+from phone_agent import accounts as accounts_cli
+from phone_agent import manage, server
+from phone_agent.accounts import Accounts, LoginLimiter, hash_password, verify_password
+from phone_agent.catalog import parse_catalog
+from phone_agent.catalog_check import check_catalog
+from phone_agent.order import Order, OrderError
+from phone_agent.prompts import build_greeting
 
-from .conftest import BELLA_PHONE, FIXTURE_MENU, seed_restaurant
+from .conftest import BELLA_PHONE, FIXTURE_CATALOG, seed_business
 from .fakes import FakeClient
 
 TACO_PHONE = "+15550008888"
 W = {"X-Manage": "1"}
 
 
-def fixture_menu(**restaurant):
-    menu = json.loads(FIXTURE_MENU.read_text())
-    menu["restaurant"].update({"payment": {"required_before_cooking": False}, **restaurant})
-    return menu
+def fixture_catalog(**business):
+    catalog = json.loads(FIXTURE_CATALOG.read_text())
+    catalog["settings"].update({"payment": {"required_before_cooking": False}, **business})
+    return catalog
 
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    monkeypatch.setenv("ORDERS_API_TOKEN", "optok")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("ADMIN_API_TOKEN", "optok")
     monkeypatch.setattr(server, "TWILIO_AUTH_TOKEN", "")
     monkeypatch.setattr(manage, "limiter", LoginLimiter())
     server.app.state.client = FakeClient([])
     server.app.state.payments = None
     with TestClient(server.app) as c:
         store = server.app.state.store
-        bella = seed_restaurant(store, menu=fixture_menu())
-        taco = seed_restaurant(store, "taco-town", TACO_PHONE, fixture_menu(name="Taco Town"))
+        bella = seed_business(store, catalog=fixture_catalog())
+        taco = seed_business(store, "taco-town", TACO_PHONE, fixture_catalog(name="Taco Town"))
         yield c, store, bella, taco
     del server.app.state.client, server.app.state.payments
 
 
-def sign_in(c, store, restaurant_id, email="ana@example.com", password="correct horse battery"):
-    token = Accounts(store).invite(email, restaurant_id, "Ana")
+def sign_in(c, store, business_id, email="ana@example.com", password="correct horse battery"):
+    token = Accounts(store).invite(email, business_id, "Ana")
     r = c.post("/api/manage/accept-invite", json={"token": token, "password": password}, headers=W)
     assert r.status_code == 200, r.text
     return token
 
 
 def editor(c, rid, **kw):
-    r = c.get(f"/api/manage/restaurants/{rid}/editor", **kw)
+    r = c.get(f"/api/manage/businesses/{rid}/editor", **kw)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -63,12 +63,12 @@ def test_password_hashing():
     assert not verify_password("wrong", h) and not verify_password("x", None) and not verify_password("x", "junk")
 
 
-def test_invite_signs_in_and_only_shows_own_restaurant(app):
+def test_invite_signs_in_and_only_shows_own_business(app):
     c, store, bella, taco = app
     token = sign_in(c, store, bella)
     me = c.get("/api/manage/me").json()
-    assert me["who"] == "ana@example.com" and [r["id"] for r in me["restaurants"]] == [bella]
-    assert c.get(f"/api/manage/restaurants/{taco}/editor").status_code == 404
+    assert me["who"] == "ana@example.com" and [r["id"] for r in me["businesses"]] == [bella]
+    assert c.get(f"/api/manage/businesses/{taco}/editor").status_code == 404
     # The invite works once.
     again = c.post("/api/manage/accept-invite", json={"token": token, "password": "another password 1"}, headers=W)
     assert again.status_code == 400 and "expired" in again.json()["detail"]
@@ -106,19 +106,19 @@ def test_writes_need_the_header_and_same_origin(app):
     c, store, bella, _ = app
     sign_in(c, store, bella)
     ed = editor(c, bella)
-    url = f"/api/manage/restaurants/{bella}/draft"
-    assert c.put(url, json={"menu": ed["menu"], "revision": None}).status_code == 403
-    evil = c.put(url, json={"menu": ed["menu"], "revision": None}, headers={**W, "Origin": "https://evil.example"})
+    url = f"/api/manage/businesses/{bella}/draft"
+    assert c.put(url, json={"catalog": ed["catalog"], "revision": None}).status_code == 403
+    evil = c.put(url, json={"catalog": ed["catalog"], "revision": None}, headers={**W, "Origin": "https://evil.example"})
     assert evil.status_code == 403
-    assert c.put(url, json={"menu": ed["menu"], "revision": None},
+    assert c.put(url, json={"catalog": ed["catalog"], "revision": None},
                  headers={**W, "Origin": "http://testserver"}).status_code == 200
 
 
-def test_operator_token_sees_every_restaurant(app):
+def test_operator_token_sees_every_business(app):
     c, store, bella, taco = app
     auth = {"Authorization": "Bearer optok"}
     me = c.get("/api/manage/me", headers=auth).json()
-    assert me["operator"] and {r["id"] for r in me["restaurants"]} == {bella, taco}
+    assert me["operator"] and {r["id"] for r in me["businesses"]} == {bella, taco}
     assert c.get("/api/manage/me", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
@@ -131,14 +131,14 @@ def test_edit_draft_then_publish_reaches_the_next_call(app):
     ed = editor(c, bella)
     assert ed["draft"] is None and ed["check"]["errors"] == []
     assert {f["path"] for f in ed["schema"]} >= {"name", "tax_rate", "notes", "greeting"}
-    menu = ed["menu"]
-    menu["restaurant"]["greeting"] = "Ciao! Bella Cucina here. What would you like?"
-    tiramisu = next(i for i in menu["items"] if i["id"] == "tiramisu")
+    catalog = ed["catalog"]
+    catalog["settings"]["greeting"] = "Ciao! Bella Cucina here. What would you like?"
+    tiramisu = next(i for i in catalog["items"] if i["id"] == "tiramisu")
     tiramisu["available"] = False
-    menu["items"].append({"id": "cannoli", "name": "Cannoli", "category": "Desserts", "price": 6.5,
+    catalog["items"].append({"id": "cannoli", "name": "Cannoli", "category": "Desserts", "price": 6.5,
                           "description": "Vegetarian."})
-    url = f"/api/manage/restaurants/{bella}"
-    r = c.put(url + "/draft", json={"menu": menu, "revision": None}, headers=W)
+    url = f"/api/manage/businesses/{bella}"
+    r = c.put(url + "/draft", json={"catalog": catalog, "revision": None}, headers=W)
     assert r.status_code == 200 and r.json()["revision"] == 1
     assert any("sold out" in w for w in r.json()["check"]["warnings"])
     # Not live until published.
@@ -149,10 +149,10 @@ def test_edit_draft_then_publish_reaches_the_next_call(app):
     assert r.status_code == 200, r.text
     assert r.json()["draft"] is None
     assert "Ciao! Bella Cucina here." in c.post("/voice", data={"To": BELLA_PHONE}).text
-    live = server.app.state.restaurants.get(bella)
+    live = server.app.state.businesses.get(bella)
     assert live.get("cannoli").price == 6.5
     with pytest.raises(OrderError, match="sold out"):
-        Order(menu=live).add_item("tiramisu")
+        Order(catalog=live).add_item("tiramisu")
     assert "SOLD OUT" in live.to_prompt_text()
     versions = c.get(url + "/versions").json()
     assert versions[0]["live"] and versions[0]["created_by"] == "ana@example.com"
@@ -162,38 +162,38 @@ def test_edit_draft_then_publish_reaches_the_next_call(app):
 def test_stale_revision_is_a_conflict(app):
     c, store, bella, _ = app
     sign_in(c, store, bella)
-    menu = editor(c, bella)["menu"]
-    url = f"/api/manage/restaurants/{bella}/draft"
-    assert c.put(url, json={"menu": menu, "revision": None}, headers=W).json()["revision"] == 1
-    assert c.put(url, json={"menu": menu, "revision": 1}, headers=W).json()["revision"] == 2
-    stale = c.put(url, json={"menu": menu, "revision": 1}, headers=W)  # another tab, behind
+    catalog = editor(c, bella)["catalog"]
+    url = f"/api/manage/businesses/{bella}/draft"
+    assert c.put(url, json={"catalog": catalog, "revision": None}, headers=W).json()["revision"] == 1
+    assert c.put(url, json={"catalog": catalog, "revision": 1}, headers=W).json()["revision"] == 2
+    stale = c.put(url, json={"catalog": catalog, "revision": 1}, headers=W)  # another tab, behind
     assert stale.status_code == 409
-    assert c.post(f"/api/manage/restaurants/{bella}/publish", json={"revision": 1}, headers=W).status_code == 409
+    assert c.post(f"/api/manage/businesses/{bella}/publish", json={"revision": 1}, headers=W).status_code == 409
 
 
 def test_publish_is_refused_with_errors(app):
     c, store, bella, _ = app
     sign_in(c, store, bella)
-    menu = editor(c, bella)["menu"]
-    menu["restaurant"]["tax_rate"] = 0.2  # 20%: out of range
-    menu["items"][0]["price"] = 0
-    url = f"/api/manage/restaurants/{bella}"
-    r = c.put(url + "/draft", json={"menu": menu, "revision": None}, headers=W)
+    catalog = editor(c, bella)["catalog"]
+    catalog["settings"]["tax_rate"] = 0.2  # 20%: out of range
+    catalog["items"][0]["price"] = 0
+    url = f"/api/manage/businesses/{bella}"
+    r = c.put(url + "/draft", json={"catalog": catalog, "revision": None}, headers=W)
     errors = r.json()["check"]["errors"]
     assert any("Sales tax must be between 0% and 15%" in e for e in errors)
     assert any("price must be more than $0" in e for e in errors)
     r = c.post(url + "/publish", json={"revision": 1}, headers=W)
     assert r.status_code == 422 and r.json()["check"]["errors"]
-    assert len(store.menu_versions(bella)) == 1
+    assert len(store.catalog_versions(bella)) == 1
 
 
-def test_publish_over_a_newer_menu_needs_confirmation(app):
+def test_publish_over_a_newer_catalog_needs_confirmation(app):
     c, store, bella, _ = app
     sign_in(c, store, bella)
-    menu = editor(c, bella)["menu"]
-    url = f"/api/manage/restaurants/{bella}"
-    c.put(url + "/draft", json={"menu": menu, "revision": None}, headers=W)
-    store.set_menu(bella, fixture_menu(name="Bella Nuova"))  # the operator publishes meanwhile
+    catalog = editor(c, bella)["catalog"]
+    url = f"/api/manage/businesses/{bella}"
+    c.put(url + "/draft", json={"catalog": catalog, "revision": None}, headers=W)
+    store.set_catalog(bella, fixture_catalog(name="Bella Nuova"))  # the operator publishes meanwhile
     assert editor(c, bella)["draft"]["live_changed"] is True
     r = c.post(url + "/publish", json={"revision": 1}, headers=W)
     assert r.status_code == 409 and r.json()["code"] == "live_changed"
@@ -203,14 +203,14 @@ def test_publish_over_a_newer_menu_needs_confirmation(app):
 def test_restore_and_discard(app):
     c, store, bella, _ = app
     sign_in(c, store, bella)
-    first = store.menu_versions(bella)[0]["id"]
-    store.set_menu(bella, fixture_menu(name="Renamed"))
-    url = f"/api/manage/restaurants/{bella}"
+    first = store.catalog_versions(bella)[0]["id"]
+    store.set_catalog(bella, fixture_catalog(name="Renamed"))
+    url = f"/api/manage/businesses/{bella}"
     ed = c.post(f"{url}/versions/{first}/restore", json={"revision": None}, headers=W).json()
-    assert ed["menu"]["restaurant"]["name"] == "Bella Cucina" and ed["draft"]["revision"] == 1
-    assert server.app.state.restaurants.get(bella).restaurant["name"] == "Renamed"  # not live yet
+    assert ed["catalog"]["settings"]["name"] == "Bella Cucina" and ed["draft"]["revision"] == 1
+    assert server.app.state.businesses.get(bella).settings["name"] == "Renamed"  # not live yet
     ed = c.delete(url + "/draft", headers=W).json()
-    assert ed["draft"] is None and ed["menu"]["restaurant"]["name"] == "Renamed"
+    assert ed["draft"] is None and ed["catalog"]["settings"]["name"] == "Renamed"
     assert c.post(f"{url}/versions/999/restore", json={}, headers=W).status_code == 404
 
 
@@ -222,38 +222,38 @@ def test_manage_page_is_served_with_safe_headers(app):
     assert r.headers["cache-control"] == "no-store"
 
 
-# ---- menu rules and checks -------------------------------------------------------------------
+# ---- catalog rules and checks -------------------------------------------------------------------
 
 
-def test_menu_checks_on_the_real_menu_have_no_errors():
-    real = json.loads(open("data/restaurants/hyderabad-house.json").read())
-    result = check_menu(real)
+def test_catalog_checks_on_the_real_catalog_have_no_errors():
+    real = json.loads(open("data/businesses/hyderabad-house.json").read())
+    result = check_catalog(real)
     assert result["errors"] == [] and result["summary"]["items"] > 200
     assert any("estimated prices" in b for b in result["blockers"])
 
 
 def test_greeting_default_and_custom():
-    menu = parse_menu(fixture_menu())
-    assert build_greeting(menu).startswith("Thanks for calling Bella Cucina")
-    assert build_greeting(parse_menu(fixture_menu(greeting="  Hello there!  "))) == "Hello there!"
+    catalog = parse_catalog(fixture_catalog())
+    assert build_greeting(catalog).startswith("Thanks for calling Bella Cucina")
+    assert build_greeting(parse_catalog(fixture_catalog(greeting="  Hello there!  "))) == "Hello there!"
 
 
 def test_accounts_cli(app, monkeypatch, capsys):
     _, store, bella, _ = app
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
-    accounts_cli.main(["invite", "Raj@Example.com", "--restaurant", "bella-cucina"], store=store)
+    accounts_cli.main(["invite", "Raj@Example.com", "--business", "bella-cucina"], store=store)
     out = capsys.readouterr().out
     assert "https://example.test/manage#invite=" in out
     accounts_cli.main(["list"], store=store)
     assert "raj@example.com" in capsys.readouterr().out
     with pytest.raises(SystemExit, match="doesn't look like an email"):
         accounts_cli.main(["invite", "not-an-email"], store=store)
-    with pytest.raises(SystemExit, match="no restaurant"):
-        accounts_cli.main(["invite", "a@b.co", "--restaurant", "nope"], store=store)
+    with pytest.raises(SystemExit, match="no business"):
+        accounts_cli.main(["invite", "a@b.co", "--business", "nope"], store=store)
 
 
 def test_unset_address_and_hours_are_described_to_the_agent():
-    raw = fixture_menu()
-    del raw["restaurant"]["address"], raw["restaurant"]["hours"]
-    text = parse_menu(raw).to_prompt_text()
+    raw = fixture_catalog()
+    del raw["settings"]["address"], raw["settings"]["hours"]
+    text = parse_catalog(raw).to_prompt_text()
     assert "Address: not available on this line yet" in text and "None" not in text

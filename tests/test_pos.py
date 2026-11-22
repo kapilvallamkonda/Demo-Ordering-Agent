@@ -5,19 +5,19 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-from ordering_agent import pos as pos_mod
-from ordering_agent import server
-from ordering_agent.menu import parse_menu
-from ordering_agent.order import Order
-from ordering_agent.payments import handle_stripe_event
-from ordering_agent.pos import PosError, PosHub, check_state, make_state, merge_import, seal, unseal
-from ordering_agent.pos_clover import CloverProvider
-from ordering_agent.pos_square import SquareProvider
-from ordering_agent.restaurants import RestaurantDirectory
-from ordering_agent.storage import OrderStore
-from ordering_agent.tools import CallSession, run_tool
+from phone_agent import pos as pos_mod
+from phone_agent import server
+from phone_agent.catalog import parse_catalog
+from phone_agent.order import Order
+from phone_agent.payments import handle_stripe_event
+from phone_agent.pos import PosError, PosHub, check_state, make_state, merge_import, seal, unseal
+from phone_agent.pos_clover import CloverProvider
+from phone_agent.pos_square import SquareProvider
+from phone_agent.businesses import BusinessDirectory
+from phone_agent.storage import Store
+from phone_agent.tools import CallSession, run_tool
 
-from .conftest import FIXTURE_MENU, seed_restaurant
+from .conftest import FIXTURE_CATALOG, seed_business
 from .fakes import FakeClient
 
 
@@ -49,16 +49,16 @@ class FakeApi:
         return [b for m, p, _, b in self.requests if m == method and p.endswith(suffix)]
 
 
-def setup_restaurant(menu_raw=None):
-    store = OrderStore(":memory:")
-    rid = seed_restaurant(store, menu=menu_raw)
-    directory = RestaurantDirectory(store)
+def setup_business(catalog_raw=None):
+    store = Store(":memory:")
+    rid = seed_business(store, catalog=catalog_raw)
+    directory = BusinessDirectory(store)
     return store, directory, rid
 
 
 def place(store, directory, rid, hub, items=(("wings", {"sauce": "bbq"}, []),), payment_status="not_requested"):
-    menu = directory.get(rid)
-    session = CallSession(order=Order(menu=menu), store=store, call_id="CA1", pos=hub)
+    catalog = directory.get(rid)
+    session = CallSession(order=Order(catalog=catalog), store=store, call_id="CA1", pos=hub)
     session.order.customer_phone = "+15025550123"
     for item_id, options, extras in items:
         _, err = run_tool(session, "add_item", {"item_id": item_id, "options": options, "extras": extras,
@@ -85,7 +85,7 @@ def test_connect_state_is_signed_and_expires():
     with pytest.raises(PosError):
         check_state(state, "clover", now=1500)  # for another provider
     with pytest.raises(PosError):
-        check_state(state.replace(".7.", ".8."), "square", now=1500)  # tampered restaurant
+        check_state(state.replace(".7.", ".8."), "square", now=1500)  # tampered business
     with pytest.raises(PosError, match="expired"):
         check_state(state, "square", now=1000 + 3601)
 
@@ -119,7 +119,7 @@ def square_hub(store, directory, api):
 
 
 def test_square_order_is_sent_as_pickup_with_tax_and_notes():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = square_api()
     hub = square_hub(store, directory, api)
     conn = hub.save_connection(rid, "square", "sandbox", {"access_token": "tok"}, "M1")
@@ -131,7 +131,7 @@ def test_square_order_is_sent_as_pickup_with_tax_and_notes():
     assert body["idempotency_key"] == f"phone-order-{rid}-{session.order_id}"
     assert order["location_id"] == "LOC1"
     assert order["reference_id"] == f"phone-{session.order_number}"
-    [line] = order["line_items"]  # the fixture menu has no Square ids: an ad hoc line
+    [line] = order["line_items"]  # the fixture catalog has no Square ids: an ad hoc line
     assert line["quantity"] == "2" and line["note"] == "extra crispy"
     assert line["name"].startswith("Chicken Wings") and "bbq" in line["name"]
     assert line["base_price_money"]["currency"] == "USD"
@@ -148,7 +148,7 @@ def test_square_order_is_sent_as_pickup_with_tax_and_notes():
 
 
 def test_square_payment_is_recorded_as_external_after_stripe_paid():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = square_api()
     hub = square_hub(store, directory, api)
     hub.save_connection(rid, "square", "sandbox", {"access_token": "tok"}, "M1")
@@ -169,7 +169,7 @@ def test_square_payment_is_recorded_as_external_after_stripe_paid():
 
 
 def test_square_outage_is_retried_with_the_same_idempotency_key():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = square_api(fail_times=2)
     hub = square_hub(store, directory, api)
     hub.save_connection(rid, "square", "sandbox", {"access_token": "tok"}, "M1")
@@ -181,7 +181,7 @@ def test_square_outage_is_retried_with_the_same_idempotency_key():
 
 
 def test_square_rejection_is_not_retried_and_shows_on_dashboard():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = square_api()
     api.routes[("POST", "/v2/orders")] = (400, {"errors": [{"code": "INVALID_VALUE"}]})
     hub = square_hub(store, directory, api)
@@ -226,9 +226,9 @@ def test_square_catalog_import_maps_variations_and_modifiers():
                                        "spice": {"mild": {"modifier": "MOD-MILD"}, "hot": {"modifier": "MOD-HOT"}}},
                            "extras": {"raita": "MOD-RAITA"}}
 
-    # The imported menu works end to end: the order goes to Square as catalog items.
-    raw, _ = merge_import(None, [item], "square", base_restaurant=json.loads(FIXTURE_MENU.read_text())["restaurant"])
-    store, directory, rid = setup_restaurant(raw)
+    # The imported catalog works end to end: the order goes to Square as catalog items.
+    raw, _ = merge_import(None, [item], "square", base_settings=json.loads(FIXTURE_CATALOG.read_text())["settings"])
+    store, directory, rid = setup_business(raw)
     api2 = square_api()
     hub = square_hub(store, directory, api2)
     hub.save_connection(rid, "square", "sandbox", {"access_token": "tok"}, "M1")
@@ -241,17 +241,17 @@ def test_square_catalog_import_maps_variations_and_modifiers():
 
 
 def test_reimport_keeps_item_ids():
-    base = json.loads(FIXTURE_MENU.read_text())["restaurant"]
+    base = json.loads(FIXTURE_CATALOG.read_text())["settings"]
     first, _ = merge_import(None, [{"name": "Dum Biryani", "category": "B", "price": 15.0, "pos_key": "A"}],
-                            "square", base_restaurant=base)
+                            "square", base_settings=base)
     first["items"][0]["id"] = "hyderabadi_dum_biryani"  # renamed by hand after the first import
     again, notes = merge_import(first, [
         {"name": "Dum Biryani (new name)", "category": "B", "price": 16.0, "pos_key": "A"},
         {"name": "Dum Biryani", "category": "B", "price": 9.0, "pos_key": "B"},
     ], "square")
     assert [i["id"] for i in again["items"]] == ["hyderabadi_dum_biryani", "dum_biryani"]
-    assert again["restaurant"] == base and again["pos"]["provider"] == "square"
-    parse_menu(again)  # valid menu
+    assert again["settings"] == base and again["pos"]["provider"] == "square"
+    parse_catalog(again)  # valid catalog
 
 
 # ---- Clover ----------------------------------------------------------------------------------
@@ -271,7 +271,7 @@ def clover_api():
 
 
 def test_clover_order_is_created_open_with_custom_lines():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = clover_api()
     hub = PosHub(store, directory, {"clover": CloverProvider("app", "secret", http=api.client())},
                  retry_delays=(0,), run_inline=True)
@@ -292,7 +292,7 @@ def test_clover_order_is_created_open_with_custom_lines():
 
 
 def test_clover_partial_order_is_deleted_before_retrying():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = clover_api()
     calls = {"n": 0}
 
@@ -325,8 +325,8 @@ def test_clover_import_and_modifiers_on_inventory_items():
     assert item["options"]["protein"] == {"choices": {"chicken": 0.0, "goat": 4.0}, "required": True}
     assert item["pos"]["item"] == "IT1"
 
-    raw, _ = merge_import(None, [item], "clover", base_restaurant=json.loads(FIXTURE_MENU.read_text())["restaurant"])
-    store, directory, rid = setup_restaurant(raw)
+    raw, _ = merge_import(None, [item], "clover", base_settings=json.loads(FIXTURE_CATALOG.read_text())["settings"])
+    store, directory, rid = setup_business(raw)
     hub = PosHub(store, directory, {"clover": provider}, retry_delays=(0,), run_inline=True)
     hub.save_connection(rid, "clover", "sandbox", {"access_token": "tok"}, "MERCH1")
     place(store, directory, rid, hub, items=(("fried_rice", {"protein": "goat"}, []),))
@@ -337,7 +337,7 @@ def test_clover_import_and_modifiers_on_inventory_items():
 
 
 def test_clover_token_is_refreshed_when_about_to_expire():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = clover_api()
     api.routes[("POST", "/oauth/v2/refresh")] = (200, {"access_token": "new", "refresh_token": "r2",
                                                        "access_token_expiration": 9_999_999_999})
@@ -353,15 +353,15 @@ def test_clover_token_is_refreshed_when_about_to_expire():
 # ---- no POS, and the connect callback ---------------------------------------------------------
 
 
-def test_restaurant_without_pos_is_untouched():
-    store, directory, rid = setup_restaurant()
+def test_business_without_pos_is_untouched():
+    store, directory, rid = setup_business()
     hub = PosHub(store, directory, {}, run_inline=True)
     place(store, directory, rid, hub)
     assert store.recent()[0]["pos_status"] is None
 
 
 def test_pos_failure_never_breaks_placing_the_order():
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
 
     class Broken:
         def order_placed(self, *a):
@@ -372,15 +372,15 @@ def test_pos_failure_never_breaks_placing_the_order():
 
 
 def test_connect_callback_stores_the_connection(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    store, directory, rid = setup_restaurant()
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    store, directory, rid = setup_business()
     api = square_api()
     api.routes[("POST", "/oauth2/token")] = (200, {"access_token": "EAAA", "refresh_token": "R",
                                                    "expires_at": "2026-12-22T00:00:00Z", "merchant_id": "M9"})
     hub = PosHub(store, directory, {"square": SquareProvider("app", "secret", http=api.client())}, run_inline=True)
     server.app.state.pos, server.app.state.client = hub, FakeClient([])
     with TestClient(server.app) as client:
-        server.app.state.store, server.app.state.restaurants = store, directory
+        server.app.state.store, server.app.state.businesses = store, directory
         r = client.get("/pos/square/callback", params={"code": "c1", "state": make_state("square", rid)})
         assert r.status_code == 200 and "is connected" in r.text
         bad = client.get("/pos/square/callback", params={"code": "c1", "state": "square.1.1.x"})
@@ -394,7 +394,7 @@ def test_connect_callback_stores_the_connection(tmp_path, monkeypatch):
 
 
 def test_admin_commands(monkeypatch, capsys):
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = square_api()
     api.routes[("GET", "/v2/catalog/list")] = (200, {"objects": [
         {"type": "ITEM", "id": "I1", "item_data": {"name": "Samosa", "variations": [
@@ -405,10 +405,10 @@ def test_admin_commands(monkeypatch, capsys):
     assert "location LOC1" in capsys.readouterr().out
     pos_mod.main(["status"], store=store, hub=hub)
     assert "square (sandbox)" in capsys.readouterr().out
-    pos_mod.main(["import-menu", "bella-cucina"], store=store, hub=hub)
+    pos_mod.main(["import-catalog", "bella-cucina"], store=store, hub=hub)
     out = capsys.readouterr()
-    menu = json.loads(out.out)
-    assert menu["items"][0]["id"] == "samosa" and menu["restaurant"]["name"] == "Bella Cucina"
+    catalog = json.loads(out.out)
+    assert catalog["items"][0]["id"] == "samosa" and catalog["settings"]["name"] == "Bella Cucina"
     assert "1 items imported" in out.err
     with pytest.raises(SystemExit, match="POS_ACCESS_TOKEN"):
         monkeypatch.delenv("POS_ACCESS_TOKEN")
@@ -420,20 +420,20 @@ def test_admin_commands(monkeypatch, capsys):
 def test_pay_first_order_reaches_the_pos_only_once_paid():
     from dataclasses import replace
 
-    store, directory, rid = setup_restaurant()
+    store, directory, rid = setup_business()
     api = clover_api()
     hub = PosHub(store, directory, {"clover": CloverProvider("app", "secret", http=api.client())},
                  retry_delays=(0,), run_inline=True)
     hub.save_connection(rid, "clover", "sandbox", {"access_token": "tok"}, "MERCH1")
-    menu = directory.get(rid)
-    menu = replace(menu, restaurant={**menu.restaurant, "payment": {"required_before_cooking": True}})
+    catalog = directory.get(rid)
+    catalog = replace(catalog, settings={**catalog.settings, "payment": {"required_before_cooking": True}})
 
     class Links:
         def request_payment(self, order, number):
-            from ordering_agent.payments import PaymentLink
+            from phone_agent.payments import PaymentLink
             return PaymentLink("cs_9", "https://pay/9")
 
-    session = CallSession(order=Order(menu=menu), store=store, call_id="CA9", pos=hub, payments=Links())
+    session = CallSession(order=Order(catalog=catalog), store=store, call_id="CA9", pos=hub, payments=Links())
     session.order.customer_phone = "+15025550123"
     run_tool(session, "add_item", {"item_id": "tiramisu"})
     run_tool(session, "set_customer_name", {"name": "Ana"})

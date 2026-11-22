@@ -1,4 +1,4 @@
-"""Restaurant staff accounts for the /manage page.
+"""Business staff accounts for the /manage page.
 
 People are invited, not given passwords: the operator runs `invite`, which prints a
 one-time link (valid 72 hours) where the person sets their own password. A lost
@@ -7,12 +7,12 @@ are random tokens of which only a SHA-256 hash is stored.
 
 Admin commands (run on the server, e.g. `fly ssh console -C "python -m ..."`):
 
-    python -m ordering_agent.accounts invite EMAIL --restaurant SLUG [--name "Full Name"]
-    python -m ordering_agent.accounts list
-    python -m ordering_agent.accounts grant EMAIL --restaurant SLUG
-    python -m ordering_agent.accounts revoke EMAIL --restaurant SLUG
-    python -m ordering_agent.accounts disable EMAIL      (signs them out everywhere)
-    python -m ordering_agent.accounts enable EMAIL
+    python -m phone_agent.accounts invite EMAIL --business SLUG [--name "Full Name"]
+    python -m phone_agent.accounts list
+    python -m phone_agent.accounts grant EMAIL --business SLUG
+    python -m phone_agent.accounts revoke EMAIL --business SLUG
+    python -m phone_agent.accounts disable EMAIL      (signs them out everywhere)
+    python -m phone_agent.accounts enable EMAIL
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 
-from .storage import OrderStore
+from .storage import Store
 
 SESSION_DAYS = 14
 INVITE_HOURS = 72
@@ -112,7 +112,7 @@ class LoginLimiter:
 
 
 class Accounts:
-    def __init__(self, store: OrderStore):
+    def __init__(self, store: Store):
         self.store = store
 
     def authenticate(self, email: str, password: str) -> dict | None:
@@ -141,13 +141,13 @@ class Accounts:
         if token:
             self.store.delete_token(_token_hash(token))
 
-    def invite(self, email: str, restaurant_id: int | None, name: str = "") -> str:
-        """Create the user if needed, give them the restaurant, and return an invite token."""
+    def invite(self, email: str, business_id: int | None, name: str = "") -> str:
+        """Create the user if needed, give them the business, and return an invite token."""
         email = normalize_email(email)
         user = self.store.user_by_email(email)
         uid = user["id"] if user else self.store.add_user(email, name)
-        if restaurant_id is not None:
-            self.store.grant(uid, restaurant_id)
+        if business_id is not None:
+            self.store.grant(uid, business_id)
         self.store.delete_user_tokens(uid, "invite")  # only the newest link works
         token = secrets.token_urlsafe(32)
         self.store.add_token(_token_hash(token), "invite", uid, time.time() + INVITE_HOURS * 3600)
@@ -173,31 +173,31 @@ def invite_url(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/manage#invite={token}"
 
 
-def main(argv: list[str] | None = None, store: OrderStore | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m ordering_agent.accounts")
+def main(argv: list[str] | None = None, store: Store | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m phone_agent.accounts")
     sub = ap.add_subparsers(dest="cmd", required=True)
     inv = sub.add_parser("invite", help="create a user (or reset a password) and print a set-password link")
     inv.add_argument("email")
-    inv.add_argument("--restaurant", help="slug of a restaurant they manage")
+    inv.add_argument("--business", help="slug of a business they manage")
     inv.add_argument("--name", default="")
     sub.add_parser("list")
     for name in ("grant", "revoke"):
         p = sub.add_parser(name)
         p.add_argument("email")
-        p.add_argument("--restaurant", required=True)
+        p.add_argument("--business", required=True)
     for name in ("disable", "enable"):
         sub.add_parser(name).add_argument("email")
     args = ap.parse_args(argv)
 
-    store = store or OrderStore(os.environ.get("ORDERS_DB", "data/orders.db"))
+    store = store or Store(os.environ.get("DATABASE_PATH", "data/phone_agent.db"))
     accounts = Accounts(store)
 
-    def restaurant_id(slug: str | None) -> int | None:
+    def business_id(slug: str | None) -> int | None:
         if slug is None:
             return None
-        row = store.restaurant_by_slug(slug)
+        row = store.business_by_slug(slug)
         if row is None:
-            raise SystemExit(f"no restaurant {slug!r}")
+            raise SystemExit(f"no business {slug!r}")
         return row.id
 
     def user(email: str) -> dict:
@@ -214,7 +214,7 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None) -> int:
         if not base:
             raise SystemExit("PUBLIC_BASE_URL isn't set")
         try:
-            token = accounts.invite(args.email, restaurant_id(args.restaurant), args.name)
+            token = accounts.invite(args.email, business_id(args.business), args.name)
         except ValueError as e:
             raise SystemExit(str(e))
         print(f"Send this link to {args.email}; it works once, for {INVITE_HOURS} hours:")
@@ -223,12 +223,12 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None) -> int:
         for u in store.users():
             state = "active" if u["active"] else "disabled"
             pw = "" if u["has_password"] else " (hasn't set a password yet)"
-            print(f"{u['id']:>3}  {u['email']:<32} {state:<9} {u['restaurants'] or '-'}{pw}")
+            print(f"{u['id']:>3}  {u['email']:<32} {state:<9} {u['businesses'] or '-'}{pw}")
     elif args.cmd == "grant":
-        store.grant(user(args.email)["id"], restaurant_id(args.restaurant))
+        store.grant(user(args.email)["id"], business_id(args.business))
         print("granted")
     elif args.cmd == "revoke":
-        store.revoke(user(args.email)["id"], restaurant_id(args.restaurant))
+        store.revoke(user(args.email)["id"], business_id(args.business))
         print("revoked")
     elif args.cmd in ("disable", "enable"):
         store.set_user_active(user(args.email)["id"], args.cmd == "enable")

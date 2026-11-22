@@ -1,6 +1,6 @@
-"""The ordering agent: a streaming Claude tool-use loop over one call's order.
+"""The phone agent: a streaming Claude tool-use loop over one call (its order, for the orders module).
 
-`OrderingAgent.respond()` is an async generator of text chunks, so a transport
+`PhoneAgent.respond()` is an async generator of text chunks, so a transport
 (phone, terminal, web) can start speaking/printing before the reply is done.
 """
 
@@ -13,11 +13,11 @@ from collections.abc import AsyncIterator, Callable
 
 import anthropic
 
-from .menu import Menu
+from .catalog import Catalog
 from .order import Order, OrderError, normalize_phone
 from .payments import PaymentService
 from .prompts import build_greeting, build_system_prompt
-from .storage import OrderStore
+from .storage import Store
 from .tools import CallSession, run_tool, tools_for
 
 log = logging.getLogger(__name__)
@@ -30,26 +30,26 @@ FAST_MODE = os.environ.get("AGENT_FAST_MODE", "").lower() in {"1", "true", "yes"
 MAX_TOOL_ROUNDS = 8  # guard against runaway loops within a single caller turn
 MAX_JSON_RETRIES = 2
 
-REFUSAL_LINE = "Sorry, I can't help with that. Is there anything from the menu I can get for you?"
+REFUSAL_LINE = "Sorry, I can't help with that. Is there anything from the catalog I can get for you?"
 ERROR_LINE = "Sorry, I'm having trouble on my end. Could you say that again?"
 
 
-class OrderingAgent:
+class PhoneAgent:
     def __init__(
         self,
-        menu: Menu,
+        catalog: Catalog,
         client: anthropic.AsyncAnthropic | None = None,
-        store: OrderStore | None = None,
+        store: Store | None = None,
         call_id: str | None = None,
         caller_phone: str | None = None,
         payments: PaymentService | None = None,
         pos=None,
     ):
         self.client = client or anthropic.AsyncAnthropic()
-        self.menu = menu
-        self.greeting = build_greeting(menu)
-        self.tools = tools_for(menu.template.modules)  # what this kind of business can do
-        self.session = CallSession(order=Order(menu=menu), store=store, call_id=call_id,
+        self.catalog = catalog
+        self.greeting = build_greeting(catalog)
+        self.tools = tools_for(catalog.template.modules)  # what this kind of business can do
+        self.session = CallSession(order=Order(catalog=catalog), store=store, call_id=call_id,
                                    payments=payments, pos=pos)
         if caller_phone:
             try:
@@ -60,7 +60,7 @@ class OrderingAgent:
         self._system = [
             {
                 "type": "text",
-                "text": build_system_prompt(menu, payment_links=payments is not None)
+                "text": build_system_prompt(catalog, payment_links=payments is not None)
                 + f'\nThe call opened with you saying: "{self.greeting}"',
             }
         ]

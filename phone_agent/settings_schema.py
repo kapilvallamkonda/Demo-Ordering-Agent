@@ -5,8 +5,8 @@ saved catalogs against them, so a new setting is one entry here (plus whatever c
 reads it). SETTINGS are shared by every kind of business; a template (templates.py) can
 change a field's label or help (`setting_overrides`) and add its own (`extra_settings`):
 use settings_for(template).
-Each field lives at `path` inside the menu's "restaurant" block ("payment.pay_within_minutes"
-is restaurant["payment"]["pay_within_minutes"]). Keys not listed here (order_types,
+Each field lives at `path` inside the catalog's "settings" block ("payment.pay_within_minutes"
+is business["payment"]["pay_within_minutes"]). Keys not listed here (order_types,
 placeholders) are kept as they are.
 
 Field types:
@@ -72,13 +72,13 @@ def get_path(block: dict, path: str) -> Any:
     return cur
 
 
-def validate_settings(restaurant: Any, template=None) -> list[str]:
+def validate_settings(business: Any, template=None) -> list[str]:
     """Problems with the settings block, as messages naming the field."""
-    if not isinstance(restaurant, dict):
+    if not isinstance(business, dict):
         return ["business settings are missing"]
     errors = []
     for f in settings_for(template):
-        value = get_path(restaurant, f["path"])
+        value = get_path(business, f["path"])
         label = f["label"]
         if value is None or value == "":
             if f.get("required"):
@@ -109,7 +109,7 @@ def validate_settings(restaurant: Any, template=None) -> list[str]:
                 errors.append(f"{label}: at most {f['max_items']}")
             elif any(len(v) > f.get("max_length", 1000) for v in value):
                 errors.append(f"{label}: each one at most {f['max_length']} characters")
-    placeholders = restaurant.get("placeholders", [])
+    placeholders = business.get("placeholders", [])
     if not isinstance(placeholders, list) or not all(isinstance(p, str) for p in placeholders):
         errors.append("placeholders must be a list of setting names")
     return errors

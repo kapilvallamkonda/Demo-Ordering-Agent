@@ -4,7 +4,7 @@ Card details are never taken over the phone. After the order is placed we create
 Stripe Checkout Session with the exact line items and tax, text the link (with the
 order details) to the caller, and a Stripe webhook tells us when it's paid.
 
-Whether the kitchen waits for payment is a restaurant rule in its menu file:
+Whether the kitchen waits for payment is a business rule in its catalog file:
   "payment": {"required_before_cooking": false, "pay_within_minutes": 30}
 """
 
@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Protocol
 
-from .menu import Menu
+from .catalog import Catalog
 from .order import Order
 
-log = logging.getLogger("ordering_agent.payments")
+log = logging.getLogger("phone_agent.payments")
 
 SMS_MAX_LINES = 8  # list at most this many items in the text; the payment page shows all
 
@@ -69,11 +69,11 @@ class StripeLinks:
                                "product_data": {"name": "Sales tax"}},
             })
         metadata = {"order_number": str(order_number)}
-        if order.menu.restaurant_id is not None:
-            metadata["restaurant_id"] = str(order.menu.restaurant_id)
+        if order.catalog.business_id is not None:
+            metadata["business_id"] = str(order.catalog.business_id)
         page = f"{self.base_url}/paid?order={order_number}"
-        if order.menu.slug:
-            page += f"&r={order.menu.slug}"
+        if order.catalog.slug:
+            page += f"&r={order.catalog.slug}"
         session = self._stripe.checkout.Session.create(
             api_key=self.secret_key,
             mode="payment",
@@ -106,8 +106,8 @@ class PaymentService:
 
     def request_payment(self, order: Order, order_number: int) -> PaymentLink:
         """Create the link and text it with the order details. Raises on failure."""
-        menu = order.menu
-        link = self.links.create(order, order_number, menu.pay_within_minutes)
+        catalog = order.catalog
+        link = self.links.create(order, order_number, catalog.pay_within_minutes)
         self.sms.send(order.customer_phone, order_text(order, order_number, link.url))
         return link
 
@@ -131,11 +131,11 @@ def payment_service_from_env(base_url: str) -> PaymentService | None:
 # ---- Stripe webhook -----------------------------------------------------------
 
 
-def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Menu | None],
+def handle_stripe_event(event: dict, store, catalog_for: Callable[[int | None], Catalog | None],
                         sms: SmsSender | None, on_paid: Callable[[int], None] | None = None) -> str:
     """Apply a (signature-verified) Stripe event to the order. Returns what happened.
 
-    menu_for(restaurant_id) gives the order's restaurant, for the wording of the text.
+    catalog_for(business_id) gives the order's business, for the wording of the text.
     on_paid(order_id) is told about newly paid orders (to record it on the POS)."""
     kind = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
@@ -146,15 +146,15 @@ def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Men
         if obj.get("payment_status") != "paid":
             return "pending"  # delayed payment methods settle later
         changed = store.mark_paid(payment_id)
-        menu = menu_for(changed["restaurant_id"]) if changed else None
-        text = paid_text(menu, changed["order_number"]) if menu else None
+        catalog = catalog_for(changed["business_id"]) if changed else None
+        text = paid_text(catalog, changed["order_number"]) if catalog else None
         outcome = "paid"
     elif kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
         changed = store.mark_expired(payment_id)
-        menu = menu_for(changed["restaurant_id"]) if changed else None
+        catalog = catalog_for(changed["business_id"]) if changed else None
         # Only text when the order was cancelled; otherwise they can still pay at pickup.
-        text = (expired_text(menu, changed["order_number"])
-                if menu and changed["status"] == "cancelled" else None)
+        text = (expired_text(catalog, changed["order_number"])
+                if catalog and changed["status"] == "cancelled" else None)
         outcome = "expired"
     else:
         return "ignored"
@@ -178,8 +178,8 @@ def handle_stripe_event(event: dict, store, menu_for: Callable[[int | None], Men
 
 
 def order_text(order: Order, order_number: int, url: str) -> str:
-    menu = order.menu
-    name = menu.restaurant.get("name", "the restaurant")
+    catalog = order.catalog
+    name = catalog.settings.get("name", "the business")
     lines = [f"{name}: order #{order_number} for {order.customer_name}"]
     for line in order.lines[:SMS_MAX_LINES]:
         lines.append(f"{line.quantity} x {_line_name(line)} ${line.total:.2f}")
@@ -187,22 +187,22 @@ def order_text(order: Order, order_number: int, url: str) -> str:
         lines.append(f"...and {len(order.lines) - SMS_MAX_LINES} more")
     lines.append(f"Subtotal ${order.subtotal:.2f}, tax ${order.tax:.2f}, total ${order.total:.2f}")
     lines.append(f"Pay securely: {url}")
-    if menu.payment_required:
-        lines.append(f"We'll start your order once it's paid. Link expires in {menu.pay_within_minutes} min.")
+    if catalog.payment_required:
+        lines.append(f"We'll start your order once it's paid. Link expires in {catalog.pay_within_minutes} min.")
     else:
-        lines.append(f"Ready in about {menu.restaurant.get('pickup_minutes')} min. "
+        lines.append(f"Ready in about {catalog.settings.get('pickup_minutes')} min. "
                      "You can also pay at pickup.")
     return "\n".join(lines)
 
 
-def paid_text(menu: Menu, order_number: int) -> str:
-    name = menu.restaurant.get("name", "the restaurant")
+def paid_text(catalog: Catalog, order_number: int) -> str:
+    name = catalog.settings.get("name", "the business")
     return (f"{name}: payment received for order #{order_number}. Thank you! "
-            f"Ready in about {menu.restaurant.get('pickup_minutes')} min.")
+            f"Ready in about {catalog.settings.get('pickup_minutes')} min.")
 
 
-def expired_text(menu: Menu, order_number: int) -> str:
-    name = menu.restaurant.get("name", "the restaurant")
+def expired_text(catalog: Catalog, order_number: int) -> str:
+    name = catalog.settings.get("name", "the business")
     return (f"{name}: order #{order_number} was cancelled because it wasn't paid in time. "
             "Call us to order again.")
 

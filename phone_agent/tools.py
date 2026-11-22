@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 from .order import Order, OrderError
 from .payments import PaymentService
-from .storage import OrderStore
+from .storage import Store
 
 if TYPE_CHECKING:
     from .pos import PosHub
 
-log = logging.getLogger("ordering_agent.tools")
+log = logging.getLogger("phone_agent.tools")
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -137,11 +137,11 @@ class CallSession:
     """Everything one call/conversation owns."""
 
     order: Order
-    store: OrderStore | None = None
+    store: Store | None = None
     call_id: str | None = None
     payments: PaymentService | None = None
-    pos: "PosHub | None" = None  # sends placed orders to the restaurant's point of sale
-    order_number: int | None = None  # per-restaurant number, what the caller hears
+    pos: "PosHub | None" = None  # sends placed orders to the business's point of sale
+    order_number: int | None = None  # per-business number, what the caller hears
     order_id: int | None = None  # internal row id
     end_requested: bool = False
     log: list[dict] = field(default_factory=list)
@@ -154,8 +154,8 @@ def _place_order(session: CallSession) -> dict:
         raise OrderError("Ask for a mobile number to text the order details and payment link to, "
                          "then call set_customer_phone.")
     order.mark_placed()
-    menu = order.menu
-    required = bool(payments) and menu.payment_required
+    catalog = order.catalog
+    required = bool(payments) and catalog.payment_required
     if session.store is not None:
         saved = session.store.save(
             order, call_id=session.call_id,
@@ -165,11 +165,11 @@ def _place_order(session: CallSession) -> dict:
         session.order_number, session.order_id = saved.number, saved.id
         if session.pos is not None:
             try:
-                session.pos.order_placed(saved.id, menu.restaurant_id)  # in the background
+                session.pos.order_placed(saved.id, catalog.business_id)  # in the background
             except Exception:
                 log.exception("couldn't queue order %s for the POS", saved.number)
     result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
-                    "ready_in_minutes": menu.restaurant.get("pickup_minutes")}
+                    "ready_in_minutes": catalog.settings.get("pickup_minutes")}
     if not payments:
         result["payment"] = "pay at pickup"
         return result
@@ -188,10 +188,10 @@ def _place_order(session: CallSession) -> dict:
         "link_sent": True,
         "texted_to_number_ending": order.customer_phone[-4:],
         "required_before_cooking": required,
-        "link_valid_minutes": menu.pay_within_minutes,
+        "link_valid_minutes": catalog.pay_within_minutes,
     }
     if required:
-        result["ready_in_minutes"] = f"{menu.restaurant.get('pickup_minutes')} after payment"
+        result["ready_in_minutes"] = f"{catalog.settings.get('pickup_minutes')} after payment"
     return result
 
 
@@ -221,7 +221,7 @@ def run_tool(session: CallSession, name: str, args: Any) -> tuple[str, bool]:
     """Execute one tool call. Returns (result_text, is_error). Never raises for bad input."""
     if not isinstance(args, dict):
         return json.dumps({"INVALID_JSON": json.dumps(args)}), True
-    allowed = set(COMMON_TOOLS).union(*(MODULE_TOOLS.get(m, ()) for m in session.order.menu.template.modules))
+    allowed = set(COMMON_TOOLS).union(*(MODULE_TOOLS.get(m, ()) for m in session.order.catalog.template.modules))
     if name not in allowed:
         return f"Unknown tool '{name}'.", True
     order = session.order

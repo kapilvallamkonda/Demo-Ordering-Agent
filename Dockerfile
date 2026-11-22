@@ -9,14 +9,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY ordering_agent ./ordering_agent
-COPY data/restaurants ./data/restaurants
+COPY phone_agent ./phone_agent
+COPY data/businesses ./data/businesses
+COPY data/templates ./data/templates
 
-# Orders live on a mounted volume (see fly.toml), not in the image.
-ENV ORDERS_DB=/data/orders.db \
-    MENU_PATH=/app/data/restaurants/hyderabad-house.json
+# The database lives on a mounted volume (see fly.toml), not in the image.
+ENV DATABASE_PATH=/data/phone_agent.db \
+    CATALOG_PATH=/app/data/businesses/hyderabad-house.json
 
 # Runs as root: Fly volumes mount root-owned, and each Fly machine is its own microVM.
 EXPOSE 8000
-CMD ["uvicorn", "ordering_agent.server:app", "--host", "0.0.0.0", "--port", "8000", \
+CMD ["uvicorn", "phone_agent.server:app", "--host", "0.0.0.0", "--port", "8000", \
      "--proxy-headers", "--forwarded-allow-ips", "*"]

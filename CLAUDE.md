@@ -1,7 +1,7 @@
 # Project notes for Claude
 
 Phone agent for businesses (restaurants, shops; bookings coming soon): Claude (Messages
-API) + Twilio ConversationRelay. Each business has a template (`ordering_agent/templates.py`).
+API) + Twilio ConversationRelay. Each business has a template (`phone_agent/templates.py`).
 See `docs/DESIGN.md` for the high-level design.
 
 ## Keep the design doc current
@@ -20,6 +20,6 @@ Pure refactors, test-only changes and typo fixes don't need a design update.
 
 - Setup: `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt`
 - Tests: `python -m pytest` (no API key needed; uses `tests/fakes.py`)
-- Terminal chat: `python -m ordering_agent.cli` (needs `ANTHROPIC_API_KEY`)
-- Business rules belong in `ordering_agent/order.py`, not in the prompt.
+- Terminal chat: `python -m phone_agent.cli` (needs `ANTHROPIC_API_KEY`)
+- Business rules belong in `phone_agent/order.py`, not in the prompt.
 - New settings go in `.env.example`, the README configuration table, and the design doc.

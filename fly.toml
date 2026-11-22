@@ -1,17 +1,17 @@
 # Fly.io deployment. One always-on machine: calls must be answered instantly, and the
-# SQLite orders database lives on a single volume, so don't scale past one machine
-# without moving orders to a shared database (see docs/DESIGN.md).
-app = "phone-ordering-agent-604b"
+# SQLite database lives on a single volume, so don't scale past one machine without
+# moving to a shared database (see docs/DESIGN.md).
+app = "phone-agent-604b"
 primary_region = "ord"
 
 [build]
 
 [env]
-  ORDERS_DB = "/data/orders.db"
+  DATABASE_PATH = "/data/phone_agent.db"
   LOG_LEVEL = "INFO"
 
 [mounts]
-  source = "orders_data"
+  source = "app_data"
   destination = "/data"
 
 [http_service]

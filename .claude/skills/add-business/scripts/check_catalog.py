@@ -1,13 +1,13 @@
-"""Check a restaurant menu file before it goes live.
+"""Check a business catalog file before it goes live.
 
-    .venv/bin/python .claude/skills/add-restaurant/scripts/check_menu.py data/restaurants/<slug>.json
+    .venv/bin/python .claude/skills/add-business/scripts/check_catalog.py data/businesses/<slug>.json
 
-Runs the same checks as the /manage editor (ordering_agent/menu_check.py) and reports:
+Runs the same checks as the /manage editor (phone_agent/catalog_check.py) and reports:
   ERROR    the app can't use it (bad structure, duplicate ids, bad prices or options,
            settings out of range)
   BLOCKER  callers would hear wrong or missing information (placeholder prices, settings
-           listed in restaurant.placeholders, no tax rate)
-  WARNING  worth confirming with the restaurant (hours/address not set, no notes)
+           listed in business.placeholders, no tax rate)
+  WARNING  worth confirming with the business (hours/address not set, no notes)
 
 Exit code: 0 = no errors or blockers, 1 = blockers only, 2 = errors.
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT))
 
-from ordering_agent.menu_check import check_menu  # noqa: E402
+from phone_agent.catalog_check import check_catalog  # noqa: E402
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -33,7 +33,7 @@ def check(path: Path) -> int:
     except (OSError, json.JSONDecodeError) as e:
         print(f"ERROR    can't read {path}: {e}")
         return 2
-    result = check_menu(raw)
+    result = check_catalog(raw)
     errors = result["errors"]
     if not SLUG_RE.match(path.stem):
         errors.append(f"file name {path.name!r} should be the slug, e.g. hyderabad-house.json")

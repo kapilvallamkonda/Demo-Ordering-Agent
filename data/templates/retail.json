@@ -1,6 +1,6 @@
 {
   "template": "retail",
-  "restaurant": {
+  "settings": {
     "name": "Example Flowers & Gifts",
     "order_types": ["pickup"],
     "pickup_minutes": 30,

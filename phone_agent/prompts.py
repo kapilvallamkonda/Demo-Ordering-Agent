@@ -5,7 +5,7 @@ a call (only "orders" for now), the template's role and rules (restaurant, shop 
 the payment rule, and the business's catalog. See templates.py.
 """
 
-from .menu import Menu
+from .catalog import Catalog
 
 _INSTRUCTIONS = """\
 {role} You are speaking with a caller on \
@@ -36,7 +36,7 @@ politely that you can only take pickup orders on this line and that staff can he
 in person. Never tell the caller to call the {business}; this call is the {business}.
 - Stay on the topic of ordering from this {business}.
 
-{menu}
+{catalog_text}
 """
 
 
@@ -55,16 +55,16 @@ _PAY_AT_PICKUP = """\
 over the phone."""
 
 
-def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
-    r = menu.restaurant
-    t = menu.template
+def build_system_prompt(catalog: Catalog, payment_links: bool = False) -> str:
+    r = catalog.settings
+    t = catalog.template
     words = t.words
     if payment_links:
         rule = (f"This {words['business']} starts {words['prepare']} only after the link is paid; "
                 f"the link is good for "
-                f"{menu.pay_within_minutes} minutes, and unpaid orders are cancelled. Tell the "
+                f"{catalog.pay_within_minutes} minutes, and unpaid orders are cancelled. Tell the "
                 "caller this before they confirm."
-                if menu.payment_required else
+                if catalog.payment_required else
                 "Paying by the link is optional; they can also pay at pickup.")
         payment = _PAY_BY_TEXT.format(rule=rule)
     else:
@@ -78,12 +78,12 @@ def build_system_prompt(menu: Menu, payment_links: bool = False) -> str:
         rules="".join(f"- {rule}\n" for rule in t.rules),
         order_types=" and ".join(r.get("order_types", ["pickup"])),
         payment=payment,
-        menu=menu.to_prompt_text(),
+        catalog_text=catalog.to_prompt_text(),
     )
 
 
-def build_greeting(menu: Menu) -> str:
-    custom = str(menu.restaurant.get("greeting") or "").strip()
+def build_greeting(catalog: Catalog) -> str:
+    custom = str(catalog.settings.get("greeting") or "").strip()
     if custom:
         return custom
-    return menu.template.greeting.format(name=menu.restaurant.get("name", "us"))
+    return catalog.template.greeting.format(name=catalog.settings.get("name", "us"))

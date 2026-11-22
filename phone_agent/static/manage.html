@@ -194,8 +194,8 @@
   // ---- state ----
   const S = {
     me: null, rid: null, ed: null,       // ed: editor state from the server
-    menu: null, revision: null,          // working copy and draft revision
-    tab: "menu", q: "", filter: "all", collapsed: new Set(),
+    catalog: null, revision: null,          // working copy and draft revision
+    tab: "catalog", q: "", filter: "all", collapsed: new Set(),
     dirty: false, saving: false, saveTimer: null, saveError: null, lastSaved: null,
     drawer: null,                        // {item, isNew}
     versions: null,
@@ -257,19 +257,19 @@
     if (m) return showInvite(m[1]);
     try { S.me = await api("GET", "/me"); }
     catch (e) { if (e.status === 401) return showLogin(); return screen(el("p", {}, e.message)); }
-    if (!S.me.restaurants.length) {
+    if (!S.me.businesses.length) {
       return screen(el("h2", {}, "No businesses yet"),
         el("p", { class: "sub" }, "Your account isn't linked to a business. Ask us to add you."), signOutBtn());
     }
-    const saved = Number(store.get("manage.restaurant"));
-    S.rid = S.me.restaurants.some(r => r.id === saved) ? saved : S.me.restaurants[0].id;
+    const saved = Number(store.get("manage.business"));
+    S.rid = S.me.businesses.some(r => r.id === saved) ? saved : S.me.businesses[0].id;
     await loadEditor();
   }
 
   async function loadEditor() {
     app.replaceChildren(el("div", { class: "center" }, el("p", { class: "muted" }, "Loading…")));
-    S.ed = await api("GET", `/restaurants/${S.rid}/editor`);
-    S.menu = structuredClone(S.ed.menu || { restaurant: { name: "" }, items: [] });
+    S.ed = await api("GET", `/businesses/${S.rid}/editor`);
+    S.catalog = structuredClone(S.ed.catalog || { business: { name: "" }, items: [] });
     S.revision = S.ed.draft ? S.ed.draft.revision : null;
     S.dirty = false; S.saveError = null; S.versions = null; S.drawer = null;
     render();
@@ -288,7 +288,7 @@
     if (!S.dirty) return;
     S.saving = true; S.dirty = false; renderHeader();
     try {
-      const r = await api("PUT", `/restaurants/${S.rid}/draft`, { menu: S.menu, revision: S.revision });
+      const r = await api("PUT", `/businesses/${S.rid}/draft`, { catalog: S.catalog, revision: S.revision });
       S.revision = r.revision; S.ed.check = r.check; S.lastSaved = Date.now() / 1000;
       if (!S.ed.draft) S.ed.draft = { revision: r.revision, live_changed: false, updated_by: S.me.who };
       S.ed.draft.revision = r.revision;
@@ -329,8 +329,8 @@
     let overwrite = false;
     for (;;) {
       try {
-        const r = await api("POST", `/restaurants/${S.rid}/publish`, { revision: S.revision, overwrite });
-        S.ed = r; S.menu = structuredClone(r.menu); S.revision = null; S.versions = null;
+        const r = await api("POST", `/businesses/${S.rid}/publish`, { revision: S.revision, overwrite });
+        S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = null; S.versions = null;
         toast(`Published. The next call uses the new ${W().catalog}.`);
         return render();
       } catch (e) {
@@ -351,8 +351,8 @@
     const ok = await ask({ title: "Discard all unpublished changes?", body: `The ${W().catalog} goes back to what callers hear now.`, ok: "Discard", danger: true });
     if (!ok) return;
     clearTimeout(S.saveTimer); S.dirty = false;
-    try { S.ed = await api("DELETE", `/restaurants/${S.rid}/draft`); } catch (e) { return toast(e.message); }
-    S.menu = structuredClone(S.ed.menu); S.revision = null;
+    try { S.ed = await api("DELETE", `/businesses/${S.rid}/draft`); } catch (e) { return toast(e.message); }
+    S.catalog = structuredClone(S.ed.catalog); S.revision = null;
     render();
   }
 
@@ -382,26 +382,26 @@
   }
 
   function render() {
-    const restaurants = S.me.restaurants;
-    const picker = restaurants.length > 1 ? el("select", { "aria-label": "Business", onchange: async e => {
+    const businesses = S.me.businesses;
+    const picker = businesses.length > 1 ? el("select", { "aria-label": "Business", onchange: async e => {
       try { await flush(); } catch (x) { return toast("Couldn't save: " + x.message); }
-      S.rid = Number(e.target.value); store.set("manage.restaurant", S.rid); loadEditor();
-    } }, restaurants.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name))) : null;
+      S.rid = Number(e.target.value); store.set("manage.business", S.rid); loadEditor();
+    } }, businesses.map(r => el("option", { value: r.id, selected: r.id === S.rid }, r.name))) : null;
 
     app.replaceChildren(
       el("header", {},
-        el("div", { class: "brand" }, el("h1", {}, S.menu.restaurant.name || S.ed.restaurant.slug), picker),
+        el("div", { class: "brand" }, el("h1", {}, S.catalog.settings.name || S.ed.business.slug), picker),
         el("div", { class: "actions", id: "hdr" })),
       el("main", {},
         el("div", { class: "checks", id: "checks" }),
         el("nav", { class: "tabs", role: "tablist" },
-          [["menu", cap(W().catalog)], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
+          [["catalog", cap(W().catalog)], ["settings", "Settings"], ["history", "History"]].map(([k, label]) =>
             el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
                            onclick: () => { S.tab = k; render(); } }, label))),
         el("div", { id: "view" })));
     renderHeader(); renderChecks();
     const view = document.getElementById("view");
-    if (S.tab === "menu") view.append(menuView());
+    if (S.tab === "catalog") view.append(catalogView());
     else if (S.tab === "settings") view.append(settingsView());
     else view.append(historyView());
     if (S.drawer) renderDrawer();
@@ -447,12 +447,12 @@
     box.replaceChildren(...parts);
   }
 
-  // ---- menu tab ----
+  // ---- catalog tab ----
   const isEstimated = it => !!it.placeholder_price;
   const isOff = it => it.available === false;
 
-  function menuView() {
-    const items = S.menu.items;
+  function catalogView() {
+    const items = S.catalog.items;
     const q = S.q.trim().toLowerCase();
     const shown = items.filter(it =>
       (!q || (it.name + " " + (it.description || "") + " " + it.category).toLowerCase().includes(q)) &&
@@ -464,7 +464,7 @@
       byCat.get(it.category).push(it);
     }
     const search = el("input", { type: "search", placeholder: "Search " + W().items, value: S.q, "aria-label": "Search " + W().items,
-      oninput: e => { S.q = e.target.value; const v = document.getElementById("view"); v.replaceChildren(menuView());
+      oninput: e => { S.q = e.target.value; const v = document.getElementById("view"); v.replaceChildren(catalogView());
                       const s = v.querySelector("input[type=search]"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); } });
     const chip = (k, label) => el("button", { class: "chip", "aria-pressed": S.filter === k ? "true" : "false",
       onclick: () => { S.filter = k; render(); } }, label);
@@ -512,7 +512,7 @@
   async function renameCategory(cat) {
     const name = await ask({ title: "Rename " + W().section, body: `Renames "${cat}" for every ${W().item} in it.`, ok: "Rename", input: { value: cat } });
     if (!name || name === cat) return;
-    S.menu.items.forEach(it => { if (it.category === cat) it.category = name; });
+    S.catalog.items.forEach(it => { if (it.category === cat) it.category = name; });
     changed();
   }
 
@@ -521,7 +521,7 @@
 
   function openItem(it) {
     S.drawer = it ? { item: it, isNew: false }
-      : { item: { name: "", category: S.menu.items.length ? S.menu.items[S.menu.items.length - 1].category : "", price: 0, description: "" }, isNew: true };
+      : { item: { name: "", category: S.catalog.items.length ? S.catalog.items[S.catalog.items.length - 1].category : "", price: 0, description: "" }, isNew: true };
     renderDrawer();
   }
   function closeDrawer() {
@@ -541,7 +541,7 @@
       if (!isNew) { changed(false); refreshListQuietly(); }
       if (structural) renderDrawer();
     };
-    const categories = [...new Set(S.menu.items.map(i => i.category))];
+    const categories = [...new Set(S.catalog.items.map(i => i.category))];
     const tags = el("div", { class: "tags" }, S.ed.template.tags.map(tag => {
       const on = (it.description || "").includes(tag);
       return el("button", { class: "chip", type: "button", "aria-pressed": on ? "true" : "false", onclick: () => {
@@ -577,7 +577,7 @@
     const foot = el("div", { class: "drawer-foot" },
       isNew ? el("span") : el("button", { class: "btn danger", type: "button", onclick: async () => {
         if (!await ask({ title: `Delete "${it.name}"?`, body: "Callers won't be able to order it once you publish.", ok: "Delete", danger: true })) return;
-        S.menu.items.splice(S.menu.items.indexOf(it), 1);
+        S.catalog.items.splice(S.catalog.items.indexOf(it), 1);
         changed(false); closeDrawer();
       } }, "Delete " + W().item),
       el("div", { class: "row" },
@@ -586,10 +586,10 @@
           if (!it.name.trim()) return toast(`Give the ${W().item} a name.`);
           if (!it.category.trim()) return toast(`Choose a ${W().section}.`);
           if (!(it.price > 0)) return toast("Set a price.");
-          const ids = new Set(S.menu.items.map(i => i.id));
+          const ids = new Set(S.catalog.items.map(i => i.id));
           let id = slug(it.name), n = 2;
           while (ids.has(id)) id = slug(it.name) + "_" + n++;
-          S.menu.items.push({ id, ...it });
+          S.catalog.items.push({ id, ...it });
           S.drawer = null; changed(); toast(`Added "${it.name}".`);
         } }, "Add " + W().item) : null));
 
@@ -610,7 +610,7 @@
     clearTimeout(listTimer);
     listTimer = setTimeout(() => {
       const v = document.getElementById("view");
-      if (v && S.tab === "menu") v.replaceChildren(menuView());
+      if (v && S.tab === "catalog") v.replaceChildren(catalogView());
     }, 300);
   }
 
@@ -700,7 +700,7 @@
   }
 
   function settingsView() {
-    const r = S.menu.restaurant;
+    const r = S.catalog.settings;
     const groups = new Map();
     for (const f of S.ed.schema) { if (!groups.has(f.group)) groups.set(f.group, []); groups.get(f.group).push(f); }
     const confirm = f => {
@@ -709,7 +709,7 @@
     };
     const set = (f, v, rerender = false) => {
       setPath(r, f.path, v); confirm(f);
-      if (f.path === "name") document.querySelector("header h1").textContent = v || S.ed.restaurant.slug;
+      if (f.path === "name") document.querySelector("header h1").textContent = v || S.ed.business.slug;
       changed(rerender);
     };
     const t = S.ed.template;
@@ -752,7 +752,7 @@
   function historyView() {
     const box = el("div", { class: "panel versions" }, el("p", { class: "muted" }, "Loading…"));
     (async () => {
-      try { S.versions = S.versions || await api("GET", `/restaurants/${S.rid}/versions`); }
+      try { S.versions = S.versions || await api("GET", `/businesses/${S.rid}/versions`); }
       catch (e) { box.replaceChildren(el("p", {}, e.message)); return; }
       box.replaceChildren(el("h2", {}, "Published versions"),
         el("p", { class: "sub" }, "Restoring copies an old version into your draft; nothing changes for callers until you publish."),
@@ -763,8 +763,8 @@
             if (!await ask({ title: "Restore this version?", body: "It replaces your current draft (if any). Publish to make it live.", ok: "Restore" })) return;
             try { await flush(); } catch {}
             try {
-              S.ed = await api("POST", `/restaurants/${S.rid}/versions/${v.id}/restore`, { revision: S.revision });
-              S.menu = structuredClone(S.ed.menu); S.revision = S.ed.draft.revision; S.tab = "menu";
+              S.ed = await api("POST", `/businesses/${S.rid}/versions/${v.id}/restore`, { revision: S.revision });
+              S.catalog = structuredClone(S.ed.catalog); S.revision = S.ed.draft.revision; S.tab = "catalog";
               toast("Restored into the draft. Review it, then publish."); render();
             } catch (e) { e.status === 409 ? conflict(e.message) : toast(e.message); }
           } }, "Restore"))));

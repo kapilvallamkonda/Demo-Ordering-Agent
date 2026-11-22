@@ -1,5 +1,5 @@
-"""Checks a menu (menu JSON) before it goes live. Used by the /manage editor on every
-save and publish, and by the add-restaurant skill's check_menu.py.
+"""Checks a catalog (catalog JSON) before it goes live. Used by the /manage editor on every
+save and publish, and by the add-business skill's check_catalog.py.
 
   errors    the app can't use it, or a value is out of range: publishing is refused
   blockers  callers would hear wrong or guessed information (placeholder prices,
@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .menu import MenuError, parse_menu
+from .catalog import CatalogError, parse_catalog
 from .prompts import build_greeting
 from .settings_schema import settings_for, validate_settings
 from .templates import get_template
@@ -24,28 +24,28 @@ MAX_PRICE = 1000.0
 LIMITS = {"name": 80, "category": 100, "description": 400}
 
 
-def check_menu(raw: dict) -> dict:
+def check_catalog(raw: dict) -> dict:
     errors: list[str] = []
     blockers: list[str] = []
     warnings: list[str] = []
     result = {"errors": errors, "blockers": blockers, "warnings": warnings, "summary": None}
 
     if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
-        errors.append("menu must have a restaurant block and a list of items")
+        errors.append("catalog must have a business block and a list of items")
         return result
     try:
         template = get_template(raw.get("template"))
     except KeyError:
-        template = None  # parse_menu reports it
-    errors.extend(validate_settings(raw.get("restaurant"), template))
+        template = None  # parse_catalog reports it
+    errors.extend(validate_settings(raw.get("settings"), template))
     by_path = {f["path"]: f for f in settings_for(template)}
     try:
-        menu = parse_menu(raw)
-    except MenuError as e:
+        catalog = parse_catalog(raw)
+    except CatalogError as e:
         errors.append(str(e))
         return result
 
-    r = menu.restaurant
+    r = catalog.settings
     if len(raw["items"]) > MAX_ITEMS:
         errors.append(f"at most {MAX_ITEMS} items")
     if not isinstance(r.get("tax_rate"), (int, float)) or r.get("tax_rate", 0) <= 0:
@@ -114,14 +114,14 @@ def check_menu(raw: dict) -> dict:
             warnings.append(f"{n} items are named {name!r}; make the names distinct so callers can tell them apart")
     sold_out = [it["name"] for it in raw["items"] if it.get("available") is False]
     if sold_out:
-        warnings.append(f"{len(sold_out)} items marked {menu.template.words['unavailable_short'].lower()}: " + ", ".join(sold_out[:12])
+        warnings.append(f"{len(sold_out)} items marked {catalog.template.words['unavailable_short'].lower()}: " + ", ".join(sold_out[:12])
                         + (" ..." if len(sold_out) > 12 else ""))
 
-    cats = Counter(it.category for it in menu.items.values())
+    cats = Counter(it.category for it in catalog.items.values())
     result["summary"] = {
-        "name": r.get("name"), "template": menu.template_id, "items": len(menu.items),
+        "name": r.get("name"), "template": catalog.template_id, "items": len(catalog.items),
         "categories": dict(cats),
-        "greeting": build_greeting(menu), "tax_rate": r.get("tax_rate"),
+        "greeting": build_greeting(catalog), "tax_rate": r.get("tax_rate"),
         "pickup_minutes": r.get("pickup_minutes"),
         "pay_before_cooking": (pay or {}).get("required_before_cooking"),
     }

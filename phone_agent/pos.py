@@ -1,7 +1,7 @@
-"""Point-of-sale integrations: put phone orders on the restaurant's own POS, and import
-its menu from the POS.
+"""Point-of-sale integrations: put phone orders on the business's own POS, and import
+its catalog from the POS.
 
-A restaurant connects its POS once (OAuth: the owner opens a connect link and approves
+A business connects its POS once (OAuth: the owner opens a connect link and approves
 access). From then on every placed order is sent to the POS in the background, with
 retries, and its result is shown on the dashboard (`orders.pos_status`). The call never
 waits on the POS: the caller already has their order number.
@@ -11,14 +11,14 @@ Providers: Square (pos_square.py) and Clover (pos_clover.py). Each one implement
 
 Admin commands (run on the server, e.g. `fly ssh console -C "python -m ..."`):
 
-    python -m ordering_agent.pos status
-    python -m ordering_agent.pos connect-link SLUG square|clover      (prints a link for the owner)
-    python -m ordering_agent.pos connect-token SLUG square|clover --merchant ID [--location ID]
+    python -m phone_agent.pos status
+    python -m phone_agent.pos connect-link SLUG square|clover      (prints a link for the owner)
+    python -m phone_agent.pos connect-token SLUG square|clover --merchant ID [--location ID]
                                     (sandbox/testing: token read from POS_ACCESS_TOKEN)
-    python -m ordering_agent.pos set-location SLUG LOCATION_ID          (Square, several locations)
-    python -m ordering_agent.pos import-menu SLUG > menu.json           (menu from the POS)
-    python -m ordering_agent.pos retry SLUG [ORDER_NUMBER]               (resend failed orders)
-    python -m ordering_agent.pos disconnect SLUG
+    python -m phone_agent.pos set-location SLUG LOCATION_ID          (Square, several locations)
+    python -m phone_agent.pos import-catalog SLUG > catalog.json           (catalog from the POS)
+    python -m phone_agent.pos retry SLUG [ORDER_NUMBER]               (resend failed orders)
+    python -m phone_agent.pos disconnect SLUG
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .menu import Menu
-from .storage import OrderStore
+from .catalog import Catalog
+from .storage import Store
 
-log = logging.getLogger("ordering_agent.pos")
+log = logging.getLogger("phone_agent.pos")
 
 RETRY_DELAYS = (5, 30, 120, 600)  # seconds between attempts after the first one fails
 RESUME_HOURS = 6  # on startup, resend orders from this many hours back that never made it
@@ -93,7 +93,7 @@ class PosLine:
     name: str
     quantity: int
     unit_price: float  # dollars, including option and extra prices
-    base_price: float  # the menu item's base price
+    base_price: float  # the catalog item's base price
     options: dict[str, str]
     option_prices: dict[str, float]  # option name -> the chosen choice's price delta
     extras: dict[str, float]  # extra -> price
@@ -120,7 +120,7 @@ class PosOrder:
     pickup_minutes: int
     paid_online: bool
     pay_first: bool
-    restaurant_name: str
+    business_name: str
 
     @property
     def note(self) -> str:
@@ -130,12 +130,12 @@ class PosOrder:
         return f"Phone order #{self.number} for {self.customer_name}. {pay}."
 
 
-def build_pos_order(rec: dict, menu: Menu, provider: str) -> PosOrder:
-    """Turn a saved order (OrderStore.order_for_pos) into what providers send."""
+def build_pos_order(rec: dict, catalog: Catalog, provider: str) -> PosOrder:
+    """Turn a saved order (Store.order_for_pos) into what providers send."""
     lines = []
     for it in rec.get("items") or []:
-        item = menu.get(it["item_id"])
-        ids = item.pos if item and menu.pos_provider == provider else {}
+        item = catalog.get(it["item_id"])
+        ids = item.pos if item and catalog.pos_provider == provider else {}
         option_prices = {}
         for name, choice in (it.get("options") or {}).items():
             grp = item.options.get(name) if item else None
@@ -149,14 +149,14 @@ def build_pos_order(rec: dict, menu: Menu, provider: str) -> PosOrder:
         ))
     if not lines:
         raise PosError("order has no structured lines (placed before POS support)", retry=False)
-    r = menu.restaurant
+    r = catalog.settings
     return PosOrder(
         order_id=rec["id"], number=rec["number"], customer_name=rec.get("customer_name") or "Phone order",
         customer_phone=rec.get("customer_phone") or "", lines=lines, subtotal=rec["subtotal"],
-        tax=rec["tax"], total=rec["total"], tax_rate=menu.tax_rate,
+        tax=rec["tax"], total=rec["total"], tax_rate=catalog.tax_rate,
         pickup_minutes=int(r.get("pickup_minutes") or 20), paid_online=rec["payment_status"] == "paid",
-        pay_first=rec["status"] == "awaiting_payment" or menu.payment_required,
-        restaurant_name=r.get("name", ""),
+        pay_first=rec["status"] == "awaiting_payment" or catalog.payment_required,
+        business_name=r.get("name", ""),
     )
 
 
@@ -169,9 +169,9 @@ def cents(amount: float) -> int:
 
 @dataclass
 class Connection:
-    """A restaurant's POS connection, with its decrypted tokens."""
+    """A business's POS connection, with its decrypted tokens."""
 
-    restaurant_id: int
+    business_id: int
     provider: str
     environment: str  # "sandbox" or "production"
     merchant_id: str | None
@@ -205,7 +205,7 @@ class Provider(Protocol):
     def mark_paid(self, conn: Connection, order: PosOrder, pos_order_id: str, payment_ref: str) -> None: ...
 
     def catalog(self, conn: Connection) -> list[dict]:
-        """The POS menu as items in our menu format (with "pos" ids, and "pos_key", a
+        """The POS catalog as items in our catalog format (with "pos" ids, and "pos_key", a
         stable POS id used to keep our item ids across re-imports)."""
 
 
@@ -251,15 +251,15 @@ def _state_key() -> bytes:
     return hashlib.sha256(b"pos-connect-state:" + os.environ.get("POS_SECRET_KEY", "").encode()).digest()
 
 
-def make_state(provider: str, restaurant_id: int, now: float | None = None) -> str:
-    """Signed, short-lived OAuth state naming the restaurant being connected."""
-    body = f"{provider}.{restaurant_id}.{int(now or time.time())}"
+def make_state(provider: str, business_id: int, now: float | None = None) -> str:
+    """Signed, short-lived OAuth state naming the business being connected."""
+    body = f"{provider}.{business_id}.{int(now or time.time())}"
     sig = hmac.new(_state_key(), body.encode(), hashlib.sha256).digest()
     return body + "." + base64.urlsafe_b64encode(sig).decode().rstrip("=")
 
 
 def check_state(state: str, provider: str, now: float | None = None) -> int:
-    """Returns the restaurant id, or raises PosError."""
+    """Returns the business id, or raises PosError."""
     try:
         prov, rid, issued, sig = state.split(".")
         body = f"{prov}.{rid}.{issued}"
@@ -279,11 +279,11 @@ def check_state(state: str, provider: str, now: float | None = None) -> int:
 class PosHub:
     """Loads connections (refreshing tokens), and sends orders in the background."""
 
-    def __init__(self, store: OrderStore, directory, providers: dict[str, Provider],
+    def __init__(self, store: Store, directory, providers: dict[str, Provider],
                  retry_delays: tuple[float, ...] = RETRY_DELAYS, workers: int = 4,
                  run_inline: bool = False):
         self.store = store
-        self.directory = directory  # restaurants.RestaurantDirectory
+        self.directory = directory  # businesses.BusinessDirectory
         self.providers = providers
         self.retry_delays = retry_delays
         self.run_inline = run_inline  # tests: run jobs on the calling thread
@@ -295,22 +295,22 @@ class PosHub:
 
     # connections
 
-    def connection(self, restaurant_id: int | None) -> Connection | None:
-        if restaurant_id is None:
+    def connection(self, business_id: int | None) -> Connection | None:
+        if business_id is None:
             return None
         with self._refresh_lock:
-            row = self.store.pos_connection(restaurant_id)
+            row = self.store.pos_connection(business_id)
             if row is None:
                 return None
-            conn = Connection(restaurant_id, row["provider"], row["environment"], row["merchant_id"],
+            conn = Connection(business_id, row["provider"], row["environment"], row["merchant_id"],
                               row["location_id"], unseal(row["secret"]), row["settings"])
             expires = conn.tokens.get("expires_at")
             provider = self.provider(conn.provider)
             margin = getattr(provider, "refresh_margin", REFRESH_MARGIN)
             if expires and conn.tokens.get("refresh_token") and expires - time.time() < margin:
                 conn.tokens = provider.refresh(conn)
-                self.store.update_pos_connection(restaurant_id, secret=seal(conn.tokens))
-                log.info("refreshed %s token for restaurant %s", conn.provider, restaurant_id)
+                self.store.update_pos_connection(business_id, secret=seal(conn.tokens))
+                log.info("refreshed %s token for business %s", conn.provider, business_id)
             return conn
 
     def provider(self, name: str) -> Provider:
@@ -318,28 +318,28 @@ class PosHub:
             raise PosError(f"{name} isn't configured on this server", retry=False)
         return self.providers[name]
 
-    def save_connection(self, restaurant_id: int, provider: str, environment: str, tokens: dict,
+    def save_connection(self, business_id: int, provider: str, environment: str, tokens: dict,
                         merchant_id: str | None, location_id: str | None = None) -> Connection:
         """Store a new connection, then let the provider pick its location and settings."""
         prov = self.provider(provider)
-        conn = Connection(restaurant_id, provider, environment, merchant_id, location_id, tokens, {})
+        conn = Connection(business_id, provider, environment, merchant_id, location_id, tokens, {})
         found_location, settings = prov.setup(conn)
         conn.location_id = location_id or found_location
         conn.settings = settings
-        self.store.set_pos_connection(restaurant_id, provider, environment, seal(tokens),
+        self.store.set_pos_connection(business_id, provider, environment, seal(tokens),
                                       merchant_id=merchant_id, location_id=conn.location_id,
                                       settings=settings)
         return conn
 
     # sending orders
 
-    def order_placed(self, order_id: int, restaurant_id: int | None) -> None:
+    def order_placed(self, order_id: int, business_id: int | None) -> None:
         """Called right after an order is saved. Marks it pending and sends it in the background."""
-        if restaurant_id is None or self.store.pos_connection(restaurant_id) is None:
+        if business_id is None or self.store.pos_connection(business_id) is None:
             return
         rec = self.store.order_for_pos(order_id)
         if rec and rec["status"] == "awaiting_payment":
-            # Pay-first restaurant: the kitchen mustn't see it until it's paid (order_paid sends it).
+            # Pay-first business: the kitchen mustn't see it until it's paid (order_paid sends it).
             self.store.set_pos_status(order_id, "held")
             return
         self.store.set_pos_status(order_id, "pending")
@@ -394,9 +394,9 @@ class PosHub:
             if rec is None or rec["pos_status"] == "sent":
                 return "skipped"
             try:
-                conn = self.connection(rec["restaurant_id"])
+                conn = self.connection(rec["business_id"])
                 if conn is None:
-                    self.store.set_pos_status(order_id, "failed", error="restaurant has no POS connected")
+                    self.store.set_pos_status(order_id, "failed", error="business has no POS connected")
                     return "failed"
                 if rec["status"] == "awaiting_payment":
                     self.store.set_pos_status(order_id, "held")
@@ -404,8 +404,8 @@ class PosHub:
                 if rec["status"] == "cancelled":
                     self.store.set_pos_status(order_id, "failed", error="order was cancelled before it was sent")
                     return "failed"
-                menu = self.directory.menu_version(rec["restaurant_id"], rec["menu_id"])
-                order = build_pos_order(rec, menu, conn.provider)
+                catalog = self.directory.catalog_version(rec["business_id"], rec["catalog_id"])
+                order = build_pos_order(rec, catalog, conn.provider)
                 prov = self.provider(conn.provider)
                 pos_id = prov.push(conn, order, rec["pos_order_id"])
                 self.store.set_pos_status(order_id, "sent", pos_order_id=pos_id, attempted=True)
@@ -440,11 +440,11 @@ class PosHub:
                 return "done"
             if rec["pos_status"] == "sent":
                 try:
-                    conn = self.connection(rec["restaurant_id"])
+                    conn = self.connection(rec["business_id"])
                     if conn is None:
                         return "done"
-                    menu = self.directory.menu_version(rec["restaurant_id"], rec["menu_id"])
-                    order = build_pos_order(rec, menu, conn.provider)
+                    catalog = self.directory.catalog_version(rec["business_id"], rec["catalog_id"])
+                    order = build_pos_order(rec, catalog, conn.provider)
                     self.provider(conn.provider).mark_paid(conn, order, rec["pos_order_id"],
                                                            rec["payment_id"] or "")
                     self.store.set_pos_paid(order_id)
@@ -460,7 +460,7 @@ class PosHub:
         return "retry" if self.send(order_id) == "retry" else "done"
 
 
-# ---- menu import ----------------------------------------------------------------------
+# ---- catalog import ----------------------------------------------------------------------
 
 
 def _slug_id(name: str) -> str:
@@ -469,13 +469,13 @@ def _slug_id(name: str) -> str:
 
 
 def merge_import(current: dict | None, imported: list[dict], provider: str,
-                 base_restaurant: dict | None = None) -> tuple[dict, list[str]]:
-    """Build a menu file from POS items. Keeps the current restaurant settings and, for
+                 base_settings: dict | None = None) -> tuple[dict, list[str]]:
+    """Build a catalog file from POS items. Keeps the current business settings and, for
     items already imported before, their item ids (old orders refer to them).
-    Returns (menu, notes about what changed)."""
-    restaurant = (current or {}).get("restaurant") or base_restaurant
-    if not restaurant:
-        raise PosError("no restaurant settings to start from; pass --base", retry=False)
+    Returns (catalog, notes about what changed)."""
+    business = (current or {}).get("settings") or base_settings
+    if not business:
+        raise PosError("no business settings to start from; pass --base", retry=False)
     old_by_key = {it["pos_key"]: it["id"] for it in (current or {}).get("items", []) if it.get("pos_key")}
     taken: set[str] = set()
     items, notes = [], []
@@ -493,28 +493,29 @@ def merge_import(current: dict | None, imported: list[dict], provider: str,
         notes.append(f"{len(gone)} items are no longer on the POS: {', '.join(sorted(gone))}")
     kept = sum(1 for it in imported if it["pos_key"] in old_by_key)
     notes.append(f"{len(items)} items imported from {provider} ({kept} matched earlier imports)")
-    return {"restaurant": restaurant, "pos": {"provider": provider, "imported_at": int(time.time())},
+    return {"template": (current or {}).get("template", "restaurant"), "settings": business,
+            "pos": {"provider": provider, "imported_at": int(time.time())},
             "items": items}, notes
 
 
 # ---- admin commands -------------------------------------------------------------------
 
 
-def _hub(store: OrderStore) -> PosHub:
-    from .restaurants import RestaurantDirectory
+def _hub(store: Store) -> PosHub:
+    from .businesses import BusinessDirectory
 
-    return PosHub(store, RestaurantDirectory(store), providers_from_env(), run_inline=True)
+    return PosHub(store, BusinessDirectory(store), providers_from_env(), run_inline=True)
 
 
-def connect_url(provider: str, restaurant_id: int, base_url: str, providers: dict[str, Provider]) -> str:
+def connect_url(provider: str, business_id: int, base_url: str, providers: dict[str, Provider]) -> str:
     if provider not in providers:
         raise PosError(f"{provider} app credentials aren't set on this server", retry=False)
     redirect = f"{base_url.rstrip('/')}/pos/{provider}/callback"
-    return providers[provider].authorize_url(make_state(provider, restaurant_id), redirect)
+    return providers[provider].authorize_url(make_state(provider, business_id), redirect)
 
 
-def main(argv: list[str] | None = None, store: OrderStore | None = None, hub: PosHub | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m ordering_agent.pos")
+def main(argv: list[str] | None = None, store: Store | None = None, hub: PosHub | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m phone_agent.pos")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     for name in ("connect-link", "connect-token"):
@@ -528,27 +529,27 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None, hub: Po
     p = sub.add_parser("set-location")
     p.add_argument("slug")
     p.add_argument("location")
-    p = sub.add_parser("import-menu")
+    p = sub.add_parser("import-catalog")
     p.add_argument("slug")
-    p.add_argument("--base", help="menu file whose restaurant settings to use (default: current menu)")
+    p.add_argument("--base", help="catalog file whose business settings to use (default: current catalog)")
     p = sub.add_parser("retry")
     p.add_argument("slug")
     p.add_argument("number", nargs="?", type=int)
     sub.add_parser("disconnect").add_argument("slug")
     args = ap.parse_args(argv)
 
-    store = store or OrderStore(os.environ.get("ORDERS_DB", "data/orders.db"))
+    store = store or Store(os.environ.get("DATABASE_PATH", "data/phone_agent.db"))
     hub = hub or _hub(store)
 
-    def restaurant(slug: str):
-        row = store.restaurant_by_slug(slug)
+    def business(slug: str):
+        row = store.business_by_slug(slug)
         if row is None:
-            raise SystemExit(f"no restaurant {slug!r}")
+            raise SystemExit(f"no business {slug!r}")
         return row
 
     try:
         if args.cmd == "status":
-            for row in store.restaurants():
+            for row in store.businesses():
                 c = store.pos_connection(row.id)
                 desc = (f"{c['provider']} ({c['environment']}) merchant {c['merchant_id'] or '-'}"
                         f" location {c['location_id'] or '-'}" if c else "no POS")
@@ -558,38 +559,38 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None, hub: Po
             base = os.environ.get("PUBLIC_BASE_URL", "")
             if not base:
                 raise SystemExit("PUBLIC_BASE_URL isn't set")
-            print(connect_url(args.provider, restaurant(args.slug).id, base, hub.providers))
+            print(connect_url(args.provider, business(args.slug).id, base, hub.providers))
         elif args.cmd == "connect-token":
             token = os.environ.get("POS_ACCESS_TOKEN", "").strip()
             if not token:
                 raise SystemExit("put the access token in POS_ACCESS_TOKEN (not on the command line)")
             if args.provider == "clover" and not args.merchant:
                 raise SystemExit("Clover needs --merchant")
-            conn = hub.save_connection(restaurant(args.slug).id, args.provider, args.environment,
+            conn = hub.save_connection(business(args.slug).id, args.provider, args.environment,
                                        {"access_token": token}, args.merchant, args.location)
             print(f"connected {args.slug} to {args.provider} ({args.environment}),"
                   f" location {conn.location_id or '-'}, settings {conn.settings}")
         elif args.cmd == "set-location":
-            row = restaurant(args.slug)
+            row = business(args.slug)
             if store.pos_connection(row.id) is None:
                 raise SystemExit(f"{args.slug} has no POS connected")
             store.update_pos_connection(row.id, location_id=args.location)
             print("updated")
-        elif args.cmd == "import-menu":
-            row = restaurant(args.slug)
+        elif args.cmd == "import-catalog":
+            row = business(args.slug)
             conn = hub.connection(row.id)
             if conn is None:
                 raise SystemExit(f"{args.slug} has no POS connected")
-            current = store.menu_payload(row.menu_id) if row.menu_id else None
-            base = json.loads(open(args.base).read())["restaurant"] if args.base else None
+            current = store.catalog_payload(row.catalog_id) if row.catalog_id else None
+            base = json.loads(open(args.base).read())["settings"] if args.base else None
             if base:
-                current = {**(current or {}), "restaurant": base}
-            menu, notes = merge_import(current, hub.provider(conn.provider).catalog(conn), conn.provider)
+                current = {**(current or {}), "settings": base}
+            catalog, notes = merge_import(current, hub.provider(conn.provider).catalog(conn), conn.provider)
             for n in notes:
                 print(n, file=sys.stderr)
-            print(json.dumps(menu, indent=2, ensure_ascii=False))
+            print(json.dumps(catalog, indent=2, ensure_ascii=False))
         elif args.cmd == "retry":
-            row = restaurant(args.slug)
+            row = business(args.slug)
             if args.number:
                 oid = store.order_id_by_number(row.id, args.number)
                 if oid is None:
@@ -601,7 +602,7 @@ def main(argv: list[str] | None = None, store: OrderStore | None = None, hub: Po
                 hub.store.set_pos_status(oid, "pending")
                 print(f"order id {oid}: {hub.send(oid)}")
         elif args.cmd == "disconnect":
-            print("disconnected" if store.delete_pos_connection(restaurant(args.slug).id) else "wasn't connected")
+            print("disconnected" if store.delete_pos_connection(business(args.slug).id) else "wasn't connected")
     except PosError as e:
         raise SystemExit(f"POS error: {e}")
     return 0

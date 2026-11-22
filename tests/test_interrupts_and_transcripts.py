@@ -6,14 +6,14 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from ordering_agent import agent as agent_module
-from ordering_agent import server
-from ordering_agent.agent import OrderingAgent
-from ordering_agent.menu import load_menu
-from ordering_agent.storage import OrderStore
-from ordering_agent.tools import run_tool
+from phone_agent import agent as agent_module
+from phone_agent import server
+from phone_agent.agent import PhoneAgent
+from phone_agent.catalog import load_catalog
+from phone_agent.storage import Store
+from phone_agent.tools import run_tool
 
-from .conftest import BELLA_PHONE, FIXTURE_MENU, seed_restaurant
+from .conftest import BELLA_PHONE, FIXTURE_CATALOG, seed_business
 from .fakes import FakeClient, message, text_block, tool_block
 
 
@@ -35,7 +35,7 @@ def test_interrupt_during_tool_call_finishes_the_tool(monkeypatch):
         message(text_block("never spoken")),  # must not be requested after the interrupt
         message(text_block("You're all set, order number 1.")),
     ])
-    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client, store=OrderStore(":memory:"))
+    agent = PhoneAgent(load_catalog(FIXTURE_CATALOG), client=client, store=Store(":memory:"))
     agent.session.order.add_item("tiramisu")
     agent.session.order.set_customer("Ana")
 
@@ -70,13 +70,13 @@ def test_interrupt_during_tool_call_finishes_the_tool(monkeypatch):
 
 
 def test_interrupt_before_any_tool_cancels():
-    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=FakeClient([]))
+    agent = PhoneAgent(load_catalog(FIXTURE_CATALOG), client=FakeClient([]))
     assert agent.stop_speaking() is False
 
 
 def test_cancelled_turn_merges_with_next_caller_turn():
     client = FakeClient([message(text_block("ok"))])
-    agent = OrderingAgent(load_menu(FIXTURE_MENU), client=client)
+    agent = PhoneAgent(load_catalog(FIXTURE_CATALOG), client=client)
     agent.messages.append({"role": "user", "content": "two samosas"})  # reply was cancelled
     asyncio.run(_collect(agent.respond("actually three")))
     msgs = client.requests[0]["messages"]
@@ -89,15 +89,15 @@ async def _collect(agen):
 
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    monkeypatch.setenv("MENU_PATH", str(FIXTURE_MENU))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("CATALOG_PATH", str(FIXTURE_CATALOG))
     monkeypatch.setattr(server, "TWILIO_AUTH_TOKEN", "")
-    monkeypatch.setattr(server, "ORDERS_API_TOKEN", "tok")
+    monkeypatch.setattr(server, "ADMIN_API_TOKEN", "tok")
     fake = FakeClient([])
     server.app.state.client = fake
     server.app.state.payments = None
     with TestClient(server.app) as c:
-        seed_restaurant(server.app.state.store)
+        seed_business(server.app.state.store)
         yield c, fake
     del server.app.state.client
     del server.app.state.payments
@@ -124,7 +124,7 @@ def test_interrupted_order_is_saved_and_transcribed(app_client, monkeypatch):
                 tool_block("place_order", {"caller_confirmed": True}, id="t3"), stop_reason="tool_use"),
         message(text_block("Sorry about that! You're order number 1.")),
     ]
-    with c.websocket_connect("/ws?restaurant=1") as ws:
+    with c.websocket_connect("/ws?business=1") as ws:
         ws.send_text(json.dumps({"type": "setup", "callSid": "CA7", "from": "+15550001111", "to": BELLA_PHONE}))
         ws.send_text(json.dumps({"type": "prompt", "voicePrompt": "a tiramisu, I'm Lee", "last": True}))
         assert read_until_last(ws) == "One tiramisu for Lee. Shall I place it?"

@@ -1,10 +1,10 @@
-"""Phone front end: Twilio ConversationRelay <-> OrderingAgent.
+"""Phone front end: Twilio ConversationRelay <-> PhoneAgent.
 
 Call flow:
-  1. A caller dials a restaurant's Twilio number. Twilio POSTs to /voice with the
-     dialed number (To), which picks the restaurant.
+  1. A caller dials a business's Twilio number. Twilio POSTs to /voice with the
+     dialed number (To), which picks the business.
   2. /voice answers with TwiML that <Connect>s the call to ConversationRelay, pointing
-     it at our /ws WebSocket (with the restaurant id in the URL). Twilio does the
+     it at our /ws WebSocket (with the business id in the URL). Twilio does the
      speech-to-text and text-to-speech.
   3. For each caller utterance Twilio sends {"type": "prompt", "voicePrompt": ...}.
      We stream Claude's reply back as {"type": "text", "token": ...} messages, so
@@ -31,20 +31,20 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
-from .agent import OrderingAgent
+from .agent import PhoneAgent
 from .manage import router as manage_router
-from .menu import Menu
+from .catalog import Catalog
 from .payments import handle_stripe_event, payment_service_from_env
 from .pos import PosError, PosHub, check_state, providers_from_env
-from .restaurants import RestaurantDirectory
-from .storage import OrderStore
+from .businesses import BusinessDirectory
+from .storage import Store
 
-log = logging.getLogger("ordering_agent.server")
+log = logging.getLogger("phone_agent.server")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
-ORDERS_API_TOKEN = os.environ.get("ORDERS_API_TOKEN", "")
+ADMIN_API_TOKEN = os.environ.get("ADMIN_API_TOKEN", "")
 DASHBOARD_HTML = Path(__file__).parent / "static" / "dashboard.html"
 WORDS_PER_SECOND = 2.5  # rough speaking rate, used to let the goodbye finish before hanging up
 # An interrupted reply that is mid tool call (e.g. placing the order) is allowed this long
@@ -91,10 +91,10 @@ def relay_voice_attrs() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.store = OrderStore(os.environ.get("ORDERS_DB", "data/orders.db"))
-    app.state.restaurants = RestaurantDirectory(app.state.store)
-    listing = app.state.restaurants.listing()
-    log.info("%d restaurant(s): %s", len(listing),
+    app.state.store = Store(os.environ.get("DATABASE_PATH", "data/phone_agent.db"))
+    app.state.businesses = BusinessDirectory(app.state.store)
+    listing = app.state.businesses.listing()
+    log.info("%d business(s): %s", len(listing),
              ", ".join(f"{r['slug']} {r['phone_number'] or '(no number)'}" for r in listing) or "none")
     # One client shared by every call, so connections get pooled.
     app.state.client = getattr(app.state, "client", None) or anthropic.AsyncAnthropic()
@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     log.info("payment links %s", "on" if app.state.payments else "off (pay at pickup)")
     # Point-of-sale integrations; None unless POS_SECRET_KEY is set (it encrypts the tokens).
     if not hasattr(app.state, "pos"):
-        app.state.pos = (PosHub(app.state.store, app.state.restaurants, providers_from_env())
+        app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env())
                          if os.environ.get("POS_SECRET_KEY", "").strip() else None)
     if app.state.pos:
         log.info("POS integrations on: %s; resending %d unsent orders",
@@ -113,8 +113,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Restaurant ordering agent", lifespan=lifespan)
-app.include_router(manage_router)  # /manage: restaurant staff edit menus and settings
+app = FastAPI(title="Phone Agent", lifespan=lifespan)
+app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
 
 
 def _public_base(request: Request) -> str:
@@ -151,16 +151,16 @@ async def voice(request: Request) -> Response:
             log.warning("rejected /voice request with bad Twilio signature")
             raise HTTPException(status_code=403, detail="invalid signature")
 
-    menu = request.app.state.restaurants.for_number(form.get("To"))
-    if menu is None:
-        log.warning("call to %s: no active restaurant has this number", form.get("To"))
+    catalog = request.app.state.businesses.for_number(form.get("To"))
+    if catalog is None:
+        log.warning("call to %s: no active business has this number", form.get("To"))
         return Response(
             content='<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, this number '
                     "isn't taking orders right now. Goodbye.</Say><Hangup/></Response>",
             media_type="application/xml")
 
-    greeting = OrderingAgent(menu, client=request.app.state.client).greeting
-    ws_url = f"{_ws_url(_public_base(request))}?restaurant={menu.restaurant_id}"
+    greeting = PhoneAgent(catalog, client=request.app.state.client).greeting
+    ws_url = f"{_ws_url(_public_base(request))}?business={catalog.business_id}"
     attrs = {"url": ws_url, "welcomeGreeting": greeting, **relay_voice_attrs()}
     rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
     twiml = (
@@ -171,31 +171,31 @@ async def voice(request: Request) -> Response:
 
 
 def _require_token(request: Request) -> None:
-    """Staff-only endpoints. Disabled (404) unless ORDERS_API_TOKEN is set."""
-    if not ORDERS_API_TOKEN:
+    """Staff-only endpoints. Disabled (404) unless ADMIN_API_TOKEN is set."""
+    if not ADMIN_API_TOKEN:
         raise HTTPException(status_code=404)
-    if not hmac.compare_digest(request.headers.get("authorization", ""), f"Bearer {ORDERS_API_TOKEN}"):
+    if not hmac.compare_digest(request.headers.get("authorization", ""), f"Bearer {ADMIN_API_TOKEN}"):
         raise HTTPException(status_code=401)
 
 
-@app.get("/restaurants")
-async def restaurants(request: Request) -> list[dict]:
+@app.get("/businesses")
+async def businesses(request: Request) -> list[dict]:
     _require_token(request)
-    return request.app.state.restaurants.listing()
+    return request.app.state.businesses.listing()
 
 
 @app.get("/orders")
-async def orders(request: Request, limit: int = 20, restaurant: int | None = None) -> list[dict]:
-    """Recent placed orders, newest first; all restaurants unless `restaurant` (id) is given."""
+async def orders(request: Request, limit: int = 20, business: int | None = None) -> list[dict]:
+    """Recent placed orders, newest first; all businesses unless `business` (id) is given."""
     _require_token(request)
-    return request.app.state.store.recent(max(1, min(limit, 500)), restaurant_id=restaurant)
+    return request.app.state.store.recent(max(1, min(limit, 500)), business_id=business)
 
 
 @app.get("/calls")
-async def calls(request: Request, limit: int = 50, restaurant: int | None = None) -> list[dict]:
+async def calls(request: Request, limit: int = 50, business: int | None = None) -> list[dict]:
     """Recent phone calls, newest first, including ones that didn't place an order."""
     _require_token(request)
-    return request.app.state.store.recent_calls(max(1, min(limit, 500)), restaurant_id=restaurant)
+    return request.app.state.store.recent_calls(max(1, min(limit, 500)), business_id=business)
 
 
 @app.get("/calls/{call_id}")
@@ -207,8 +207,8 @@ async def call_transcript(request: Request, call_id: str) -> dict:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
-    """Orders dashboard. The page holds no data; it asks for ORDERS_API_TOKEN and reads /orders."""
-    if not ORDERS_API_TOKEN:
+    """Orders dashboard. The page holds no data; it asks for ADMIN_API_TOKEN and reads /orders."""
+    if not ADMIN_API_TOKEN:
         raise HTTPException(status_code=404)
     return DASHBOARD_HTML.read_text()
 
@@ -231,7 +231,7 @@ async def stripe_webhook(request: Request) -> dict:
     payments = state.payments
     pos = getattr(state, "pos", None)
     outcome = await asyncio.to_thread(
-        handle_stripe_event, json.loads(payload), state.store, state.restaurants.get,
+        handle_stripe_event, json.loads(payload), state.store, state.businesses.get,
         payments.sms if payments else None, pos.order_paid if pos else None,
     )
     return {"ok": True, "result": outcome}
@@ -240,8 +240,8 @@ async def stripe_webhook(request: Request) -> dict:
 @app.get("/paid", response_class=HTMLResponse)
 async def paid_page(request: Request, order: int = 0, cancelled: int = 0, r: str = "") -> str:
     """Where Stripe sends the customer after the payment page."""
-    menu = request.app.state.restaurants.by_slug(r)
-    name = html.escape(menu.restaurant.get("name", "the restaurant") if menu else "Thank you")
+    catalog = request.app.state.businesses.by_slug(r)
+    name = html.escape(catalog.settings.get("name", "the business") if catalog else "Thank you")
     msg = ("Payment cancelled. You can use the link in your text again, or pay at pickup."
            if cancelled else f"Thank you! Your payment for order #{order} was received.")
     return (f"<!doctype html><meta name=viewport content='width=device-width'>"
@@ -257,8 +257,8 @@ def _page(title: str, msg: str) -> str:
 
 @app.get("/pos/{provider}/callback", response_class=HTMLResponse)
 async def pos_callback(request: Request, provider: str, code: str = "", state: str = "") -> HTMLResponse:
-    """Where Square or Clover sends the restaurant owner after they approve the connection.
-    The link they started from (pos connect-link) carries a signed state naming the restaurant."""
+    """Where Square or Clover sends the business owner after they approve the connection.
+    The link they started from (pos connect-link) carries a signed state naming the business."""
     hub: PosHub | None = getattr(request.app.state, "pos", None)
     if hub is None or provider not in hub.providers:
         raise HTTPException(status_code=404)
@@ -268,21 +268,21 @@ async def pos_callback(request: Request, provider: str, code: str = "", state: s
         return HTMLResponse(_page("Not connected", "The connection wasn't approved. You can close this page."),
                             status_code=400)
     try:
-        restaurant_id = check_state(state, provider)
-        row = request.app.state.store.restaurant(restaurant_id)
+        business_id = check_state(state, provider)
+        row = request.app.state.store.business(business_id)
         if row is None:
-            raise PosError("unknown restaurant", retry=False)
+            raise PosError("unknown business", retry=False)
         redirect = f"{_public_base(request)}/pos/{provider}/callback"
         prov = hub.provider(provider)
         tokens, merchant_id = await asyncio.to_thread(prov.exchange_code, code, query, redirect)
-        conn = await asyncio.to_thread(hub.save_connection, restaurant_id, provider, prov.environment,
+        conn = await asyncio.to_thread(hub.save_connection, business_id, provider, prov.environment,
                                        tokens, merchant_id)
     except PosError as e:
         log.warning("%s connect failed: %s", provider, e)
         return HTMLResponse(_page("Not connected", f"Something went wrong: {e}"), status_code=400)
-    menu = request.app.state.restaurants.get(restaurant_id)
-    name = menu.restaurant.get("name", row.slug) if menu else row.slug
-    log.info("restaurant %s connected to %s (merchant %s, location %s)", row.slug, provider,
+    catalog = request.app.state.businesses.get(business_id)
+    name = catalog.settings.get("name", row.slug) if catalog else row.slug
+    log.info("business %s connected to %s (merchant %s, location %s)", row.slug, provider,
              merchant_id, conn.location_id)
     extra = ("" if conn.location_id or provider != "square" else
              " One more step on our side: this account has several locations, and we'll pick yours.")
@@ -295,10 +295,10 @@ class RelayCall:
 
     def __init__(self, ws: WebSocket):
         self.ws = ws
-        self.agent: OrderingAgent | None = None
+        self.agent: PhoneAgent | None = None
         self.reply_task: asyncio.Task | None = None
         self.call_id: str | None = None
-        self.store: OrderStore | None = None
+        self.store: Store | None = None
         self._unrecorded: list[str] = []  # reply text sent but not yet in the transcript
 
     def flush_spoken(self, suffix: str = "") -> None:
@@ -348,15 +348,15 @@ class RelayCall:
         kind = msg.get("type")
         if kind == "setup":
             app_state = self.ws.app.state
-            menu = self.restaurant_for_call(app_state.restaurants, msg)
-            if menu is None:
+            catalog = self.business_for_call(app_state.businesses, msg)
+            if catalog is None:
                 await self.send({"type": "text", "last": True,
                                  "token": "Sorry, this number isn't taking orders right now. Goodbye."})
                 await asyncio.sleep(NOT_SET_UP_SECONDS)
                 await self.send({"type": "end"})
                 return
-            self.agent = OrderingAgent(
-                menu,
+            self.agent = PhoneAgent(
+                catalog,
                 client=app_state.client,
                 store=app_state.store,
                 call_id=msg.get("callSid"),
@@ -369,11 +369,11 @@ class RelayCall:
             if self.call_id:
                 try:
                     self.store.start_call(self.call_id, self.agent.session.order.customer_phone
-                                          or msg.get("from"), menu.restaurant_id)
+                                          or msg.get("from"), catalog.business_id)
                 except Exception:
                     log.exception("couldn't record call start")
             self.record("agent", self.agent.greeting)
-            log.info("call %s started for %s", msg.get("callSid"), menu.slug)
+            log.info("call %s started for %s", msg.get("callSid"), catalog.slug)
         elif kind == "prompt":
             if self.agent is None or not msg.get("last", True):
                 return
@@ -399,19 +399,19 @@ class RelayCall:
         args_text = json.dumps(args, ensure_ascii=False) if args else ""
         self.record("tool", f"{name}({args_text}) {'ERROR ' if is_error else ''}-> {result}")
 
-    def restaurant_for_call(self, directory: RestaurantDirectory, setup: dict) -> Menu | None:
-        """The restaurant /voice chose (in the URL), cross-checked with the dialed number."""
-        raw = self.ws.query_params.get("restaurant", "")
-        menu = directory.get(int(raw), active_only=True) if raw.isdigit() else None
+    def business_for_call(self, directory: BusinessDirectory, setup: dict) -> Catalog | None:
+        """The business /voice chose (in the URL), cross-checked with the dialed number."""
+        raw = self.ws.query_params.get("business", "")
+        catalog = directory.get(int(raw), active_only=True) if raw.isdigit() else None
         dialed = directory.for_number(setup.get("to"))
-        if menu is None:
-            menu = dialed  # e.g. an old URL without the parameter
-        elif dialed is not None and dialed.restaurant_id != menu.restaurant_id:
-            log.warning("call %s: URL says restaurant %s but %s was dialed (restaurant %s)",
-                        setup.get("callSid"), menu.restaurant_id, setup.get("to"), dialed.restaurant_id)
-        if menu is None:
-            log.warning("call %s to %s: no restaurant", setup.get("callSid"), setup.get("to"))
-        return menu
+        if catalog is None:
+            catalog = dialed  # e.g. an old URL without the parameter
+        elif dialed is not None and dialed.business_id != catalog.business_id:
+            log.warning("call %s: URL says business %s but %s was dialed (business %s)",
+                        setup.get("callSid"), catalog.business_id, setup.get("to"), dialed.business_id)
+        if catalog is None:
+            log.warning("call %s to %s: no business", setup.get("callSid"), setup.get("to"))
+        return catalog
 
     async def cancel_reply(self) -> None:
         """Stop the current reply. A reply that is mid tool call (say, placing the order)

@@ -4,14 +4,14 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ordering_agent import server
-from ordering_agent.menu import load_menu
-from ordering_agent.order import Order, OrderError, normalize_phone
-from ordering_agent.payments import PaymentLink, PaymentService, handle_stripe_event, order_text
-from ordering_agent.storage import OrderStore
-from ordering_agent.tools import CallSession, run_tool
+from phone_agent import server
+from phone_agent.catalog import load_catalog
+from phone_agent.order import Order, OrderError, normalize_phone
+from phone_agent.payments import PaymentLink, PaymentService, handle_stripe_event, order_text
+from phone_agent.storage import Store
+from phone_agent.tools import CallSession, run_tool
 
-from .conftest import FIXTURE_MENU, seed_restaurant
+from .conftest import FIXTURE_CATALOG, seed_business
 from .fakes import FakeClient
 
 
@@ -35,16 +35,16 @@ class FakeSms:
         self.sent.append((to, body))
 
 
-def menu_with(required: bool):
-    menu = load_menu(FIXTURE_MENU)
-    restaurant = {**menu.restaurant, "payment": {"required_before_cooking": required,
+def catalog_with(required: bool):
+    catalog = load_catalog(FIXTURE_CATALOG)
+    business = {**catalog.settings, "payment": {"required_before_cooking": required,
                                                  "pay_within_minutes": 10}}
-    return replace(menu, restaurant=restaurant)
+    return replace(catalog, settings=business)
 
 
-def placed_session(menu, payments, phone="+15025550123"):
-    store = OrderStore(":memory:")
-    session = CallSession(order=Order(menu=menu), store=store, call_id="CA1", payments=payments)
+def placed_session(catalog, payments, phone="+15025550123"):
+    store = Store(":memory:")
+    session = CallSession(order=Order(catalog=catalog), store=store, call_id="CA1", payments=payments)
     if phone:
         session.order.customer_phone = phone
     run_tool(session, "add_item", {"item_id": "wings", "options": {"sauce": "bbq"}})
@@ -70,7 +70,7 @@ def test_normalize_phone_rejects_partial(raw):
 
 def test_optional_payment_texts_link_and_confirms_order():
     links, sms = FakeLinks(), FakeSms()
-    session, store, result, err = placed_session(menu_with(False), PaymentService(links, sms))
+    session, store, result, err = placed_session(catalog_with(False), PaymentService(links, sms))
     assert not err
     assert result["payment"]["link_sent"] is True
     assert result["payment"]["texted_to_number_ending"] == "0123"
@@ -84,9 +84,9 @@ def test_optional_payment_texts_link_and_confirms_order():
 
 
 def test_required_payment_holds_order_until_paid():
-    menu = menu_with(True)
+    catalog = catalog_with(True)
     sms = FakeSms()
-    _, store, result, _ = placed_session(menu, PaymentService(FakeLinks(), sms))
+    _, store, result, _ = placed_session(catalog, PaymentService(FakeLinks(), sms))
     assert result["payment"]["required_before_cooking"] is True
     assert "after payment" in str(result["ready_in_minutes"])
     assert "once it's paid" in sms.sent[0][1]
@@ -94,41 +94,41 @@ def test_required_payment_holds_order_until_paid():
 
     event = {"type": "checkout.session.completed",
              "data": {"object": {"id": "cs_test_1", "payment_status": "paid"}}}
-    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "paid"
-    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "duplicate"  # Stripe retries
+    assert handle_stripe_event(event, store, lambda rid: catalog, sms) == "paid"
+    assert handle_stripe_event(event, store, lambda rid: catalog, sms) == "duplicate"  # Stripe retries
     saved = store.recent()[0]
     assert saved["status"] == "confirmed" and saved["payment_status"] == "paid"
     assert len(sms.sent) == 2 and "payment received" in sms.sent[1][1]
 
 
 def test_required_payment_expiry_cancels_order():
-    menu = menu_with(True)
+    catalog = catalog_with(True)
     sms = FakeSms()
-    _, store, _, _ = placed_session(menu, PaymentService(FakeLinks(), sms))
+    _, store, _, _ = placed_session(catalog, PaymentService(FakeLinks(), sms))
     event = {"type": "checkout.session.expired", "data": {"object": {"id": "cs_test_1"}}}
-    assert handle_stripe_event(event, store, lambda rid: menu, sms) == "expired"
+    assert handle_stripe_event(event, store, lambda rid: catalog, sms) == "expired"
     assert store.recent()[0]["status"] == "cancelled"
     assert "cancelled" in sms.sent[-1][1]
 
 
 def test_optional_payment_expiry_keeps_order():
-    menu = menu_with(False)
+    catalog = catalog_with(False)
     sms = FakeSms()
-    _, store, _, _ = placed_session(menu, PaymentService(FakeLinks(), sms))
+    _, store, _, _ = placed_session(catalog, PaymentService(FakeLinks(), sms))
     event = {"type": "checkout.session.expired", "data": {"object": {"id": "cs_test_1"}}}
-    handle_stripe_event(event, store, lambda rid: menu, sms)
+    handle_stripe_event(event, store, lambda rid: catalog, sms)
     saved = store.recent()[0]
     assert saved["status"] == "confirmed" and saved["payment_status"] == "expired"
     assert len(sms.sent) == 1  # no cancellation text
 
 
 def test_place_order_needs_phone_when_payments_on():
-    _, _, text, err = placed_session(menu_with(False), PaymentService(FakeLinks(), FakeSms()), phone=None)
+    _, _, text, err = placed_session(catalog_with(False), PaymentService(FakeLinks(), FakeSms()), phone=None)
     assert err and "set_customer_phone" in text
 
 
 def test_set_customer_phone_tool():
-    session = CallSession(order=Order(menu=load_menu(FIXTURE_MENU)))
+    session = CallSession(order=Order(catalog=load_catalog(FIXTURE_CATALOG)))
     text, err = run_tool(session, "set_customer_phone", {"phone": "502 555 0123"})
     assert not err and session.order.customer_phone == "+15025550123"
     text, err = run_tool(session, "set_customer_phone", {"phone": "5550123"})
@@ -136,7 +136,7 @@ def test_set_customer_phone_tool():
 
 
 def test_link_failure_still_places_order():
-    _, store, result, err = placed_session(menu_with(True), PaymentService(FakeLinks(fail=True), FakeSms()))
+    _, store, result, err = placed_session(catalog_with(True), PaymentService(FakeLinks(fail=True), FakeSms()))
     assert not err and result["placed"] is True
     assert result["payment"]["link_sent"] is False
     assert "pay at the counter" in result["payment"]["tell_caller"]
@@ -144,7 +144,7 @@ def test_link_failure_still_places_order():
 
 
 def test_order_text_truncates_long_orders():
-    order = Order(menu=load_menu(FIXTURE_MENU))
+    order = Order(catalog=load_catalog(FIXTURE_CATALOG))
     for _ in range(10):
         order.add_item("tiramisu")
     order.set_customer("Ana")
@@ -153,8 +153,8 @@ def test_order_text_truncates_long_orders():
 
 
 def test_stripe_webhook_route_checks_signature(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    monkeypatch.setenv("MENU_PATH", str(FIXTURE_MENU))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("CATALOG_PATH", str(FIXTURE_CATALOG))
     server.app.state.client = FakeClient([])
     server.app.state.payments = None
     try:
@@ -175,16 +175,16 @@ def test_stripe_webhook_route_accepts_signed_event(tmp_path, monkeypatch):
     import hmac
     import time
 
-    monkeypatch.setenv("ORDERS_DB", str(tmp_path / "orders.db"))
-    monkeypatch.setenv("MENU_PATH", str(FIXTURE_MENU))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orders.db"))
+    monkeypatch.setenv("CATALOG_PATH", str(FIXTURE_CATALOG))
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     server.app.state.client = FakeClient([])
     server.app.state.payments = None
     try:
         with TestClient(server.app) as c:
             store = server.app.state.store
-            rid = seed_restaurant(store)
-            order = Order(menu=server.app.state.restaurants.get(rid))
+            rid = seed_business(store)
+            order = Order(catalog=server.app.state.businesses.get(rid))
             order.add_item("tiramisu")
             order.set_customer("Ana")
             saved = store.save(order, status="awaiting_payment", payment_status="unpaid")

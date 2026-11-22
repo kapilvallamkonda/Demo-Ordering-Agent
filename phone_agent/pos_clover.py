@@ -1,4 +1,4 @@
-"""Clover: send orders with the v3 Orders API, import the menu from inventory.
+"""Clover: send orders with the v3 Orders API, import the catalog from inventory.
 
 An order is created open (it shows in the Clover Orders app right away), with a title
 like "Phone #12 Ana", a note saying how it's being paid, and its total. Lines are added
@@ -164,7 +164,7 @@ class CloverProvider:
         self._call(conn, "POST", f"/orders/{pos_order_id}",
                    {"note": f"PAID ONLINE (payment link). Phone order #{order.number} for {order.customer_name}."})
 
-    # ---- menu
+    # ---- catalog
 
     def catalog(self, conn: Connection) -> list[dict]:
         groups = {g["id"]: g for g in self._paged(conn, "/modifier_groups", {"expand": "modifiers"})}
@@ -176,7 +176,7 @@ class CloverProvider:
                 continue  # variable or per-unit price: can't be quoted on the phone
             cats = (it.get("categories") or {}).get("elements") or []
             entry: dict = {"name": it.get("name", "Item"),
-                           "category": cats[0].get("name", "Menu") if cats else "Menu",
+                           "category": cats[0].get("name", "Catalog") if cats else "Catalog",
                            "price": round(it["price"] / 100, 2),
                            "description": (it.get("alternateName") or "")[:200]}
             options, extras, choice_ids, extra_ids = {}, {}, {}, {}

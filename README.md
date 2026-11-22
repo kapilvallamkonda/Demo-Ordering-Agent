@@ -1,4 +1,4 @@
-# Demo-Ordering-Agent
+# Phone Agent
 
 A demo AI phone agent for businesses. Callers dial a business's Twilio number and talk
 to Claude, which takes their pickup order with tools, reads it back, places it and
@@ -9,7 +9,7 @@ and settings in the web manager at `/manage`.
 ```
 Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──TwiML <ConversationRelay>
                     │  speech-to-text / text-to-speech
-                    └──── WebSocket /ws ◀──▶ OrderingAgent ──▶ Claude (Messages API, streaming)
+                    └──── WebSocket /ws ◀──▶ PhoneAgent ──▶ Claude (Messages API, streaming)
                                                  │
                                                  └─ order tools ─▶ Order (validation) ─▶ SQLite
 ```
@@ -19,8 +19,8 @@ Caller ──phone──▶ Twilio ──POST /voice──▶ this server ──
 - **Claude** (`claude-opus-5-5`, low effort for snappy turns) decides what to say and
   calls the order tools: `add_item`, `remove_item`, `update_quantity`, `view_order`,
   `set_customer_name`, `place_order`, `end_call`.
-- **The menu is in the system prompt** (cached), so answering menu questions needs no
-  tool round-trip. **Prices and totals come only from code** (`ordering_agent/order.py`).
+- **The catalog is in the system prompt** (cached), so answering questions about it needs no
+  tool round-trip. **Prices and totals come only from code** (`phone_agent/order.py`).
   The model can't invent items, skip required options, or miscompute a total.
 - **Interruptions:** if the caller talks over the agent, the in-flight reply is cancelled
   and the agent is told what the caller actually heard. If the agent was in the middle of
@@ -34,26 +34,26 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
 | Path | What it is |
 |---|---|
-| `data/restaurants/<slug>.json` | One menu file per restaurant (menu plus settings), e.g. `hyderabad-house.json` (about 210 items). Optional `restaurant.notes` lines are added to the prompt. Live calls use the copy stored in the database; these files are what you load in. |
-| `.claude/skills/add-restaurant/` | Claude Code skill (`/add-restaurant`) that onboards a restaurant end to end: menu photos to menu file, checks, Twilio number, registration on Fly, verification. Includes `scripts/check_menu.py` and the menu format guide. |
-| `tests/fixtures/menu.json` | Small fixed menu the tests use, so they don't depend on the real menu. |
-| `ordering_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
-| `ordering_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
-| `ordering_agent/prompts.py` | The phone-voice system prompt. |
-| `ordering_agent/agent.py` | Streaming tool-use loop: one `OrderingAgent` per call. |
-| `ordering_agent/server.py` | FastAPI app: `/voice` (Twilio webhook) and `/ws` (ConversationRelay). |
-| `ordering_agent/restaurants.py` | Routes each call to a restaurant by the number dialed; admin commands to add restaurants and publish menus. |
-| `ordering_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
-| `ordering_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
-| `ordering_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a restaurant's Square or Clover, send each placed order to it, import its menu. Admin commands: `python -m ordering_agent.pos --help`. |
-| `ordering_agent/templates.py` | Kinds of business (restaurant, retail shop; salon coming soon): modules, wording, prompt rules, tags, settings. Add a kind of business here. |
+| `data/businesses/<slug>.json` | One catalog file per business (template, settings and items), e.g. `hyderabad-house.json`, a restaurant with about 210 items. Optional `settings.notes` lines are added to the prompt. Live calls use the copy stored in the database; these files are what you load in. |
+| `.claude/skills/add-business/` | Claude Code skill (`/add-business`) that onboards a business end to end: menu or product photos to a catalog file, checks, Twilio number, registration on Fly, verification. Includes `scripts/check_catalog.py` and the catalog format guide. |
+| `tests/fixtures/catalog.json` | Small fixed catalog the tests use, so they don't depend on real ones. |
+| `phone_agent/order.py` | Order state and every business rule (options, extras, quantities, tax). |
+| `phone_agent/tools.py` | Tool schemas for Claude and the dispatcher that runs them. |
+| `phone_agent/prompts.py` | The phone-voice system prompt. |
+| `phone_agent/agent.py` | Streaming tool-use loop: one `PhoneAgent` per call. |
+| `phone_agent/server.py` | FastAPI app: `/voice` (Twilio webhook) and `/ws` (ConversationRelay). |
+| `phone_agent/businesses.py` | Routes each call to a business by the number dialed; admin commands to add businesses and publish catalogs. |
+| `phone_agent/cli.py` | Chat with the agent in a terminal, no phone needed. |
+| `phone_agent/payments.py` | Pay by text: Stripe Checkout link per order, sent by SMS; Stripe webhook handling. |
+| `phone_agent/pos.py`, `pos_square.py`, `pos_clover.py` | Point-of-sale integrations: connect a business's Square or Clover, send each placed order to it, import its catalog. Admin commands: `python -m phone_agent.pos --help`. |
+| `phone_agent/templates.py` | Kinds of business (restaurant, retail shop; salon coming soon): modules, wording, prompt rules, tags, settings. Add a kind of business here. |
 | `data/templates/<id>.json` | Starter catalogs for each template. |
-| `ordering_agent/manage.py`, `static/manage.html` | Menu manager at `/manage`: restaurant staff sign in and edit their menu and settings (draft, publish, history). |
-| `ordering_agent/accounts.py` | Staff accounts: invite links, passwords, sessions. `python -m ordering_agent.accounts --help`. |
-| `ordering_agent/settings_schema.py` | The restaurant settings staff can edit; the settings form is built from it. Add a setting here. |
-| `ordering_agent/menu_check.py` | Menu checks used by the menu manager and the add-restaurant skill. |
-| `ordering_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
-| `ordering_agent/storage.py` | Restaurants, menu versions, placed orders and call transcripts (SQLite). |
+| `phone_agent/manage.py`, `static/manage.html` | Manager at `/manage`: business staff sign in and edit their catalog and settings (draft, publish, history). |
+| `phone_agent/accounts.py` | Staff accounts: invite links, passwords, sessions. `python -m phone_agent.accounts --help`. |
+| `phone_agent/settings_schema.py` | The business settings staff can edit; the settings form is built from it. Add a setting here. |
+| `phone_agent/catalog_check.py` | Catalog checks used by the manager and the add-business skill. |
+| `phone_agent/static/dashboard.html` | Orders dashboard served at `/dashboard`. |
+| `phone_agent/storage.py` | Businesses, catalog versions, orders, calls, accounts (SQLite). |
 
 ## Setup
 
@@ -67,40 +67,41 @@ set -a; . ./.env; set +a
 ### 1. Try it in the terminal
 
 ```bash
-python -m ordering_agent.cli                            # uses data/restaurants/hyderabad-house.json
-python -m ordering_agent.cli --restaurant hyderabad-house  # a restaurant saved in the database
+python -m phone_agent.cli                            # uses data/businesses/hyderabad-house.json
+python -m phone_agent.cli --business hyderabad-house  # a business saved in the database
 ```
 
-### Add a restaurant
+### Add a business
 
-One server serves many restaurants. Each has a slug, the Twilio number callers dial
-(that's how a call finds its restaurant) and a menu:
+One server serves many businesses. Each has a slug, the Twilio number callers dial
+(that's how a call finds its business) and a catalog, whose `template` says what kind
+of business it is (`python -m phone_agent.businesses templates`; starters in `data/templates/`):
 
 ```bash
-python -m ordering_agent.restaurants add hyderabad-house --phone +19135783983 --menu data/restaurants/hyderabad-house.json
-python -m ordering_agent.restaurants list
-python -m ordering_agent.restaurants set-menu hyderabad-house --menu data/restaurants/hyderabad-house.json  # publish an edited menu
-python -m ordering_agent.restaurants set-phone hyderabad-house --phone +19135551234
-python -m ordering_agent.restaurants deactivate hyderabad-house                     # stop taking calls
+python -m phone_agent.businesses add hyderabad-house --phone +19135783983 --catalog data/businesses/hyderabad-house.json
+python -m phone_agent.businesses list
+python -m phone_agent.businesses set-catalog hyderabad-house --catalog data/businesses/hyderabad-house.json  # publish an edited catalog
+python -m phone_agent.businesses set-phone hyderabad-house --phone +19135551234
+python -m phone_agent.businesses deactivate hyderabad-house                     # stop taking calls
 ```
 
-In Claude Code, `/add-restaurant` walks through the whole onboarding (menu, checks,
-number, registration, test). To check a menu file by hand:
-`.venv/bin/python .claude/skills/add-restaurant/scripts/check_menu.py data/restaurants/<slug>.json`.
+In Claude Code, `/add-business` walks through the whole onboarding (catalog, checks,
+number, registration, test). To check a catalog file by hand:
+`.venv/bin/python .claude/skills/add-business/scripts/check_catalog.py data/businesses/<slug>.json`.
 
-Menus are checked before they're saved, and every version is kept. A new menu is used
-from the next call on, no restart needed. A call to a number no restaurant has hears a
+Catalogs are checked before they're saved, and every version is kept. A new one is used
+from the next call on, no restart needed. A call to a number no business has hears a
 short apology and is hung up. On Fly.io, run these with
-`fly ssh console -C "python -m ordering_agent.restaurants list"`.
+`fly ssh console -C "python -m phone_agent.businesses list"`.
 
 ### 2. Take real phone calls
 
-1. Start the server: `uvicorn ordering_agent.server:app --port 8000`
+1. Start the server: `uvicorn phone_agent.server:app --port 8000`
 2. Expose it publicly, e.g. `ngrok http 8000`, and set `PUBLIC_BASE_URL` to the https URL.
-3. In the Twilio Console, buy a phone number with voice capability for each restaurant.
+3. In the Twilio Console, buy a phone number with voice capability for each business.
    Under *Voice Configuration*, set **A call comes in** → Webhook → `https://<your-host>/voice`
-   (HTTP POST); every number uses the same URL. Register the number on its restaurant
-   (`restaurants add ... --phone` or `set-phone`).
+   (HTTP POST); every number uses the same URL. Register the number on its business
+   (`businesses add ... --phone` or `set-phone`).
    ConversationRelay may require accepting Twilio's AI/ML features terms in the Console first.
 4. Set `TWILIO_AUTH_TOKEN` so the server validates Twilio's request signatures.
 5. Call the number.
@@ -118,27 +119,27 @@ Stripe payment link, so no one reads card numbers over the phone.
    `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
    `checkout.session.async_payment_failed` and `checkout.session.expired`, and set
    `STRIPE_WEBHOOK_SECRET` to its signing secret.
-4. Choose each restaurant's rule in its menu file (then `set-menu`):
+4. Choose each business's rule in its settings (in `/manage`, or the catalog file then `set-catalog`):
    `"payment": {"required_before_cooking": false, "pay_within_minutes": 30}`.
    With `true`, orders wait as `awaiting_payment` until paid and are cancelled if the
    link expires.
 
 Without `STRIPE_SECRET_KEY`, customers pay at pickup.
 
-Restaurants, menus, orders and transcripts are in `data/orders.db`.
+Businesses, catalogs, orders, transcripts and accounts are in `data/phone_agent.db`.
 
 ### 4. Orders dashboard
 
-Set `ORDERS_API_TOKEN` to a long random string, restart, and open `/dashboard`
+Set `ADMIN_API_TOKEN` to a long random string, restart, and open `/dashboard`
 (e.g. `http://127.0.0.1:8000/dashboard`). Enter the token once; the browser remembers it.
 The page shows today's order count and sales, and every order with items, total, order
 status and payment status. You can filter and search, and it refreshes every 10 seconds.
 The Calls tab lists every call, including ones that didn't end in an order; click one to
-read its transcript. With more than one restaurant, a picker at the top shows one
-restaurant or all of them. The same data is at `GET /restaurants`,
-`GET /orders?limit=50&restaurant=<id>`, `GET /calls?limit=50&restaurant=<id>` and
+read its transcript. With more than one business, a picker at the top shows one
+business or all of them. The same data is at `GET /businesses`,
+`GET /orders?limit=50&business=<id>`, `GET /calls?limit=50&business=<id>` and
 `GET /calls/<CallSid>`, all with `Authorization: Bearer <token>`. The token sees every
-restaurant; per-restaurant staff logins come next.
+business; moving the dashboard onto staff sign-in comes next.
 
 ### 5. Host it on Fly.io
 
@@ -147,8 +148,8 @@ instantly) with a volume at `/data` for the orders database.
 
 ```bash
 fly apps create <app-name>                      # then put the name in fly.toml
-fly volumes create orders_data --region ord --size 1 --app <app-name>
-fly secrets set ANTHROPIC_API_KEY=... TWILIO_AUTH_TOKEN=... ORDERS_API_TOKEN=... \
+fly volumes create app_data --region ord --size 1 --app <app-name>
+fly secrets set ANTHROPIC_API_KEY=... TWILIO_AUTH_TOKEN=... ADMIN_API_TOKEN=... \
     PUBLIC_BASE_URL=https://<app-name>.fly.dev   # plus Stripe/Twilio SMS settings if used
 fly deploy
 ```
@@ -185,10 +186,10 @@ They include a full phone order over the WebSocket.
 | `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
-| `ORDERS_DB` | `data/orders.db` | SQLite file: restaurants, menus, orders, transcripts. |
-| `MENU_PATH` | `data/restaurants/hyderabad-house.json` | Menu file for the terminal chat when `--restaurant` isn't given. Live calls use menus in the database. |
-| `ORDERS_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
-| `POS_SECRET_KEY` | unset | Turns on POS integrations and encrypts their tokens. A Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it safe: without it every restaurant must reconnect. |
+| `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |
+| `CATALOG_PATH` | `data/businesses/hyderabad-house.json` | Catalog file for the terminal chat when `--business` isn't given. Live calls use catalogs in the database. |
+| `ADMIN_API_TOKEN` | unset | Enables the `/dashboard` page, `GET /orders` and `GET /calls` (transcripts). |
+| `POS_SECRET_KEY` | unset | Turns on POS integrations and encrypts their tokens. A Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it safe: without it every business must reconnect. |
 | `SQUARE_APPLICATION_ID`, `SQUARE_APPLICATION_SECRET` | unset | Square app credentials (Developer Console), for connect links. |
 | `SQUARE_ENVIRONMENT` | `sandbox` | `sandbox` or `production`. |
 | `SQUARE_API_VERSION` | `2025-01-23` | `Square-Version` header. |
@@ -225,33 +226,33 @@ The Messages API is stateless HTTP, so scale is about this server, not the API:
 - Square and Clover integrations are tested against fake APIs only so far; Toast needs
   its partner program first (`docs/toast-partner-application.md`).
 
-## Menu manager (for restaurant staff)
+## Manager (for business staff)
 
-Restaurants edit their own phone menu at `/manage`: dishes, descriptions, prices,
+Businesses edit their own catalog at `/manage`: items, descriptions, prices,
 choices and extras, sold-out switches, and settings (greeting, hours, address, pickup
 time, tax, payment rule, notes for the agent). Changes save to a draft automatically and
 reach callers when someone presses Publish. See [docs/DESIGN.md](docs/DESIGN.md) section 14.
 
 ```bash
 # On the server: invite someone (prints a one-time link where they choose a password)
-python -m ordering_agent.accounts invite owner@example.com --restaurant hyderabad-house --name "Owner"
-python -m ordering_agent.accounts list
+python -m phone_agent.accounts invite owner@example.com --business hyderabad-house --name "Owner"
+python -m phone_agent.accounts list
 ```
 
-To add a setting staff can edit, add an entry to `SETTINGS` in `ordering_agent/settings_schema.py`.
+To add a setting staff can edit, add an entry to `SETTINGS` in `phone_agent/settings_schema.py`.
 
 ## POS integrations (Square, Clover)
 
-Placed orders can go straight onto the restaurant's Square or Clover POS, and its
-menu can be imported from there. See [docs/DESIGN.md](docs/DESIGN.md) section 13.
+Placed orders can go straight onto the business's Square or Clover POS, and its
+catalog can be imported from there. See [docs/DESIGN.md](docs/DESIGN.md) section 13.
 
 ```bash
 # On the server (fly ssh console -C "..."), with POS_SECRET_KEY and the app credentials set:
-python -m ordering_agent.pos connect-link hyderabad-house square   # send this link to the owner
-python -m ordering_agent.pos status
-python -m ordering_agent.pos import-menu hyderabad-house > menu.json   # review, check_menu.py, set-menu
-python -m ordering_agent.pos retry hyderabad-house                  # resend orders that failed
+python -m phone_agent.pos connect-link hyderabad-house square   # send this link to the owner
+python -m phone_agent.pos status
+python -m phone_agent.pos import-catalog hyderabad-house > catalog.json   # review, check_catalog.py, set-catalog
+python -m phone_agent.pos retry hyderabad-house                  # resend orders that failed
 ```
 
 Square only shows API orders on the POS once they're paid; pay-at-pickup orders for a
-Square restaurant appear on our dashboard only.
+Square business appear on our dashboard only.

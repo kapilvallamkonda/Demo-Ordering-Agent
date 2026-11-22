@@ -1,12 +1,12 @@
-"""Square: send orders with the Orders API, import the menu from the Catalog API.
+"""Square: send orders with the Orders API, import the catalog from the Catalog API.
 
 Orders are created as pickup orders (a PICKUP fulfillment, ASAP, with the prep time from
-the menu settings). Square only shows an API order in Square POS and the Seller
+the catalog settings). Square only shows an API order in Square POS and the Seller
 Dashboard once it is paid, so:
   - When the payment link is paid, we record an EXTERNAL payment (source "Stripe payment
     link") for the order's total, and the order appears for the kitchen.
   - A pay-at-pickup order exists in Square but isn't shown on the POS until it's paid.
-    Restaurants on Square should require payment before cooking, or keep using our
+    Businesses on Square should require payment before cooking, or keep using our
     dashboard for unpaid orders. (docs/DESIGN.md, section 13.)
 
 Every request uses an idempotency key derived from our order id, so retries never
@@ -128,9 +128,9 @@ class SquareProvider:
     def push(self, conn: Connection, order: PosOrder, existing_id: str | None) -> str:
         if not conn.location_id:
             raise PosError("this Square account has several locations; run "
-                           "`python -m ordering_agent.pos set-location SLUG LOCATION_ID`", retry=False)
+                           "`python -m phone_agent.pos set-location SLUG LOCATION_ID`", retry=False)
         resp = self._call(conn, "POST", "/v2/orders", {
-            "idempotency_key": f"phone-order-{conn.restaurant_id}-{order.order_id}",
+            "idempotency_key": f"phone-order-{conn.business_id}-{order.order_id}",
             "order": self.order_body(conn, order),
         })
         return resp["order"]["id"]
@@ -138,7 +138,7 @@ class SquareProvider:
     def mark_paid(self, conn: Connection, order: PosOrder, pos_order_id: str, payment_ref: str) -> None:
         sq_order = self._call(conn, "GET", f"/v2/orders/{pos_order_id}")["order"]
         self._call(conn, "POST", "/v2/payments", {
-            "idempotency_key": f"phone-paid-{conn.restaurant_id}-{order.order_id}",
+            "idempotency_key": f"phone-paid-{conn.business_id}-{order.order_id}",
             "source_id": "EXTERNAL",
             "amount_money": sq_order["total_money"],
             "order_id": pos_order_id,
@@ -148,7 +148,7 @@ class SquareProvider:
             "note": f"Phone order #{order.number}, paid by text link",
         })
 
-    # ---- menu
+    # ---- catalog
 
     def _catalog_objects(self, conn: Connection) -> list[dict]:
         out, cursor = [], None
@@ -247,7 +247,7 @@ def _item(o: dict, cats: dict, mlists: dict, location_id: str | None) -> dict | 
     cat_ids = [c["id"] for c in data.get("categories") or []] or ([data["category_id"]] if data.get("category_id") else [])
     item: dict = {
         "name": data.get("name", "Item"),
-        "category": next((cats[c] for c in cat_ids if cats.get(c)), "Menu"),
+        "category": next((cats[c] for c in cat_ids if cats.get(c)), "Catalog"),
         "price": round(base, 2),
         "description": (data.get("description_plaintext") or data.get("description") or "")[:200],
     }
