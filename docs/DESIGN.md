@@ -1,6 +1,6 @@
 # High-Level Design: Phone Ordering Agent
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-18.
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22.
 
 ## 1. Goal
 
@@ -231,9 +231,10 @@ transcripts through `/calls`.
 
 - One short live call completed end to end; a full order over the phone hasn't been placed
   yet. ConversationRelay message field names still need confirming against the docs.
-- Menu gaps: address and hours are not set. Desserts, pastries, drinks and the daily
-  specials have no printed prices, so they can't be phone-ordered yet; the agent says they
-  can be added at the counter at pickup.
+- Menu gaps: address and hours are not set. Drinks, shakes, desserts and pastries (17
+  items tagged `"placeholder_price": true` in `data/menu.json`) use typical prices, not the
+  restaurant's; confirm or correct them before real customers order. Daily specials
+  aren't on the phone menu; the agent offers them at the counter.
 - The full menu adds roughly 6k tokens to the (cached) system prompt; watch first-turn latency.
 - Hang-up delay after the goodbye is estimated from word count; tune after real calls.
 - Require a Twilio signature on `/ws`.
@@ -266,3 +267,4 @@ transcripts through `/calls`.
 | 2026-11-18 | Call transcripts (`calls`, `call_events` tables, `/calls` API, dashboard Calls tab). Interruptions during a tool call no longer cancel it, so a confirmed order can't be lost to the caller talking over the agent. |
 | 2026-11-18 | Deployed to Fly.io (`phone-ordering-agent-604b`); Twilio number moved off the cloudflared tunnel. |
 | 2026-11-18 | Restaurant named Hyderabad House. Agent no longer tells callers to phone the restaurant; unpriced desserts/drinks/specials are offered at the counter instead. |
+| 2026-11-22 | Drinks, shakes, desserts and pastries added to the phone menu with placeholder prices (`placeholder_price` tag). Only daily specials are still counter-only. |

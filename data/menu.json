@@ -16,7 +16,7 @@
       "Indian restaurant (Andhra / Hyderabadi / South Indian / Indo-Chinese).",
       "Dishes are made at the spice level normal for the dish. If the caller wants it milder or spicier, put that in the item's notes.",
       "Some products contain nuts. Items marked 'Contains nuts' have nuts; for other allergy questions, don't guess and suggest they ask the restaurant.",
-      "We also serve desserts (e.g. gulab jamun, rasmalai, gajar ka halwa, double ka meeta, brownie sizzler), pastries, shakes and drinks (e.g. mango lassi, falooda, badam milk, sodas), and daily specials (Tuesday South Indian breakfast thali, Wednesday mandi, Thursday buffet and pot biryani, weekend specials). These can't be added to a phone order yet. If asked, say so briefly and warmly, and tell the caller they can add them at the counter when they pick up. Don't tell them to call the restaurant: they are already talking to the restaurant."
+      "Daily specials (Tuesday South Indian breakfast thali, Wednesday mandi, Thursday buffet and pot biryani, weekend specials) can't be added to a phone order yet. If asked, say so briefly and warmly, and tell the caller they can order them at the counter when they pick up. Don't tell them to call the restaurant: they are already talking to the restaurant."
     ]
   },
   "items": [
@@ -211,6 +211,23 @@
     {"id": "kids_chicken_pakora", "name": "Kids Chicken Pakora (boneless)", "category": "Kids Menu (under 10 only)", "price": 9.0, "description": "Non-veg. Contains nuts."},
     {"id": "kids_nuggets_lassi", "name": "Nuggets + Mango Lassi", "category": "Kids Menu (under 10 only)", "price": 7.0, "description": "Non-veg."},
     {"id": "kids_chocolate_dosa", "name": "Kids Chocolate Dosa", "category": "Kids Menu (under 10 only)", "price": 5.0, "description": "Vegetarian."},
-    {"id": "kids_cone_dosa", "name": "Cone Dosa", "category": "Kids Menu (under 10 only)", "price": 5.0, "description": "Vegetarian."}
+    {"id": "kids_cone_dosa", "name": "Cone Dosa", "category": "Kids Menu (under 10 only)", "price": 5.0, "description": "Vegetarian."},
+    {"id": "soda", "name": "Soda (can)", "category": "Drinks", "price": 2.0, "description": "Vegetarian.", "options": {"flavor": {"choices": {"coke": 0.0, "diet coke": 0.0, "sprite": 0.0, "fanta": 0.0, "thums up": 0.0, "limca": 0.0}, "required": true}}, "placeholder_price": true},
+    {"id": "bottled_water", "name": "Bottled Water", "category": "Drinks", "price": 1.5, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "mango_lassi", "name": "Mango Lassi", "category": "Drinks", "price": 5.0, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "lassi", "name": "Lassi", "category": "Drinks", "price": 4.5, "description": "Vegetarian.", "options": {"style": {"choices": {"sweet": 0.0, "salt": 0.0}, "required": true}}, "placeholder_price": true},
+    {"id": "masala_chai", "name": "Masala Chai", "category": "Drinks", "price": 3.0, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "filter_coffee", "name": "Filter Coffee", "category": "Drinks", "price": 3.5, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "badam_milk", "name": "Badam Milk", "category": "Drinks", "price": 5.0, "description": "Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "rose_milk", "name": "Rose Milk", "category": "Drinks", "price": 4.5, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "falooda", "name": "Falooda", "category": "Drinks", "price": 8.0, "description": "Rose syrup, vermicelli, basil seeds and ice cream. Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "milkshake", "name": "Milkshake", "category": "Shakes", "price": 6.0, "description": "Vegetarian.", "options": {"flavor": {"choices": {"mango": 0.0, "chikoo": 0.0, "strawberry": 0.0, "chocolate": 0.0, "oreo": 0.5}, "required": true}}, "placeholder_price": true},
+    {"id": "gulab_jamun", "name": "Gulab Jamun (2 pieces)", "category": "Desserts", "price": 5.0, "description": "Vegetarian.", "placeholder_price": true},
+    {"id": "rasmalai", "name": "Rasmalai (2 pieces)", "category": "Desserts", "price": 6.0, "description": "Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "gajar_ka_halwa", "name": "Gajar Ka Halwa", "category": "Desserts", "price": 6.0, "description": "Carrot pudding. Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "double_ka_meeta", "name": "Double Ka Meeta", "category": "Desserts", "price": 6.0, "description": "Hyderabadi bread pudding. Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "qubani_ka_meetha", "name": "Qubani Ka Meetha", "category": "Desserts", "price": 7.0, "description": "Hyderabadi apricot dessert. Vegetarian. Contains nuts.", "placeholder_price": true},
+    {"id": "brownie_sizzler", "name": "Brownie Sizzler", "category": "Desserts", "price": 9.0, "description": "Hot brownie with ice cream and chocolate sauce. Vegetarian.", "placeholder_price": true},
+    {"id": "pastry", "name": "Pastry (slice)", "category": "Pastries", "price": 4.5, "description": "Vegetarian.", "options": {"flavor": {"choices": {"black forest": 0.0, "pineapple": 0.0, "butterscotch": 0.0, "chocolate truffle": 0.0}, "required": true}}, "placeholder_price": true}
   ]
 }

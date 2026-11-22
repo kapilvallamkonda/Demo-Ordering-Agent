@@ -94,3 +94,13 @@ def test_real_menu_loads_with_unique_ids():
         assert item.price > 0
         for grp in item.options.values():
             assert grp.choices and min(grp.choices.values()) >= 0
+
+
+def test_real_menu_drinks_and_desserts_are_orderable():
+    menu = load_menu()
+    order = Order(menu=menu)
+    order.add_item("soda", options={"flavor": "coke"})
+    order.add_item("mango_lassi")
+    order.add_item("gulab_jamun")
+    assert order.subtotal == 12.0
+    assert "Soda" in menu.to_prompt_text() and "placeholder" not in menu.to_prompt_text()
