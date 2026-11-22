@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (product name Ringcart, set in one place).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (read the menu from a link).
 
 ## 1. Goal
 
@@ -68,7 +68,7 @@ flowchart LR
 | Storage | `phone_agent/storage.py` | Businesses, catalog versions, placed orders (order and payment status, per-business order numbers) and call transcripts, in SQLite. All SQL is in this file. |
 | POS integrations | `phone_agent/pos.py`, `pos_square.py`, `pos_clover.py`; `server.py` `/pos/<provider>/callback` | Connects a business's Square or Clover account (OAuth, encrypted tokens), sends each placed order to it in the background with retries, records the online payment there, imports the POS catalog into a catalog file. Section 13. |
 | Terminal client | `phone_agent/cli.py` | Same agent without a phone, for testing. |
-| Self-serve | `phone_agent/onboarding.py`, `google_auth.py`, `catalog_import.py`, `numbers.py`; `static/landing.html`, `static/manage.html` | Sign in with Google, create a business, read a menu from photos (Claude), test chat, go live (buys a Twilio number or queues it for approval), team, orders and calls per business, POS connect, operator approvals, usage limits. Section 16. |
+| Self-serve | `phone_agent/onboarding.py`, `google_auth.py`, `catalog_import.py`, `menu_link.py`, `numbers.py`; `static/landing.html`, `static/manage.html` | Sign in with Google, create a business, read a menu from a link or photos (Claude), test chat, go live (buys a Twilio number or queues it for approval), team, orders and calls per business, POS connect, operator approvals, usage limits. Section 16. |
 | Templates | `phone_agent/templates.py`; starters in `data/templates/` | What kind of business it is: modules (which tools a call gets), words, prompt role and rules, greeting, tags and settings changes. Section 15. |
 | Catalog manager | `phone_agent/manage.py` (`/manage`, `/api/manage/...`), `static/manage.html`, `accounts.py`, `settings_schema.py`, `catalog_check.py` | Web page where business staff sign in and edit their own catalog (items, descriptions, prices, choices, extras, sold out) and settings. Edits autosave to a draft; publishing makes a new catalog version used from the next call. History with restore. Section 14. |
 | Orders dashboard | `server.py` `/dashboard`, `/orders`, `/calls`; `phone_agent/static/dashboard.html` | Staff view of phone orders: today's count and sales, each order's items, total, order and payment status; filter, search, refreshes every 10 s. A Calls tab lists every call (with or without an order) and its transcript. The page holds no data and reads the API with the admin token. |
@@ -323,6 +323,12 @@ hours, notes) live in each business's catalog, not in environment variables.
   automatic phone numbers per account and per day across everyone (the rest wait for an
   operator), menu reads and test-chat turns per business per day, team size. Uploads are
   capped (10 files, 20 MB) and only JPEG/PNG/WebP/GIF/PDF are accepted.
+- Menu links (`menu_link.py`) make the server fetch an address a stranger typed, so each
+  hop (redirects are followed by hand, at most 4) must be http(s) on a standard port with
+  no credentials, and its host must resolve only to public addresses (no loopback,
+  private, link-local, carrier-grade NAT or metadata ranges; IPv4-mapped IPv6 unwrapped).
+  Downloads are capped at 8 MB and 20 seconds; only the page's visible text (no scripts)
+  goes to Claude, as a text document.
 - `RELAY_EXTRA_ATTRS` can't override `url` or `welcomeGreeting`.
 - POS access tokens are encrypted at rest (Fernet, `POS_SECRET_KEY`); losing the key
   means reconnecting every business. Connect links carry an HMAC-signed state naming
@@ -348,7 +354,7 @@ hours, notes) live in each business's catalog, not in environment variables.
 | POS rejects the order (other 4xx) | Not retried; shown as "Not on POS" with the error for staff. |
 | One business's catalog can't be loaded | Only that business goes offline: its callers hear "this number isn't taking orders", it's logged at startup and shown as `broken` in `/businesses` and `businesses list`. Every other business keeps working. |
 | Unexpected error looking up or starting a call | Caught per call: that caller hears the short apology; other calls aren't affected. |
-| Reading menu photos fails, is refused, or is too long | The owner sees a plain message (try clearer photos, fewer pages, or again); the draft is unchanged. |
+| Reading a menu (photos, PDF or link) fails, is refused, or is too long | The owner sees a plain message (try clearer photos, fewer pages, photos instead of a link, or again); the draft is unchanged. |
 | Buying a number fails (none in that area code, Twilio error) | The owner sees a message (try a nearby area code); a `failed` request is recorded; no number, nothing charged. |
 | One business gets more calls than `MAX_CALLS_PER_BUSINESS` | New callers to that business hear "all our lines are busy"; other businesses still answer. |
 
@@ -621,8 +627,12 @@ A business sets itself up without us, like creating any online account.
    person, with a draft catalog holding the name and default settings.
 3. **Home: a five-step checklist**: details (tax, pickup time, hours), catalog, try it,
    publish, go live. Each step has its button.
-4. **Read the menu** (`catalog_import.py`): up to 10 photos (resized to JPEG in the browser)
-   or PDFs go to Claude (`claude-opus-5-5`, effort medium, server-side refusal fallback)
+4. **Read the menu** (`catalog_import.py`): a link to the menu on their website, or up to
+   10 photos (resized to JPEG in the browser) or PDFs. A link is fetched by
+   `menu_link.py` (security in section 9): an HTML page becomes its visible text (scripts,
+   styles and navigation markup dropped; at least 3 prices or the owner is asked for
+   photos instead, since script-drawn menus come back empty), a linked PDF or image is
+   passed as is. Everything goes to Claude (`claude-opus-5-5`, effort medium, server-side refusal fallback)
    in one streaming call with a JSON-schema output: items with price, category,
    description tags from the template, options with added prices, extras; plus the
    address, hours and notes it could read. Items are added to (or replace) the draft with
@@ -659,7 +669,11 @@ A business sets itself up without us, like creating any online account.
   business, emails (go-live approved, new team member), new-order notifications (the
   pages poll), US numbers only, menu photos in HEIC from some phones (converted in Safari
   only; other browsers should upload JPEG). Test-chat sessions are in memory (lost on
-  restart, one machine).
+  restart, one machine). Reading a menu is one long request (a 376-item menu link took
+  3.5 minutes): it should become a background job the page polls. Menu links: menus drawn
+  by scripts (many ordering sites) can't be read without a browser; the address check
+  can be bypassed by DNS rebinding (checked at resolve time, the client resolves again),
+  so pin the connection to the checked address before production.
 - Shared between businesses (section 5): one Anthropic key (a rate-limit or billing
   problem stops every business; per-business keys or limits would need a gateway), one
   Stripe account and SMS number (phase 3), one SQLite file behind one lock (Postgres),
@@ -740,3 +754,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Modules and isolation: call logic split into modules (`phone_agent/modules/`, orders built, bookings registered as coming soon) with a generic agent, dispatcher and call session (`session.py`); the prompt is unchanged. Businesses isolated: a broken catalog only takes its own business offline; `/ws` requires a per-call token from `/voice` and a matching dialed number; `MAX_CALLS_PER_BUSINESS`; POS retries on timers with at most 2 jobs per business; catalog versions looked up within their business. |
 | 2026-11-22 | Self-serve sign-up and onboarding: landing page, sign in with Google, create a business from a template, read the menu from photos or PDF with Claude, test chat in the browser, go live (automatic number purchase within limits, operator approval past them), pause/resume, team by email with owner/manager roles, per-business orders and calls, POS connect buttons, operator queue. Database schema versioning (`Store._migrate`, version 2). |
 | 2026-11-22 | Product name **Ringcart**, set in one place: `BRAND_NAME` (`phone_agent/brand.py`) fills `{{BRAND}}` in the landing page, `/manage` and the dashboard; new logo mark in place of the phone emoji. Code, repo and Fly app names unchanged. |
+| 2026-11-22 | Read the menu from a link: owners paste their menu's web address instead of uploading photos (`menu_link.py`: public-address check on every hop, size and time caps, visible page text or a linked PDF/image to Claude as before). Tested on a real 376-item restaurant menu page: every price matched. |

@@ -43,7 +43,7 @@ def app(tmp_path, monkeypatch):
     server.app.state.client, server.app.state.payments, server.app.state.numbers = fake, None, numbers
     with TestClient(server.app, base_url="https://agent.example") as c:
         yield c, server.app.state.store, fake, numbers
-    for attr in ("client", "payments", "numbers", "test_chats", "google_http"):
+    for attr in ("client", "payments", "numbers", "test_chats", "google_http", "menu_http", "menu_resolve"):
         if hasattr(server.app.state, attr):
             delattr(server.app.state, attr)
 
@@ -215,6 +215,53 @@ def test_import_reads_photos_into_the_draft(app):
     r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": out["draft"]["revision"]},
                files=[("files", ("menu.heic", b"x", "image/heic"))], headers=W)
     assert r.status_code == 400 and "JPEG" in r.json()["detail"]
+
+
+MENU_PAGE = """<html><head><title>Rosa's</title><script>var price = "$999.99";</script></head><body>
+<nav>Home | Order | Other location</nav><h2>Pastry</h2>
+<div>Croissant <span>$3.50</span></div><div>Cake <span>$30.00</span></div><div>Tea <span>$2.00</span></div>
+</body></html>"""
+
+
+def test_import_reads_a_menu_link(app):
+    c, store, fake, _ = app
+    sign_in(c, store)
+    b = new_business(c)
+    seen = []
+
+    def site(req):
+        seen.append(str(req.url))
+        if req.url.path == "/menu":
+            return httpx.Response(301, headers={"location": "/food-menu"})
+        return httpx.Response(200, text=MENU_PAGE, headers={"content-type": "text/html; charset=utf-8"})
+
+    server.app.state.menu_http = httpx.AsyncClient(transport=httpx.MockTransport(site))
+
+    async def resolve(host, port):
+        return {"rosas.example": ["93.184.216.34"], "inside.example": ["10.0.0.7"]}[host]
+
+    server.app.state.menu_resolve = resolve
+    fake.script = [message(text_block(json.dumps(EXTRACTED)))]
+    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": b["draft"]["revision"]},
+               data={"url": "rosas.example/menu"}, headers=W)
+    assert r.status_code == 200, r.text
+    assert r.json()["added"] == 2
+    assert seen == ["https://rosas.example/menu", "https://rosas.example/food-menu"]  # https added, redirect followed
+    doc = fake.requests[-1]["messages"][0]["content"][0]
+    assert doc["type"] == "document" and doc["source"]["type"] == "text"
+    assert "Croissant $3.50" in doc["source"]["data"] and "$999.99" not in doc["source"]["data"]  # no scripts
+    rev = r.json()["draft"]["revision"]
+    # A link to a private address is refused before anything is fetched.
+    n = len(seen)
+    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev},
+               data={"url": "https://inside.example/menu"}, headers=W)
+    assert r.status_code == 400 and "public" in r.json()["detail"] and len(seen) == n
+    # Link and files together, or neither.
+    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev}, data={"url": "rosas.example"},
+               files=[("files", ("m.png", b"png", "image/png"))], headers=W)
+    assert r.status_code == 400
+    r = c.post(f"/api/manage/businesses/{b['id']}/import", params={"revision": rev}, data={"url": " "}, headers=W)
+    assert r.status_code == 400
 
 
 def test_import_limits_per_day(app, monkeypatch):

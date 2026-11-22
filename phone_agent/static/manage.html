@@ -130,6 +130,8 @@
                 font-weight: 600; text-decoration: none; color: var(--text); }
   .gicon { display: inline-flex; background: #fff; border-radius: 50%; padding: 3px; }
   .btn.big { padding: 11px 20px; font-size: 15px; }
+  .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin: 4px 0 10px; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
   details.pwlogin { margin-top: 16px; } details.pwlogin summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 10px; }
   .card.wide { width: min(640px, 100%); }
   .kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
@@ -600,7 +602,7 @@
       el("div", { class: "toolbar" }, search, chip("all", `All ${items.length}`),
         nOff ? chip("off", `${W().unavailable_short} ${nOff}`) : null, nEst ? chip("est", `Estimated price ${nEst}`) : null,
         el("span", { class: "grow" }),
-        el("button", { class: "btn", onclick: openImport }, "Read from photos or PDF"),
+        el("button", { class: "btn", onclick: openImport }, "Read from a link, photos or PDF"),
         el("button", { class: "btn primary", onclick: () => openItem(null) }, "+ Add " + W().item)),
       cats.length ? cats.map(cat => categoryBlock(cat, byCat.get(cat), !!q || S.filter !== "all"))
         : el("div", { class: "empty" }, items.length ? `No ${W().items} match.` : `No ${W().items} yet. Add your first one.`));
@@ -943,9 +945,9 @@
         text: "Sales tax, pickup time and opening hours, so the agent can quote totals and times.",
         action: el("button", { class: "btn", onclick: () => { S.tab = "settings"; render(); } }, "Edit details") },
       { done: S.catalog.items.length > 0, title: `Add your ${W().catalog}`,
-        text: `Upload photos or a PDF of your ${W().catalog} and we'll read it for you. Or add ${W().items} by hand.`,
+        text: `Paste a link to your ${W().catalog}, or upload photos or a PDF of it, and we'll read it for you. Or add ${W().items} by hand.`,
         action: el("div", { class: "row wrap" },
-          el("button", { class: "btn primary", onclick: openImport }, "Upload photos or PDF"),
+          el("button", { class: "btn primary", onclick: openImport }, "Add from a link, photos or PDF"),
           el("button", { class: "btn", onclick: () => { S.tab = "catalog"; render(); } }, "Add by hand")) },
       { done: tried, title: "Try it out",
         text: "Chat with your agent the way a caller would. Nothing is saved and no one is charged.",
@@ -1156,7 +1158,7 @@
              end_call: "Hung up" }[e.tool] || e.tool;
   };
 
-  // ---- read a menu from photos or a PDF ----
+  // ---- read a menu from a link, photos or a PDF ----
   async function shrink(file) {  // big phone photos -> JPEG under 2000px, so uploads are quick
     if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
     try {
@@ -1174,17 +1176,21 @@
     try { await flush(); } catch (e) { return toast("Couldn't save: " + e.message); }
     const { body, close } = sidePanel(`Read your ${W().catalog}`);
     const files = el("input", { type: "file", multiple: true, accept: "image/*,application/pdf", id: "files" });
+    const link = el("input", { type: "url", id: "menulink", placeholder: "https://yourwebsite.com/menu", autocomplete: "url", maxlength: 2000 });
     const hasItems = S.catalog.items.length > 0;
     const mode = el("select", { "aria-label": "What to do with what's there" },
       el("option", { value: "append" }, `Add to my ${W().catalog}`), el("option", { value: "replace" }, `Replace my ${W().catalog}`));
     const status = el("div", { "aria-live": "polite" });
     const go = el("button", { class: "btn primary big", onclick: async () => {
-      if (!files.files.length) return toast("Choose at least one photo or PDF.");
+      const url = link.value.trim();
+      if (url && files.files.length) return toast("Use either the link or files, not both.");
+      if (!url && !files.files.length) return toast("Paste a link, or choose at least one photo or PDF.");
       go.disabled = true;
       status.replaceChildren(el("div", { class: "note info" }, el("strong", {}, "Reading…"),
-        ` This usually takes under a minute. We're turning ${files.files.length} file(s) into ${W().items}.`));
+        ` We're turning ${url ? "your page" : files.files.length + " file(s)"} into ${W().items}. Big ${W().catalog}s can take a few minutes; keep this open.`));
       try {
         const form = new FormData();
+        if (url) form.append("url", url);
         for (const f of files.files) form.append("files", await shrink(f));
         const r = await upload(`/businesses/${S.rid}/import?mode=${mode.value}` + (S.revision ? `&revision=${S.revision}` : ""), form);
         S.ed = r; S.catalog = structuredClone(r.catalog); S.revision = r.draft ? r.draft.revision : null;
@@ -1194,7 +1200,9 @@
       } catch (e) { status.replaceChildren(el("p", { class: "err" }, e.message)); go.disabled = false; }
     } }, `Read my ${W().catalog}`);
     body.append(...[
-      el("p", { class: "sub" }, `Take clear photos of every page of your ${W().catalog} (or upload a PDF). We'll list every ${W().item} with its price and choices. You review everything before it goes live.`),
+      el("p", { class: "sub" }, `Paste the link to your ${W().catalog} on your website, or upload photos or a PDF of it. We'll list every ${W().item} with its price and choices. You review everything before it goes live.`),
+      el("div", { class: "field" }, el("label", { for: "menulink" }, `Link to your ${W().catalog}`), link),
+      el("div", { class: "or" }, "or"),
       el("div", { class: "field" }, el("label", { for: "files" }, "Photos or PDF (up to 10)"), files),
       hasItems ? el("div", { class: "field" }, el("span", { class: "lbl" }, `You already have ${S.catalog.items.length} ${W().items}`), mode) : null,
       el("p", { class: "sub" }, "Prices we can't read are marked “estimated” for you to check."),

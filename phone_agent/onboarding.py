@@ -1,7 +1,7 @@
 """Self-serve: everything a business does in the web app beyond editing its catalog.
 
   create a business   POST /api/manage/businesses
-  read a menu         POST /api/manage/businesses/{id}/import        (photos or PDF -> draft items)
+  read a menu         POST /api/manage/businesses/{id}/import        (photos, PDF or a link -> draft items)
   try the agent       POST /api/manage/businesses/{id}/test-chat     (typed conversation, nothing saved)
   go live             POST /api/manage/businesses/{id}/go-live       (buys a number, or queues a request)
   pause / resume      POST /api/manage/businesses/{id}/pause|resume
@@ -25,10 +25,11 @@ import secrets
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from .catalog import CatalogError, parse_catalog
 from .catalog_check import check_catalog
+from . import menu_link
 from .catalog_import import ImportError_, merge_items, read_catalog
 from .manage import Who, _business, _check_write, _editor_state, _json, _who
 from .numbers import NumberError
@@ -106,8 +107,9 @@ async def create_business(request: Request) -> dict:
 
 
 @router.post("/api/manage/businesses/{business_id}/import")
-async def import_catalog(request: Request, business_id: int, files: list[UploadFile], mode: str = "append",
-                         revision: int | None = None) -> dict:
+async def import_catalog(request: Request, business_id: int, files: list[UploadFile] = File(default=[]),
+                         url: str = Form(default=""), mode: str = "append", revision: int | None = None) -> dict:
+    """Photos or PDFs (`files`), or a link to the menu (`url`), never both."""
     who = _who(request)
     _check_write(request)
     row = _business(request, who, business_id)
@@ -116,13 +118,20 @@ async def import_catalog(request: Request, business_id: int, files: list[UploadF
     catalog = draft["catalog"] if draft else store.catalog_payload(row.catalog_id)
     if draft and draft["revision"] != revision:
         raise HTTPException(status_code=409, detail="someone else changed this catalog; reload first")
+    if url.strip() and files:
+        raise HTTPException(status_code=400, detail="upload files or paste a link, not both")
+    if not url.strip() and not files:
+        raise HTTPException(status_code=400, detail="add at least one photo or PDF, or paste a link")
     if not store.take_usage(f"business:{row.id}", "import", _today(), limits()["imports_per_day"]):
-        raise HTTPException(status_code=429, detail="you've read the most files allowed today; try again tomorrow")
+        raise HTTPException(status_code=429, detail="you've read the most menus allowed today; try again tomorrow")
     uploads = []
     for f in files:
         data = await f.read()
         uploads.append(((f.content_type or "").split(";")[0].strip().lower(), data))
     try:
+        if url.strip():
+            uploads = [await menu_link.fetch(url, getattr(request.app.state, "menu_http", None),
+                                             getattr(request.app.state, "menu_resolve", None) or menu_link.resolve_host)]
         result = await read_catalog(request.app.state.client, uploads, get_template(catalog.get("template")),
                                     catalog["settings"])
     except ImportError_ as e:
@@ -139,7 +148,8 @@ async def import_catalog(request: Request, business_id: int, files: list[UploadF
     new_revision = store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label)
     if new_revision is None:
         raise HTTPException(status_code=409, detail="someone else changed this catalog; reload first")
-    log.info("business %s: read %d items from %d files", row.slug, len(result["items"]), len(uploads))
+    log.info("business %s: read %d items from %s", row.slug, len(result["items"]),
+             "a link" if url.strip() else f"{len(uploads)} files")
     return {"added": len(result["items"]), "unreadable": result["unreadable"],
             **_editor_state(request, store.business(row.id))}
 

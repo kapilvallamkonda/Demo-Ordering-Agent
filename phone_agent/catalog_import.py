@@ -1,4 +1,4 @@
-"""Read a business's menu or price list from photos or a PDF into catalog items.
+"""Read a business's menu or price list from photos, a PDF or a web page into catalog items.
 
 One Claude call (vision + PDF input) with a JSON-schema output, so the result always
 parses. The items go into the business's draft for review; nothing is published or
@@ -21,6 +21,7 @@ MAX_FILES = 10
 MAX_TOTAL_BYTES = 20_000_000  # raw; the request limit is 32 MB after base64
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 PDF_TYPE = "application/pdf"
+TEXT_TYPE = "text/plain"
 
 
 class ImportError_(Exception):
@@ -94,8 +95,9 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPT = """These are photos or a PDF of the {catalog} of a {business} called "{name}". \
-Turn everything orderable into items for a phone ordering system.
+PROMPT = """These are photos, a PDF or the text of a web page showing the {catalog} of a {business} \
+called "{name}". Turn everything orderable into items for a phone ordering system. On a web page, \
+ignore navigation, links to other locations and anything that isn't the {catalog} itself.
 
 Rules:
 - One item per {item}. Copy names exactly as printed. Use the printed section heading as the category.
@@ -127,6 +129,9 @@ def build_content(files: list[tuple[str, bytes]], prompt: str) -> list[dict]:
         b64 = base64.standard_b64encode(data).decode()
         if media_type == PDF_TYPE:
             content.append({"type": "document", "source": {"type": "base64", "media_type": PDF_TYPE, "data": b64}})
+        elif media_type == TEXT_TYPE:  # a web page's text, from a menu link
+            content.append({"type": "document", "title": "Menu web page",
+                            "source": {"type": "text", "media_type": TEXT_TYPE, "data": data.decode(errors="replace")}})
         elif media_type in IMAGE_TYPES:
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}})
         else:
