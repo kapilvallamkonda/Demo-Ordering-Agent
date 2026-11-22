@@ -35,6 +35,8 @@
   .btn:hover { border-color: var(--muted); }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   .btn.danger { color: var(--bad); }
+  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .startover { margin-top: 18px; }
   .btn.small { padding: 3px 10px; font-size: 13px; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; }
@@ -491,6 +493,30 @@
     render();
   }
 
+  // Before the first publish: wipe everything back to a fresh business (name and type kept).
+  const canStartOver = () => !S.ed.live_catalog_id && isOwner();
+  async function startOver() {
+    const n = S.catalog.items.length;
+    const ok = await ask({ title: "Start over?",
+      body: `This clears your ${W().catalog}${n ? ` (${n === 1 ? `1 ${W().item}` : `all ${n} ${W().items}`})` : ""} and every detail you've set, like tax, hours and notes. Your business name and type stay. This can't be undone.`,
+      ok: "Start over", danger: true });
+    if (!ok) return;
+    clearTimeout(S.saveTimer);
+    try { await flush(); } catch {}
+    try { S.ed = await api("POST", `/businesses/${S.rid}/start-over`, { revision: S.revision }); }
+    catch (e) { return toast(e.message); }
+    S.catalog = structuredClone(S.ed.catalog); S.revision = S.ed.draft ? S.ed.draft.revision : null;
+    S.dirty = false; S.tab = "home"; render();
+    toast("Started over. Everything is back to how it was when you created the business.");
+  }
+  function startOverPanel() {
+    if (!canStartOver()) return null;
+    return el("section", { class: "panel", style: "margin-top:14px" },
+      el("h2", {}, "Start over"),
+      el("p", { class: "sub" }, `Until you publish, you can clear everything (your ${W().catalog} and all details) and set it up again from scratch.`),
+      el("button", { class: "btn danger", type: "button", onclick: startOver }, "Start over…"));
+  }
+
   // ---- dialogs ----
   function ask({ title, body, ok = "OK", cancel = "Cancel", danger = false, input = null }) {
     return new Promise(resolve => {
@@ -903,7 +929,7 @@
             el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
           f.help ? el("span", { class: "help" }, f.help) : null);
       }))),
-      el("p", { class: "sub" }, "Callers hear changes after you publish.")), posPanel());
+      el("p", { class: "sub" }, "Callers hear changes after you publish.")), posPanel(), startOverPanel());
   }
 
   // ---- history tab ----
@@ -995,7 +1021,10 @@
         el("span", { class: "tick", "aria-hidden": "true" }, s.done ? "✓" : String(i + 1)),
         el("div", { class: "grow" }, el("h3", {}, s.title, s.done ? el("span", { class: "sr" }, " (done)") : null),
           el("p", { class: "sub" }, s.text), s.problem ? el("p", { class: "err" }, s.problem) : null,
-          !s.done || i === 1 || i === 2 ? s.action : null)))));
+          !s.done || i === 1 || i === 2 ? s.action : null)))),
+      canStartOver() && (S.catalog.items.length || S.ed.draft) ? el("p", { class: "sub startover" }, "Want a clean slate? ",
+        el("button", { class: "linkbtn", type: "button", onclick: startOver }, "Start over"),
+        " clears everything you've set up so far.") : null);
   }
 
   function goLiveWidget(published) {

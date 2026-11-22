@@ -460,3 +460,32 @@ def test_orders_and_calls_are_scoped_to_the_business(app):
     assert c.get(f"/api/manage/businesses/{b['id']}/calls").json() == []
     assert c.get(f"/api/manage/businesses/{b['id']}/calls/CAother").status_code == 404
     assert c.get(f"/api/manage/businesses/{other}/orders").status_code == 404
+
+
+def test_start_over_before_publishing_only(app):
+    c, store, fake, _ = app
+    sign_in(c, store)
+    b = new_business(c, "Rosa's Bakery")
+    ed = c.get(f"/api/manage/businesses/{b['id']}/editor").json()
+    cat = ed["catalog"]
+    cat["settings"].update(tax_rate=0.08, hours="9-5", notes=["Cash only"])
+    cat["items"] = [{"id": "tea", "name": "Tea", "category": "Drinks", "price": 2.0, "description": ""}]
+    rev = c.put(f"/api/manage/businesses/{b['id']}/draft", json={"catalog": cat, "revision": ed["draft"]["revision"]},
+                headers=W).json()["revision"]
+    # A stale page can't wipe newer edits.
+    assert c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": rev - 1}, headers=W).status_code == 409
+    # A manager can't; the owner can.
+    sign_in(c, store, "raj@example.com")
+    store.grant(store.user_by_email("raj@example.com")["id"], b["id"], role="manager")
+    assert c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": rev}, headers=W).status_code == 403
+    sign_in(c, store)
+    r = c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": rev}, headers=W)
+    assert r.status_code == 200, r.text
+    fresh = r.json()["catalog"]
+    assert fresh["items"] == [] and fresh["template"] == "retail"
+    assert fresh["settings"]["name"] == "Rosa's Bakery" and "tax_rate" not in fresh["settings"]
+    assert fresh["settings"]["notes"] == [] and "hours" not in fresh["settings"]
+    # After publishing, it's refused (Discard goes back to the published version instead).
+    fill_and_publish(c, b["id"])
+    r = c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": None}, headers=W)
+    assert r.status_code == 400 and "published" in r.json()["detail"]

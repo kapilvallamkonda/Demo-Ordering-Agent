@@ -6,6 +6,7 @@
   try the agent       POST /api/manage/businesses/{id}/test-chat     (typed conversation, nothing saved)
   go live             POST /api/manage/businesses/{id}/go-live       (buys a number, or queues a request)
   pause / resume      POST /api/manage/businesses/{id}/pause|resume
+  start over          POST /api/manage/businesses/{id}/start-over    (before the first publish)
   team                GET/POST/DELETE /api/manage/businesses/{id}/team
   orders and calls    GET /api/manage/businesses/{id}/orders|calls|calls/{call_id}
   POS                 GET/POST/DELETE /api/manage/businesses/{id}/pos
@@ -94,15 +95,44 @@ async def create_business(request: Request) -> dict:
     business_id = store.create_business(_slug(store, name))
     if who.user:
         store.grant(who.user["id"], business_id, role="owner")
-    catalog = {
-        "template": template.id,
+    store.save_draft(business_id, _fresh_catalog(template.id, name), None, None, who.label)
+    log.info("%s created business %s (%s)", who.label, business_id, template.id)
+    return {"id": business_id, **_editor_state(request, store.business(business_id))}
+
+
+def _fresh_catalog(template_id: str, name: str) -> dict:
+    """A new business's starting draft: just its name and default settings, no items."""
+    return {
+        "template": template_id,
         "settings": {"name": name, "order_types": ["pickup"], "pickup_minutes": 20,
                      "payment": {"required_before_cooking": False, "pay_within_minutes": 30}, "notes": []},
         "items": [],
     }
-    store.save_draft(business_id, catalog, None, None, who.label)
-    log.info("%s created business %s (%s)", who.label, business_id, template.id)
-    return {"id": business_id, **_editor_state(request, store.business(business_id))}
+
+
+@router.post("/api/manage/businesses/{business_id}/start-over")
+async def start_over(request: Request, business_id: int) -> dict:
+    """Before the first publish only: wipe the draft back to how it was when the business
+    was created (keeping its name and type). After publishing, "Discard" does the job."""
+    who = _who(request)
+    _check_write(request)
+    row = _business(request, who, business_id)
+    _owner(who, row.id)
+    if row.catalog_id is not None:
+        raise HTTPException(status_code=400, detail="this business has been published; discard unpublished changes instead")
+    if any(j["business_id"] == row.id and j["state"] == "running" for j in _import_jobs(request.app).values()):
+        raise HTTPException(status_code=409, detail="wait for the menu reading to finish first")
+    data = await _json(request)
+    store = request.app.state.store
+    draft = store.draft(row.id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="nothing to start over")
+    catalog = draft["catalog"]
+    fresh = _fresh_catalog(catalog.get("template"), str(catalog.get("settings", {}).get("name") or row.slug))
+    if store.save_draft(row.id, fresh, None, data.get("revision"), who.label) is None:
+        raise HTTPException(status_code=409, detail="someone else changed this business; reload first")
+    log.info("%s started %s over", who.label, row.slug)
+    return _editor_state(request, store.business(row.id))
 
 
 # ---- read a menu from photos or a PDF --------------------------------------------------------
