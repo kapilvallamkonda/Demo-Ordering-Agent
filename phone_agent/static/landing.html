@@ -5,79 +5,225 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{BRAND}}</title>
 <meta name="application-name" content="{{BRAND}}">
-<meta name="description" content="An AI that answers your business's phone and takes orders. Set it up in minutes.">
+<meta name="description" content="An AI that answers your business's phone and takes orders. Set it up yourself in about ten minutes.">
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e4e1da;
-    --accent: #b4441f; --accent-text: #ffffff; --soft: #f3e3da;
+    --accent: #b4441f; --accent-hover: #9c3a19; --accent-text: #ffffff; --soft: #f3e3da; --ok: #2f8a4f;
+    --bubble: #f6f5f2; --shadow: 0 24px 48px -24px rgba(60,40,20,0.18);
+    /* the dark "why" band */
+    --band: #1d1c1a; --band-text: #ecebe7; --band-muted: #a29f97; --band-line: #34322e; --band-accent: #e0774f;
+    /* closing call to action */
+    --cta: #b4441f; --cta-text: #ffffff; --cta-btn: #ffffff; --cta-btn-text: #1d1c1a; --cta-btn-hover: #f6f5f2;
+    --mono: ui-monospace, Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #161513; --panel: #201f1c; --text: #ecebe7; --muted: #a29f97; --line: #34322e;
-            --accent: #e0774f; --accent-text: #1d1c1a; --soft: #3a2a22; }
+    :root {
+      --bg: #161513; --panel: #201f1c; --text: #ecebe7; --muted: #a29f97; --line: #34322e;
+      --accent: #e0774f; --accent-hover: #ea8e6a; --accent-text: #1d1c1a; --soft: #3a2a22; --ok: #5cb87a;
+      --bubble: #2a2926; --shadow: 0 24px 48px -24px rgba(0,0,0,0.6);
+      --band: #0e0d0c; --band-text: #ecebe7; --band-muted: #a29f97; --band-line: #2a2926; --band-accent: #e0774f;
+      --cta: #b4441f; --cta-text: #ffffff; --cta-btn: #ffffff; --cta-btn-text: #1d1c1a; --cta-btn-hover: #f3e3da;
+    }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; max-width: 1080px; margin: auto; }
-  .logo { font-weight: 750; font-size: 18px; display: flex; align-items: center; gap: 8px; }
-  .logo span { letter-spacing: -0.02em; }
-  .mark { flex: none; display: block; }
-  a.btn, button.btn { display: inline-flex; align-items: center; gap: 10px; border-radius: 10px; padding: 12px 20px; font-weight: 650;
-           text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer; }
-  a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  a.btn.small { padding: 8px 14px; font-size: 14px; }
-  main { max-width: 1080px; margin: auto; padding: 24px; }
-  .hero { padding: 48px 0 32px; max-width: 720px; }
-  h1 { font-size: clamp(32px, 5.5vw, 52px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
-  .lead { font-size: 19px; color: var(--muted); margin: 0 0 28px; }
-  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  h1, h2, h3, p, figure, ol { margin: 0; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-left: 24px; padding-right: 24px; }
+
+  /* header */
+  header { display: flex; justify-content: space-between; align-items: center; padding-top: 20px; padding-bottom: 20px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 750; font-size: 18px; letter-spacing: -0.02em; }
+  .mark { display: block; flex: none; }
+  nav { display: flex; align-items: center; gap: 22px; font-size: 15px; }
+  nav a.link { color: var(--muted); }
+  nav a.link:hover { color: var(--text); }
+  .btn.small { color: var(--text); border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+               padding: 8px 14px; font-weight: 650; font-size: 14px; }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 56px;
+          align-items: center; padding-top: 48px; padding-bottom: 72px; }
+  .hero-copy { display: flex; flex-direction: column; gap: 24px; }
+  .badge { display: inline-flex; align-self: flex-start; align-items: center; gap: 8px; background: var(--soft); color: var(--accent);
+           border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 650; }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  h1 { font-size: clamp(36px, 5.6vw, 60px); line-height: 1.04; letter-spacing: -0.03em; font-weight: 760; text-wrap: balance; }
+  .lead { font-size: 19px; color: var(--muted); max-width: 560px; text-wrap: pretty; }
+  .cta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+  .btn.primary { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--accent-text);
+                 border-radius: 10px; padding: 14px 22px; font-weight: 650; font-size: 16px; }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .g { width: 20px; height: 20px; background: #fff; border-radius: 50%; display: grid; place-items: center; flex: none; }
   .note { color: var(--muted); font-size: 14px; }
-  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 40px 0; }
-  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
-  .step .n { width: 28px; height: 28px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 700;
-             display: grid; place-items: center; margin-bottom: 10px; }
-  .step h3 { margin: 0 0 6px; font-size: 17px; }
-  .step p { margin: 0; color: var(--muted); font-size: 15px; }
-  .kinds { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .kind { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 14px; background: var(--panel); }
-  .kind.soon { color: var(--muted); }
-  footer { max-width: 1080px; margin: 40px auto 0; padding: 24px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
-  .g { width: 18px; height: 18px; background: #fff; border-radius: 50%; display: grid; place-items: center; }
-  @media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } .hero { padding-top: 24px; } }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+  .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px; }
+  .chip.soon { border-style: dashed; background: none; color: var(--muted); }
+
+  /* sample call (illustrative, static) */
+  .call { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); overflow: hidden; }
+  .call-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px;
+               border-bottom: 1px solid var(--line); }
+  .call-state { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 650; }
+  .call-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .call-time { font: 13px var(--mono); color: var(--muted); }
+  .call-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; font-size: 15px; }
+  .bubble { max-width: 85%; padding: 10px 14px; }
+  .bubble.caller { align-self: flex-start; background: var(--bubble); border-radius: 14px 14px 14px 4px; }
+  .bubble.agent { align-self: flex-end; background: var(--soft); border-radius: 14px 14px 4px 14px; }
+  .receipt { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; border: 1px solid var(--line); border-radius: 12px;
+             padding: 14px; font: 13px/1.5 var(--mono); }
+  .receipt div { display: flex; justify-content: space-between; gap: 12px; }
+  .receipt .dim { color: var(--muted); }
+  .receipt .ok { color: var(--ok); }
+
+  /* why */
+  .band { background: var(--band); color: var(--band-text); }
+  .band-inner { display: flex; flex-direction: column; gap: 48px; padding-top: 88px; padding-bottom: 88px; }
+  .intro2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 32px; align-items: end; }
+  h2 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; letter-spacing: -0.025em; font-weight: 740; text-wrap: balance; }
+  .band .big { font-size: 18px; color: var(--band-muted); text-wrap: pretty; }
+  .gains { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1px;
+           background: var(--band-line); border: 1px solid var(--band-line); border-radius: 16px; overflow: hidden; }
+  .gain { background: var(--band); padding: 28px; display: flex; flex-direction: column; gap: 10px; }
+  .gain .n { font: 13px var(--mono); color: var(--band-accent); }
+  .gain h3 { font-size: 19px; font-weight: 680; letter-spacing: -0.01em; }
+  .gain p { font-size: 15px; color: var(--band-muted); text-wrap: pretty; }
+
+  /* setup */
+  .setup { display: flex; flex-direction: column; gap: 48px; padding-top: 88px; padding-bottom: 88px; }
+  .setup-intro { display: flex; flex-direction: column; gap: 14px; max-width: 640px; }
+  .eyebrow { font: 13px var(--mono); color: var(--accent); }
+  .setup-intro p { font-size: 18px; color: var(--muted); text-wrap: pretty; }
+  .scale { display: flex; justify-content: space-between; font: 13px var(--mono); color: var(--muted); padding-bottom: 10px; }
+  .bar { height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--soft), var(--accent)); }
+  .steps { list-style: none; padding: 28px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 28px; }
+  .step { display: flex; flex-direction: column; gap: 8px; }
+  .step .n { width: 30px; height: 30px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 700;
+             display: grid; place-items: center; font-size: 15px; }
+  .step h3 { margin-top: 4px; font-size: 18px; font-weight: 680; }
+  .step p { font-size: 15px; color: var(--muted); text-wrap: pretty; }
+
+  /* closing call to action */
+  .closing { padding-bottom: 88px; }
+  .closing-card { background: var(--cta); color: var(--cta-text); border-radius: 20px; padding: 48px; display: flex; flex-wrap: wrap;
+                  justify-content: space-between; align-items: center; gap: 24px; }
+  .closing-card > div { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+  .closing-card h2 { font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; letter-spacing: -0.02em; }
+  .closing-card p { font-size: 16px; }
+  .btn.light { background: var(--cta-btn); color: var(--cta-btn-text); border-radius: 10px; padding: 14px 22px; font-weight: 650; font-size: 16px; }
+  .btn.light:hover { background: var(--cta-btn-hover); }
+
+  footer { max-width: 1120px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding-left: 16px; padding-right: 16px; }
+    footer { padding: 24px 16px; }
+    .hero { padding-top: 24px; }
+    nav { gap: 16px; }
+    .closing-card { padding: 32px 24px; }
+  }
+  @media (max-width: 400px) { nav a.link { display: none; } }
 </style>
 </head>
 <body>
-<header>
+<header class="wrap">
   <div class="logo"><svg class="mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" style="fill:var(--accent)"/><circle cx="14" cy="14" r="7.5" fill="none" stroke-width="2.6" style="stroke:var(--accent-text)"/><circle cx="14" cy="14" r="2.6" style="fill:var(--accent-text)"/></svg><span>{{BRAND}}</span></div>
-  <a class="btn small" href="/manage">Sign in</a>
+  <nav>
+    <a class="link" href="#why">Why</a>
+    <a class="link" href="#golive">Setup</a>
+    <a class="btn small" href="/manage">Sign in</a>
+  </nav>
 </header>
+
 <main>
-  <section class="hero">
-    <h1>Your phone, answered. Every order, taken.</h1>
-    <p class="lead">An AI that picks up your business's calls, knows your menu or products by heart,
-      takes the order and texts a payment link. Set it up yourself in about ten minutes.</p>
-    <div class="cta">
-      <a class="btn primary" href="/auth/google" id="start">
-        <span class="g" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg></span>
-        Get started with Google</a>
-      <span class="note">Free while in pilot. No card needed.</span>
+  <section class="wrap hero" data-screen-label="Hero">
+    <div class="hero-copy">
+      <div class="badge">Self-serve setup · no sales call</div>
+      <h1>Your AI phone line, live in ten minutes.</h1>
+      <p class="lead">An AI that picks up your business's calls, knows your menu or products by heart, takes the order and texts a payment link. Set it up yourself in about ten minutes.</p>
+      <div class="cta-row">
+        <a class="btn primary start" href="/auth/google">
+          <span class="g" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg></span>
+          Get started with Google</a>
+        <span class="note">Free while in pilot. No card needed.</span>
+      </div>
+      <div class="chips" aria-label="Works for">
+        <span class="chip">Restaurants</span><span class="chip">Bakeries</span><span class="chip">Florists</span>
+        <span class="chip">Shops</span><span class="chip">Services</span><span class="chip soon">Appointments (coming soon)</span>
+      </div>
     </div>
-    <div class="kinds" aria-label="Works for">
-      <span class="kind">Restaurants</span><span class="kind">Bakeries</span><span class="kind">Florists</span>
-      <span class="kind">Shops</span><span class="kind soon">Salons (coming soon)</span>
+
+    <figure class="call" aria-label="Example call">
+      <div class="call-head"><span class="call-state">Incoming call · answered</span><span class="call-time">Thu 11:18 AM</span></div>
+      <div class="call-body">
+        <div class="bubble caller">Hi, can I order a dozen red roses for pickup Saturday?</div>
+        <div class="bubble agent">Of course. Would you like them wrapped or in a vase?</div>
+        <div class="bubble caller">A vase, please. And add a card.</div>
+        <div class="bubble agent">A dozen red roses in a vase with a card, for Saturday pickup. Can I get a name for the order?</div>
+        <div class="receipt">
+          <div><span>Order #1042 · Priya</span><span class="ok">placed</span></div>
+          <div class="dim"><span>Payment link</span><span>texted to caller</span></div>
+          <div class="dim"><span>Sent to</span><span>Square POS</span></div>
+        </div>
+      </div>
+    </figure>
+  </section>
+
+  <section id="why" class="band" data-screen-label="Why">
+    <div class="wrap band-inner">
+      <div class="intro2">
+        <h2>Every call you can't pick up is a sale that goes elsewhere.</h2>
+        <p class="big">You're with a customer, the line is busy, and the caller buys somewhere else. {{BRAND}} answers every call so your team can stay with the people in front of them.</p>
+      </div>
+      <div class="gains">
+        <div class="gain"><span class="n">01</span><h3>Every call picked up</h3><p>Up to {{MAX_CALLS}} calls at once per business. Callers never hear a busy signal while you're slammed.</p></div>
+        <div class="gain"><span class="n">02</span><h3>Orders taken right</h3><p>It knows everything you sell, asks for required choices and reads the order back. Prices and totals come from your catalog, never guessed.</p></div>
+        <div class="gain"><span class="n">03</span><h3>Paid before pickup</h3><p>Callers get a secure payment link by text. Nobody reads card numbers over the phone, and you can require payment before you prepare the order.</p></div>
+        <div class="gain"><span class="n">04</span><h3>Straight to your POS</h3><p>Orders land on Square or Clover, or on the {{BRAND}} dashboard with today's count and sales.</p></div>
+        <div class="gain"><span class="n">05</span><h3>Every call on record</h3><p>Read the transcript of any call, including the ones that didn't end in an order.</p></div>
+        <div class="gain"><span class="n">06</span><h3>Changes go live instantly</h3><p>Mark an item sold out or change a price, press Publish, and the next caller hears it.</p></div>
+      </div>
     </div>
   </section>
-  <section class="steps" aria-label="How it works">
-    <div class="step"><div class="n">1</div><h3>Sign in</h3><p>Use your Google account. Pick what kind of business you run.</p></div>
-    <div class="step"><div class="n">2</div><h3>Add your menu</h3><p>Paste a link to it, or upload photos or a PDF. We turn it into a catalog you can tweak.</p></div>
-    <div class="step"><div class="n">3</div><h3>Try it</h3><p>Chat with your agent before any customer does.</p></div>
-    <div class="step"><div class="n">4</div><h3>Go live</h3><p>Get your own phone number, or forward your existing line to it.</p></div>
+
+  <section id="golive" class="wrap setup" data-screen-label="Go live">
+    <div class="setup-intro">
+      <span class="eyebrow">SETUP</span>
+      <h2>From sign-in to your first call in about ten minutes.</h2>
+      <p>No hardware, no installer, no one to call. You do it yourself, and you test the agent before any customer hears it.</p>
+    </div>
+    <div>
+      <div class="scale" aria-hidden="true"><span>0 min</span><span>~10 min</span></div>
+      <div class="bar" aria-hidden="true"></div>
+      <ol class="steps">
+        <li class="step"><div class="n">1</div><h3>Sign in</h3><p>Use your Google account. Pick what kind of business you run.</p></li>
+        <li class="step"><div class="n">2</div><h3>Add your menu or catalog</h3><p>Paste a link to it, or upload photos or a PDF. We turn it into a catalog you can tweak.</p></li>
+        <li class="step"><div class="n">3</div><h3>Try it</h3><p>Chat with your agent before any customer does.</p></li>
+        <li class="step"><div class="n">4</div><h3>Go live</h3><p>Get your own phone number, or forward your existing line to it.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="wrap closing" data-screen-label="CTA">
+    <div class="closing-card">
+      <div>
+        <h2>Answer tonight's calls with {{BRAND}}.</h2>
+        <p>Free while in pilot. No card needed.</p>
+      </div>
+      <a class="btn light start" href="/auth/google">Get started with Google</a>
+    </div>
   </section>
 </main>
+
 <footer>{{BRAND}} · Orders show up in your dashboard, or on your Square or Clover POS.</footer>
 <script>
-  // Without Google sign-in configured, send people to the regular sign-in page.
+  // Without Google sign-in configured, send people to the regular sign-in page (every CTA).
   fetch("/api/manage/config").then(r => r.json()).then(c => {
-    if (!c.google) document.getElementById("start").href = "/manage";
+    if (!c.google) document.querySelectorAll("a.start").forEach(a => { a.href = "/manage"; });
   }).catch(() => {});
 </script>
 </body>

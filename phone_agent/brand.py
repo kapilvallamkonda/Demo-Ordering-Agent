@@ -20,6 +20,10 @@ def name() -> str:
     return os.environ.get("BRAND_NAME", "").strip()[:40] or DEFAULT
 
 
-def page(filename: str) -> str:
-    """A static page with the brand name filled in (HTML-escaped)."""
-    return (STATIC / filename).read_text().replace("{{BRAND}}", html.escape(name()))
+def page(filename: str, **values: object) -> str:
+    """A static page with the brand name (and any other `{{KEY}}` values passed) filled in,
+    HTML-escaped."""
+    text = (STATIC / filename).read_text()
+    for key, value in {"BRAND": name(), **values}.items():
+        text = text.replace("{{" + key + "}}", html.escape(str(value)))
+    return text

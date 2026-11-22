@@ -229,6 +229,7 @@ def test_brand_name_is_one_setting(app, monkeypatch):
         r = c.get(path)
         assert "{{BRAND}}" not in r.text and "Ringcart" not in r.text
         assert '<meta name="application-name" content="Acme &amp; Co">' in r.text
+    assert "Up to 20 calls at once" in c.get("/").text  # MAX_CALLS_PER_BUSINESS, filled in
 
 
 # ---- catalog rules and checks -------------------------------------------------------------------

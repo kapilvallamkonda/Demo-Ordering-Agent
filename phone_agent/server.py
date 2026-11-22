@@ -140,7 +140,7 @@ app.include_router(google_router)  # /auth/google: sign in with Google
 async def landing() -> HTMLResponse:
     from .manage import PAGE_HEADERS
 
-    return HTMLResponse(brand.page("landing.html"), headers=PAGE_HEADERS)
+    return HTMLResponse(brand.page("landing.html", MAX_CALLS=MAX_CALLS_PER_BUSINESS), headers=PAGE_HEADERS)
 
 
 def _public_base(request: Request) -> str:

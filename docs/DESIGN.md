@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (read the menu from a link).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (landing page redesign).
 
 ## 1. Goal
 
@@ -755,3 +755,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Self-serve sign-up and onboarding: landing page, sign in with Google, create a business from a template, read the menu from photos or PDF with Claude, test chat in the browser, go live (automatic number purchase within limits, operator approval past them), pause/resume, team by email with owner/manager roles, per-business orders and calls, POS connect buttons, operator queue. Database schema versioning (`Store._migrate`, version 2). |
 | 2026-11-22 | Product name **Ringcart**, set in one place: `BRAND_NAME` (`phone_agent/brand.py`) fills `{{BRAND}}` in the landing page, `/manage` and the dashboard; new logo mark in place of the phone emoji. Code, repo and Fly app names unchanged. |
 | 2026-11-22 | Read the menu from a link: owners paste their menu's web address instead of uploading photos (`menu_link.py`: public-address check on every hop, size and time caps, visible page text or a linked PDF/image to Claude as before). Tested on a real 376-item restaurant menu page: every price matched. |
+| 2026-11-22 | Landing page redesign (hero with a sample call, why-it-matters band, ten-minute setup timeline, closing call to action; light and dark). `brand.page()` fills other `{{KEY}}` values too: the page's "up to N calls at once" comes from `MAX_CALLS_PER_BUSINESS`, so it can't drift. |
