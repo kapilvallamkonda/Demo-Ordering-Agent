@@ -187,6 +187,14 @@
   .step { display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .step h3 { margin: 0 0 4px; font-size: 16px; } .step p { margin: 0 0 10px; }
   .step.current { border-color: var(--accent); }
+  .chip-incomplete { display: inline-block; margin-left: 10px; vertical-align: 2px; padding: 2px 9px; border-radius: 999px;
+                     background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 650; }
+  .missing-note { margin-bottom: 14px; }
+  .missing-note a { color: inherit; text-decoration: underline; }
+  .req-tag { display: none; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--warn-bg); color: var(--warn);
+             font-size: 11px; font-weight: 650; }
+  .field.missing .req-tag { display: inline-block; }
+  .field.missing input, .field.missing textarea { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
   .step.done h3 { color: var(--muted); } .step.done .sub { display: none; }
   .tick { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
           background: var(--neutral-bg); color: var(--muted); }
@@ -900,12 +908,30 @@
       if (!r.placeholders.length) delete r.placeholders;
     };
     const set = (f, v, rerender = false) => {
-      setPath(r, f.path, v); confirm(f);
+      setPath(r, f.path, v); confirm(f); setTimeout(refreshMissing);
       if (f.path === "name") document.querySelector("header h1").textContent = v || S.ed.business.slug;
       changed(rerender);
     };
     const t = S.ed.template;
-    return el("div", {}, el("div", { class: "panel" },
+    const missingNote = el("div", { class: "note warn missing-note", role: "status" });
+    const refreshMissing = () => {
+      const miss = missingDetails();
+      document.querySelectorAll(".field[data-path]").forEach(d => d.classList.toggle("missing", miss.some(f => f.path === d.dataset.path)));
+      missingNote.hidden = !miss.length;
+      missingNote.replaceChildren(el("strong", {}, "Still needed before you can publish: "),
+        ...miss.flatMap((f, i) => [i ? ", " : "", el("a", { href: "#s-" + f.path.replace(/\./g, "-"), onclick: e => {
+          e.preventDefault(); const x = document.getElementById("s-" + f.path.replace(/\./g, "-")); if (x) { x.scrollIntoView({ block: "center" }); x.focus(); } } },
+          f.label.toLowerCase())]));
+    };
+    setTimeout(() => {
+      refreshMissing();
+      if (S.showMissing) {
+        S.showMissing = false;
+        const first = document.querySelector(".field.missing input, .field.missing textarea");
+        if (first) { first.scrollIntoView({ block: "center" }); first.focus(); }
+      }
+    });
+    return el("div", {}, missingNote, el("div", { class: "panel" },
       el("section", { class: "settings-group" }, el("h2", {}, "Business type"),
         el("div", {}, el("strong", {}, t.label)), el("span", { class: "sub" }, t.description)),
       [...groups].map(([group, fields]) => el("section", { class: "settings-group" },
@@ -930,8 +956,9 @@
         else if (f.type === "string_list") input = el("textarea", { id, rows: Math.max(4, (v || []).length + 1),
           oninput: e => set(f, e.target.value.split("\n").map(s => s.trim()).filter(Boolean)) }, (v || []).join("\n"));
         const unconfirmed = (r.placeholders || []).includes(f.path);
-        return el("div", { class: "field" },
-          el("label", { for: id }, f.label, f.required ? el("span", { class: "muted" }, " *") : null),
+        return el("div", { class: "field", "data-path": f.path },
+          el("label", { for: id }, f.label, f.required ? el("span", { class: "muted" }, " *") : null,
+            f.required ? el("span", { class: "req-tag" }, "Required") : null),
           input,
           unconfirmed ? el("div", { class: "placeholder" }, "This was estimated during setup. Change it, or confirm it's right.",
             el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
@@ -998,14 +1025,23 @@
     });
   }
 
-  function setupHome() {
+  // Required settings still empty (name, pickup time, sales tax...), from the schema.
+  function missingDetails() {
     const st = S.catalog.settings || {};
+    return (S.ed.schema || []).filter(f => f.required).filter(f => {
+      const v = getPath(st, f.path);
+      return v === undefined || v === null || (typeof v === "string" && !v.trim()) || (typeof v === "number" && !isFinite(v));
+    });
+  }
+
+  function setupHome() {
     const tried = store.get("tried." + S.rid) === "1";
     const published = !!S.ed.live_catalog_id && !S.ed.draft;
+    const missing = missingDetails();
     const steps = [
-      { done: typeof st.tax_rate === "number" && st.tax_rate > 0 && !!st.pickup_minutes, title: "Add your business details",
+      { done: !missing.length, incomplete: missing.length > 0, title: "Add your business details",
         text: "Sales tax, pickup time and opening hours, so the agent can quote totals and times.",
-        action: el("button", { class: "btn", onclick: () => { S.tab = "settings"; render(); } }, "Edit details") },
+        action: el("button", { class: "btn", onclick: () => { S.tab = "settings"; S.showMissing = true; render(); } }, "Edit details") },
       { done: S.catalog.items.length > 0, title: `Add your ${W().catalog}`,
         text: `Paste a link to your ${W().catalog}, or upload photos or a PDF of it, and we'll read it for you. Or add ${W().items} by hand.`,
         action: el("div", { class: "row wrap" },
@@ -1017,7 +1053,9 @@
       { done: published, title: "Publish",
         text: "Lock in this version. You can keep editing and publish again any time.",
         action: el("button", { class: "btn", disabled: !(S.ed.draft && !(S.ed.check && S.ed.check.errors.length)) || null, onclick: publish }, "Publish"),
-        problem: S.ed.check && S.ed.check.errors.length ? `${S.ed.check.errors.length} thing(s) to fix first: ${S.ed.check.errors[0]}` : null },
+        problem: missing.length ? "Finish step 1 first."
+          : S.ed.check && S.ed.check.errors.length ? (S.ed.check.errors.length === 1 ? `Fix this first: ${S.ed.check.errors[0]}`
+            : `${S.ed.check.errors.length} things to fix first, starting with: ${S.ed.check.errors[0]}`) : null },
       { done: false, title: "Go live", text: "Get your own phone number. Calls to it are answered by your agent.",
         action: goLiveWidget(published) },
     ];
@@ -1025,11 +1063,19 @@
     return el("div", { class: "home" },
       el("h1", { class: "hello" }, `Let's get ${S.catalog.settings.name || "your business"} answering calls`),
       el("p", { class: "sub" }, `${steps.filter(s => s.done).length} of ${steps.length} done`),
-      el("ol", { class: "steps" }, steps.map((s, i) => el("li", { class: "step" + (s.done ? " done" : "") + (i === next ? " current" : "") },
+      el("ol", { class: "steps" }, steps.map((s, i) => {
+        // Only the step to do next gets the orange button; the rest stay quiet.
+        if (s.action) {
+          const btns = s.action.matches(".btn") ? [s.action] : [...s.action.querySelectorAll(".btn")];
+          btns.forEach(b => b.classList.toggle("primary", i === next && b === btns[0]));
+        }
+        return el("li", { class: "step" + (s.done ? " done" : "") + (i === next ? " current" : "") },
         el("span", { class: "tick", "aria-hidden": "true" }, s.done ? "✓" : String(i + 1)),
-        el("div", { class: "grow" }, el("h3", {}, s.title, s.done ? el("span", { class: "sr" }, " (done)") : null),
+        el("div", { class: "grow" }, el("h3", {}, s.title, s.done ? el("span", { class: "sr" }, " (done)") : null,
+            s.incomplete ? el("span", { class: "chip-incomplete" }, "Incomplete") : null),
           el("p", { class: "sub" }, s.text), s.problem ? el("p", { class: "err" }, s.problem) : null,
-          !s.done || i === 1 || i === 2 ? s.action : null)))),
+          !s.done || i === 1 || i === 2 ? s.action : null));
+      })),
       canStartOver() && (S.catalog.items.length || S.ed.draft) ? el("p", { class: "sub startover" }, "Want a clean slate? ",
         el("button", { class: "linkbtn", type: "button", onclick: startOver }, "Start over"),
         " clears everything you've set up so far.") : null);
