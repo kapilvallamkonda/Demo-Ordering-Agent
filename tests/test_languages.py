@@ -67,7 +67,7 @@ def test_voice_declares_telugu_only_for_businesses_that_offer_it(app):
     seed_business(store, slug="plain", phone="+15550008888")
     twiml = c.post("/voice", data={"CallSid": "CA1", "From": "+15551112222", "To": BELLA_PHONE}).text
     assert 'dtmfDetection="true"' in twiml and "For Telugu, press 2." in twiml
-    assert '<Language code="te-IN" ttsProvider="Google" voice="te-IN-Chirp3-HD-Kore"' in twiml
+    assert '<Language code="te-IN" ttsProvider="ElevenLabs" voice="UgBBYS2sOqTuMpoF3BR0-v4_turbo"' in twiml
     assert 'transcriptionProvider="Google" speechModel="long"' in twiml
     plain = c.post("/voice", data={"CallSid": "CA2", "From": "+15551112222", "To": "+15550008888"}).text
     assert "Language" not in plain and "dtmfDetection" not in plain and "<ConversationRelay " in plain
@@ -100,11 +100,11 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     first_switch = kinds.index(("language", "te-IN"))
     first_telugu = next(i for i, k in enumerate(kinds) if k[0] == "text" and "నమస్కారం" in (k[1] or ""))
     assert first_switch < first_telugu  # voice and listening switch before the Telugu words
-    assert sent[first_switch]["transcriptionLanguage"] == "te-IN"
+    assert sent[first_switch]["transcriptionLanguage"] == "te"  # Deepgram, set in the switch
     assert ("language", "en-US") in kinds  # the agent switched back on request
     assert "already switched to Telugu" in json.dumps(fake.requests[0]["messages"])
     # Listening switched at the keypress, before any agent text (the caller may speak first).
-    assert sent[0]["type"] == "language" and sent[0]["transcriptionLanguage"] == "te-IN"
+    assert sent[0]["type"] == "language" and sent[0]["transcriptionProvider"] == "Deepgram"
     assert any(t["name"] == "switch_language" for t in fake.requests[0]["tools"])
 
 
@@ -130,8 +130,11 @@ def test_recognition_can_use_its_own_language_code(monkeypatch):
     monkeypatch.setenv("TELUGU_STT_PROVIDER", "Deepgram")
     monkeypatch.setenv("TELUGU_SPEECH_MODEL", "nova-3-general")
     monkeypatch.setenv("TELUGU_STT_CODE", "te")
+    monkeypatch.setenv("TELUGU_SWITCH_STT", "none")
     lang = languages.available()["te-IN"]
     assert lang.noun().count("<Language") == 2 and 'code="te" transcriptionProvider="Deepgram"' in lang.noun()
+    monkeypatch.setenv("TELUGU_SWITCH_STT", "none")
+    lang = languages.available()["te-IN"]
     assert lang.switch_message() == {"type": "language", "ttsLanguage": "te-IN", "transcriptionLanguage": "te"}
 
 

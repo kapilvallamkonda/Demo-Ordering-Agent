@@ -67,14 +67,17 @@ class Language:
 def _telugu() -> Language:
     return Language(
         code="te-IN", label="Telugu", native="తెలుగు", key="2",
-        tts_provider=os.environ.get("TELUGU_TTS_PROVIDER", "Google"),
-        voice=os.environ.get("TELUGU_VOICE", "te-IN-Chirp3-HD-Kore"),
+        tts_provider=os.environ.get("TELUGU_TTS_PROVIDER", "ElevenLabs"),
+        voice=os.environ.get("TELUGU_VOICE", "UgBBYS2sOqTuMpoF3BR0-v4_turbo"),  # v4_turbo: Telugu, real time
         transcription_provider=os.environ.get("TELUGU_STT_PROVIDER", "Google"),
         # Twilio uses Google's global endpoint, where te-IN has only `long` and `short`
         # (chirp_3 is EU-only for Telugu; Twilio rejected it with error 64101).
         speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
         stt_code=os.environ.get("TELUGU_STT_CODE", ""),
-        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "").strip(),
+        # Listening in Telugu: Google (declared above, accepted by Twilio) never delivered usable
+        # text on real calls; Deepgram nova-3 does, fast, but Twilio only accepts it set in the
+        # switch message (declaring it in the call setup failed with 64114/64101). "none" disables.
+        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "Deepgram:nova-3-general:te").strip().replace("none", ""),
         confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
                 "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
     )
