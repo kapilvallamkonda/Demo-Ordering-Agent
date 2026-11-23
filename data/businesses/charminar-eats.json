@@ -1,0 +1,486 @@
+{
+  "template": "restaurant",
+  "settings": {
+    "name": "Charminar Eats",
+    "timezone": "America/Chicago",
+    "address": "415 TX-29, Liberty Hill, TX 78642",
+    "hours": "Tuesday to Sunday 4:30 PM to 11 PM; closed Mondays",
+    "order_types": [
+      "pickup"
+    ],
+    "pickup_minutes": 20,
+    "tax_rate": 0.0825,
+    "payment": {
+      "required_before_cooking": false,
+      "pay_within_minutes": 30
+    },
+    "placeholders": [
+      "tax_rate",
+      "pickup_minutes",
+      "hours"
+    ],
+    "about": "Hyderabadi food truck in Liberty Hill: dosas and idly, desi snacks, Indo-Chinese, chaat and biryanis, made fresh daily.",
+    "faq": [
+      {
+        "q": "Do you deliver?",
+        "a": "No, takeaway only. Pick up your order at the food truck.",
+        "from_menu": true
+      },
+      {
+        "q": "Do you have vegetarian or vegan options?",
+        "a": "Yes, lots of vegetarian dishes, and some vegan ones.",
+        "from_menu": true
+      },
+      {
+        "q": "Do you cater?",
+        "a": "Yes, we cater events, parties and gatherings. I can take down the details for the team.",
+        "from_menu": true
+      }
+    ]
+  },
+  "items": [
+    {
+      "id": "idly_3_pcs",
+      "name": "Idly - 3 Pcs",
+      "category": "Dosas & Idly",
+      "price": 6.99,
+      "description": "Steamed rice cakes. Vegetarian."
+    },
+    {
+      "id": "ghee_podi_idly",
+      "name": "Ghee Podi Idly",
+      "category": "Dosas & Idly",
+      "price": 8.99,
+      "description": "Idly with ghee and spiced podi. Vegetarian."
+    },
+    {
+      "id": "sambar_idly_3_pcs",
+      "name": "Sambar Idly - 3 Pcs",
+      "category": "Dosas & Idly",
+      "price": 7.99,
+      "description": "Idly soaked in sambar. Vegetarian."
+    },
+    {
+      "id": "plain_dosa",
+      "name": "Plain Dosa",
+      "category": "Dosas & Idly",
+      "price": 7.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "onion_dosa",
+      "name": "Onion Dosa",
+      "category": "Dosas & Idly",
+      "price": 8.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "masala_dosa",
+      "name": "Masala Dosa",
+      "category": "Dosas & Idly",
+      "price": 8.99,
+      "description": "Dosa with spiced potato filling. Vegetarian."
+    },
+    {
+      "id": "mysore_masala_dosa",
+      "name": "Mysore Masala Dosa",
+      "category": "Dosas & Idly",
+      "price": 9.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "ghee_karam_dosa",
+      "name": "Ghee Karam Dosa",
+      "category": "Dosas & Idly",
+      "price": 9.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "spring_dosa",
+      "name": "Spring Dosa",
+      "category": "Dosas & Idly",
+      "price": 9.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "cheese_dosa",
+      "name": "Cheese Dosa",
+      "category": "Dosas & Idly",
+      "price": 9.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "egg_dosa",
+      "name": "Egg Dosa",
+      "category": "Dosas & Idly",
+      "price": 9.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "nutella_dosa_kids",
+      "name": "Nutella Dosa - (Kids)",
+      "category": "Dosas & Idly",
+      "price": 5.99,
+      "description": "Kids' dosa with Nutella. Vegetarian."
+    },
+    {
+      "id": "onion_pakoda",
+      "name": "Onion Pakoda",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "punugulu",
+      "name": "Punugulu",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "mirchi_bajji",
+      "name": "Mirchi Bajji",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "stuffed_mirchi_bajji",
+      "name": "Stuffed Mirchi Bajji",
+      "category": "Desi Snacks",
+      "price": 6.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "cut_mirchi",
+      "name": "Cut Mirchi",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "aloo_samosa_2_pcs",
+      "name": "Aloo Samosa - 2 Pcs",
+      "category": "Desi Snacks",
+      "price": 3.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "onion_samosa_6_pcs",
+      "name": "Onion Samosa - 6 Pcs",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "masala_french_fries",
+      "name": "Masala French Fries",
+      "category": "Desi Snacks",
+      "price": 5.99,
+      "description": "Crispy fries tossed in a bold masala blend. Vegetarian."
+    },
+    {
+      "id": "paneer_65",
+      "name": "Paneer 65",
+      "category": "Veg Appetizers",
+      "price": 12.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "gobi_65",
+      "name": "Gobi 65",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "babycorn_65",
+      "name": "Babycorn 65",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "paneer_manchuria",
+      "name": "Paneer Manchuria",
+      "category": "Veg Appetizers",
+      "price": 12.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "gobi_manchuria",
+      "name": "Gobi Manchuria",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "baby_corn_manchuria",
+      "name": "Baby Corn Manchuria",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "chilli_paneer",
+      "name": "Chilli Paneer",
+      "category": "Veg Appetizers",
+      "price": 12.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "chilli_gobi",
+      "name": "Chilli Gobi",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "chilli_baby_corn",
+      "name": "Chilli Baby Corn",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "paneer_majestic",
+      "name": "Paneer Majestic",
+      "category": "Veg Appetizers",
+      "price": 12.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "gobi_majestic",
+      "name": "Gobi Majestic",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "baby_corn_majestic",
+      "name": "Baby Corn Majestic",
+      "category": "Veg Appetizers",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "chicken_65",
+      "name": "Chicken 65",
+      "category": "Non-Veg Appetizers",
+      "price": 13.99,
+      "description": "Non-veg. Spicy."
+    },
+    {
+      "id": "chicken_manchuria",
+      "name": "Chicken Manchuria",
+      "category": "Non-Veg Appetizers",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "chilli_chicken",
+      "name": "Chilli Chicken",
+      "category": "Non-Veg Appetizers",
+      "price": 13.99,
+      "description": "Non-veg. Spicy."
+    },
+    {
+      "id": "chicken_majestic",
+      "name": "Chicken Majestic",
+      "category": "Non-Veg Appetizers",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "curry_leaf_paneer",
+      "name": "Curry Leaf Paneer",
+      "category": "Charminar Special",
+      "price": 13.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "coriander_paneer",
+      "name": "Coriander Paneer",
+      "category": "Charminar Special",
+      "price": 13.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "curry_leaf_chicken",
+      "name": "Curry Leaf Chicken",
+      "category": "Charminar Special",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "coriander_chicken",
+      "name": "Coriander Chicken",
+      "category": "Charminar Special",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "chicken_555",
+      "name": "Chicken 555",
+      "category": "Charminar Special",
+      "price": 14.99,
+      "description": "Non-veg. Spicy."
+    },
+    {
+      "id": "vijayawada_chicken_boneless_biryani",
+      "name": "Vijayawada Chicken Boneless Biryani",
+      "category": "Biryanis",
+      "price": 14.99,
+      "description": "Non-veg. Spicy."
+    },
+    {
+      "id": "paneer_65_biryani",
+      "name": "Paneer 65 Biryani",
+      "category": "Biryanis",
+      "price": 14.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "egg_biryani",
+      "name": "Egg Biryani",
+      "category": "Biryanis",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "cut_mirchi_biryani",
+      "name": "Cut Mirchi Biryani",
+      "category": "Biryanis",
+      "price": 13.99,
+      "description": "Vegetarian. Spicy."
+    },
+    {
+      "id": "veg_fried_rice",
+      "name": "Veg Fried Rice",
+      "category": "Indo Chinese",
+      "price": 10.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "egg_fried_rice",
+      "name": "Egg Fried Rice",
+      "category": "Indo Chinese",
+      "price": 11.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "paneer_fried_rice",
+      "name": "Paneer Fried Rice",
+      "category": "Indo Chinese",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "chicken_fried_rice",
+      "name": "Chicken Fried Rice",
+      "category": "Indo Chinese",
+      "price": 12.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "veg_noodles",
+      "name": "Veg Noodles",
+      "category": "Indo Chinese",
+      "price": 11.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "egg_noodles",
+      "name": "Egg Noodles",
+      "category": "Indo Chinese",
+      "price": 12.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "paneer_noodles",
+      "name": "Paneer Noodles",
+      "category": "Indo Chinese",
+      "price": 12.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "chicken_noodles",
+      "name": "Chicken Noodles",
+      "category": "Indo Chinese",
+      "price": 13.99,
+      "description": "Non-veg."
+    },
+    {
+      "id": "dahi_puri",
+      "name": "Dahi Puri",
+      "category": "Chaat",
+      "price": 7.99,
+      "description": "Crispy puris topped with yogurt, chutneys and spices. Vegetarian."
+    },
+    {
+      "id": "bhel_puri",
+      "name": "Bhel Puri",
+      "category": "Chaat",
+      "price": 7.99,
+      "description": "Puffed rice, veggies, chutneys and sev. Vegetarian."
+    },
+    {
+      "id": "papdi_chaat",
+      "name": "Papdi Chaat",
+      "category": "Chaat",
+      "price": 7.99,
+      "description": "Crispy papdi with yogurt, chutneys and fresh herbs. Vegetarian."
+    },
+    {
+      "id": "samosa_chaat",
+      "name": "Samosa Chaat",
+      "category": "Chaat",
+      "price": 7.99,
+      "description": "Vegetarian."
+    },
+    {
+      "id": "rose_milk",
+      "name": "Rose Milk",
+      "category": "Beverages",
+      "price": 5.99,
+      "description": ""
+    },
+    {
+      "id": "mango_lassi",
+      "name": "Mango Lassi",
+      "category": "Beverages",
+      "price": 5.99,
+      "description": ""
+    },
+    {
+      "id": "water_bottle",
+      "name": "Water Bottle",
+      "category": "Beverages",
+      "price": 0.99,
+      "description": ""
+    },
+    {
+      "id": "soft_drink",
+      "name": "Soft Drink",
+      "category": "Beverages",
+      "price": 1.99,
+      "description": "Sprite or Coke.",
+      "options": {
+        "drink": {
+          "choices": {
+            "Sprite": 0.0,
+            "Coke": 0.0
+          },
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "charminar_special_masala_chai",
+      "name": "Charminar Special Masala Chai",
+      "category": "Beverages",
+      "price": 1.99,
+      "description": ""
+    }
+  ]
+}
