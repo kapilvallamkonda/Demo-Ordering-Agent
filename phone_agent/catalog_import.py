@@ -14,6 +14,8 @@ import logging
 import os
 import re
 
+from .schedule import DAYS, MAX_NOTICE_DAYS
+
 log = logging.getLogger("phone_agent.catalog_import")
 
 MODEL = os.environ.get("IMPORT_MODEL", "claude-opus-5-5")
@@ -73,8 +75,12 @@ SCHEMA = {
                             "additionalProperties": False,
                         },
                     },
+                    "days": {"type": "array", "items": {"type": "string", "enum": list(DAYS)}},
+                    "notice_days": {"type": "integer"},
+                    "in_person_only": {"type": "boolean"},
                 },
-                "required": ["name", "category", "price", "price_was_printed", "description", "options", "extras"],
+                "required": ["name", "category", "price", "price_was_printed", "description", "options", "extras",
+                             "days", "notice_days", "in_person_only"],
                 "additionalProperties": False,
             },
         },
@@ -88,10 +94,20 @@ SCHEMA = {
             "required": ["name", "address", "hours"],
             "additionalProperties": False,
         },
-        "notes": {"type": "array", "items": {"type": "string"}},
+        "about": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "faq": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}, "answer": {"type": "string"}},
+                "required": ["question", "answer"],
+                "additionalProperties": False,
+            },
+        },
+        "left_out": {"type": "array", "items": {"type": "string"}},
         "unreadable": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["items", "business", "notes", "unreadable"],
+    "required": ["items", "business", "about", "faq", "left_out", "unreadable"],
     "additionalProperties": False,
 }
 
@@ -110,10 +126,19 @@ required option on each of those items.
 - If a price isn't printed or can't be read, estimate a typical price and set price_was_printed to \
 false. Never invent items that aren't shown.
 - description: short. End it with any of these tags that clearly apply: {tags}
-- Leave out daily specials and "market price" items; mention them in notes instead.
+- Ordering rules, only when printed (otherwise leave them empty, 0 or false): days, if an {item} \
+or its section is only available on certain days ("weekends only" is sat and sun); notice_days, \
+how many days ahead it must be ordered ("cakes need a day's notice" is 1); in_person_only, if it \
+can't be ordered for pickup ("dine-in only").
+- Leave out daily specials and "market price" items, and list them in left_out.
 - business: the name, address and opening hours if they are printed, otherwise null.
-- notes: short facts a phone agent should know (cuisine, what's included, policies printed on the \
-{catalog}). unreadable: anything you could see but not read."""
+- about: one or two plain sentences on what kind of {business} this is and what it sells, the way \
+the owner would say it on the phone. No marketing words. Null if you can't tell.
+- faq: policies printed on the {catalog} that callers ask about (delivery, catering, allergies, \
+custom orders, deposits, what comes with a dish), each as the question a caller would ask and a \
+short plain answer. Only what's printed; never invent a policy. Don't repeat rules that are \
+already on items (their days, notice or in-person only).
+- unreadable: anything you could see but not read."""
 
 
 def build_content(files: list[tuple[str, bytes]], prompt: str) -> list[dict]:
@@ -181,7 +206,8 @@ def _unquote(s: str) -> str:
 
 async def read_catalog(client, files: list[tuple[str, bytes]], template, settings: dict,
                        progress: Progress | None = None) -> dict:
-    """Returns {"items": [...catalog items...], "business": {...}, "notes": [...], "unreadable": [...]}.
+    """Returns {"items": [...catalog items...], "business": {...}, "about": str, "faq": [{q, a}],
+    "left_out": [...], "unreadable": [...]}.
     Pass a Progress to follow along while it reads."""
     words = template.words
     prompt = PROMPT.format(catalog=words["catalog"], business=words["business"], item=words["item"],
@@ -214,9 +240,11 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
         data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ImportError_("Reading the files didn't work this time. Please try again.") from e
+    faq = [{"q": f["question"].strip()[:200], "a": f["answer"].strip()[:600]}
+           for f in data.get("faq") or [] if f.get("question", "").strip() and f.get("answer", "").strip()]
     return {"items": [to_catalog_item(it) for it in data.get("items", []) if it.get("name")],
-            "business": data.get("business") or {}, "notes": data.get("notes") or [],
-            "unreadable": data.get("unreadable") or []}
+            "business": data.get("business") or {}, "about": (data.get("about") or "").strip()[:500],
+            "faq": faq, "left_out": data.get("left_out") or [], "unreadable": data.get("unreadable") or []}
 
 
 def to_catalog_item(it: dict) -> dict:
@@ -239,6 +267,16 @@ def to_catalog_item(it: dict) -> dict:
         out["extras"] = extras
     if not it.get("price_was_printed", True):
         out["placeholder_price"] = True
+    days = [d for d in DAYS if d in set(it.get("days") or ())]
+    if days and len(days) < 7:
+        out["days"] = days
+    notice = it.get("notice_days")
+    if isinstance(notice, int) and not isinstance(notice, bool) and notice > 0:
+        out["notice_days"] = min(notice, MAX_NOTICE_DAYS)
+    if it.get("in_person_only") is True:
+        out["in_person_only"] = True
+    if any(k in out for k in ("days", "notice_days", "in_person_only")):
+        out["rules_from_menu"] = True  # the owner confirms these in the editor
     return out
 
 

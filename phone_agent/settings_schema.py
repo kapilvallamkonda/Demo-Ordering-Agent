@@ -15,11 +15,20 @@ Field types:
   percent         stored as a fraction (0.0825), shown and entered as a percent (8.25)
   boolean         true/false
   string_list     list of short strings, max_items / max_length each
+  select          one of `options` ([value, label] pairs)
+  timezone        an IANA time zone name; `options` are the usual ones
+  faq             list of {"q": question, "a": answer}, max_items; optional "from_menu": true
+                  marks one the menu reader drafted, until the owner edits or confirms it
+
+A field with "hide_when_empty" is only shown in the form when it has a value (old fields
+kept so nothing is lost).
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from .schedule import TIMEZONES, valid_timezone
 
 SETTINGS: list[dict] = [
     {"path": "name", "group": "Basics", "type": "text", "label": "Business name", "required": True,
@@ -31,6 +40,10 @@ SETTINGS: list[dict] = [
      "help": "Read to callers who ask where to pick up."},
     {"path": "hours", "group": "Basics", "type": "textarea", "label": "Opening hours", "max_length": 400,
      "help": "As you'd say them, e.g. \"Mon-Thu 11am-10pm, Fri-Sun 11am-11pm\"."},
+    {"path": "timezone", "group": "Basics", "type": "timezone", "label": "Time zone",
+     "options": [list(t) for t in TIMEZONES],
+     "help": "Used for pickup days and which days items are available. Set from your browser when "
+             "you signed up."},
     {"path": "pickup_minutes", "group": "Orders", "type": "integer", "label": "Typical pickup time (minutes)",
      "min": 5, "max": 180, "required": True, "help": "How long until an order is usually ready."},
     {"path": "tax_rate", "group": "Orders", "type": "percent", "label": "Sales tax", "min": 0, "max": 0.15,
@@ -42,10 +55,16 @@ SETTINGS: list[dict] = [
     {"path": "payment.pay_within_minutes", "group": "Payment", "type": "integer",
      "label": "Payment link valid for (minutes)", "min": 30, "max": 1440,
      "help": "Between 30 minutes and 24 hours."},
-    {"path": "notes", "group": "Instructions for the phone agent", "type": "string_list",
-     "label": "Notes", "max_items": 30, "max_length": 400,
-     "help": "Anything the agent should know: what you sell, policies, what's only available "
-             "in person. One note per line."},
+    {"path": "about", "group": "What your agent knows", "type": "textarea", "label": "About your business",
+     "max_length": 500, "help": "One or two sentences the agent uses to describe you."},
+    {"path": "faq", "group": "What your agent knows", "type": "faq", "label": "Common questions",
+     "max_items": 40, "max_length": 600,
+     "help": "What callers ask that isn't about one item, and what you tell them. The agent uses "
+             "these answers; for anything else it says it doesn't know."},
+    {"path": "notes", "group": "What your agent knows", "type": "string_list", "hide_when_empty": True,
+     "label": "Other notes", "max_items": 30, "max_length": 400,
+     "help": "Notes from before Common questions existed. Move them into a question or About, "
+             "then delete them here."},
 ]
 
 BY_PATH = {f["path"]: f for f in SETTINGS}
@@ -102,6 +121,28 @@ def validate_settings(business: Any, template=None) -> list[str]:
         elif t == "boolean":
             if not isinstance(value, bool):
                 errors.append(f"{label} must be on or off")
+        elif t in ("select", "timezone"):
+            ok = valid_timezone(value) if t == "timezone" and isinstance(value, str) else \
+                value in [o[0] for o in f.get("options", [])]
+            if not ok:
+                errors.append(f"{label}: choose one of the options")
+        elif t == "faq":
+            if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+                errors.append(f"{label} must be a list of questions and answers")
+            elif len(value) > f.get("max_items", 100):
+                errors.append(f"{label}: at most {f['max_items']}")
+            else:
+                for v in value:
+                    q, a = v.get("q", ""), v.get("a", "")
+                    if not isinstance(q, str) or not isinstance(a, str):
+                        errors.append(f"{label}: questions and answers must be text")
+                    elif len(q) > 200 or len(a) > f.get("max_length", 1000):
+                        errors.append(f"{label}: \"{q[:40]}\" is too long")
+                    elif not isinstance(v.get("from_menu", False), bool):
+                        errors.append(f"{label}: from_menu must be true or false")
+                    else:
+                        continue
+                    break
         elif t == "string_list":
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 errors.append(f"{label} must be a list of text")

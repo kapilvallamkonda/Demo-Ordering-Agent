@@ -147,7 +147,7 @@ def handle_stripe_event(event: dict, store, catalog_for: Callable[[int | None], 
             return "pending"  # delayed payment methods settle later
         changed = store.mark_paid(payment_id)
         catalog = catalog_for(changed["business_id"]) if changed else None
-        text = paid_text(catalog, changed["order_number"]) if catalog else None
+        text = paid_text(catalog, changed["order_number"], changed.get("pickup")) if catalog else None
         outcome = "paid"
     elif kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
         changed = store.mark_expired(payment_id)
@@ -189,16 +189,19 @@ def order_text(order: Order, order_number: int, url: str) -> str:
     lines.append(f"Pay securely: {url}")
     if catalog.payment_required:
         lines.append(f"We'll start your order once it's paid. Link expires in {catalog.pay_within_minutes} min.")
+    elif order.pickup_at:
+        lines.append(f"Pickup {order.pickup_words()}. You can also pay at pickup.")
     else:
         lines.append(f"Ready in about {catalog.settings.get('pickup_minutes')} min. "
                      "You can also pay at pickup.")
     return "\n".join(lines)
 
 
-def paid_text(catalog: Catalog, order_number: int) -> str:
+def paid_text(catalog: Catalog, order_number: int, pickup: str | None = None) -> str:
+    """pickup: the scheduled pickup in words, or None for as soon as possible."""
     name = catalog.settings.get("name", "the business")
-    return (f"{name}: payment received for order #{order_number}. Thank you! "
-            f"Ready in about {catalog.settings.get('pickup_minutes')} min.")
+    when = f"Pickup {pickup}." if pickup else f"Ready in about {catalog.settings.get('pickup_minutes')} min."
+    return f"{name}: payment received for order #{order_number}. Thank you! {when}"
 
 
 def expired_text(catalog: Catalog, order_number: int) -> str:

@@ -16,6 +16,7 @@ import anthropic
 from .catalog import Catalog
 
 from .payments import PaymentService
+from . import schedule
 from .prompts import build_greeting, build_system_prompt
 from .storage import Store
 from .tools import CallSession, run_tool, start_session, tools_for
@@ -53,12 +54,21 @@ class PhoneAgent:
             catalog=catalog, store=store, call_id=call_id, caller_phone=caller_phone,
             payments=payments, pos=pos))
         # The system prompt and tools are identical across calls, so they get cached.
+        # The date line comes last so the cached prefix stays the same across calls.
+        now = schedule.now_in(catalog.tz)
         self._system = [
             {
                 "type": "text",
                 "text": build_system_prompt(catalog, payment_links=payments is not None)
                 + f'\nThe call opened with you saying: "{self.greeting}"',
-            }
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": f"Right now it's {schedule.say_time(now)} where the "
+                        f"{catalog.template.words['business']} is. Use this for \"today\", \"tomorrow\" "
+                        "and days of the week.",
+            },
         ]
         self.messages: list = []
         self._pending_note: str | None = None

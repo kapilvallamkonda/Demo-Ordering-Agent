@@ -37,6 +37,9 @@ class Template:
     tags: tuple[str, ...] = ()
     setting_overrides: dict = field(default_factory=dict)  # path -> {label/help/...}
     extra_settings: tuple[dict, ...] = ()
+    # Questions callers often ask this kind of business, offered as starting points for the
+    # owner's "Common questions" (settings.faq); the owner writes the answers.
+    faq_suggestions: tuple[str, ...] = ()
 
     @property
     def status(self) -> str:
@@ -48,7 +51,7 @@ class Template:
         """What the /manage page needs."""
         return {"id": self.id, "label": self.label, "description": self.description,
                 "modules": list(self.modules), "status": self.status, "words": self.words,
-                "tags": list(self.tags)}
+                "tags": list(self.tags), "faq_suggestions": list(self.faq_suggestions)}
 
 
 RESTAURANT = Template(
@@ -73,9 +76,12 @@ RESTAURANT = Template(
     setting_overrides={
         "name": {"label": "Restaurant name"},
         "payment.required_before_cooking": {"label": "Wait for payment before cooking"},
-        "notes": {"help": "Anything the agent should know: cuisine, how spice levels work, allergy "
-                          "guidance, what's only sold in person. One note per line."},
+        "about": {"help": "One or two sentences the agent uses to describe you, e.g. \"South Indian "
+                          "and Hyderabadi restaurant with a bakery.\""},
     },
+    faq_suggestions=("Do you deliver?", "Do you cater large orders?", "Can dishes be made less spicy?",
+                     "Do you have vegan or gluten-free options?", "Are your dishes nut-free?",
+                     "Is there parking?", "Can I order for a large group?"),
 )
 
 RETAIL = Template(
@@ -101,9 +107,12 @@ RETAIL = Template(
           "Contains alcohol: ID required at pickup."),
     setting_overrides={
         "pickup_minutes": {"label": "Typical time until ready for pickup (minutes)"},
-        "notes": {"help": "Anything the agent should know: what you sell, policies (age checks, "
-                          "deposits), what's only available in the shop. One note per line."},
+        "about": {"help": "One or two sentences the agent uses to describe you, e.g. \"Family florist "
+                          "with fresh flowers, plants and gift baskets.\""},
     },
+    faq_suggestions=("Do you deliver?", "Do you gift wrap?", "What's your return policy?",
+                     "Do you check ID for age-restricted items?", "Can I order something custom?",
+                     "Can I reserve an item and pick it up later?", "Is there parking?"),
 )
 
 SALON = Template(

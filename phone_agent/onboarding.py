@@ -36,6 +36,7 @@ from . import menu_link
 from .catalog_import import ImportError_, Progress, merge_items, read_catalog
 from .manage import Who, _business, _check_write, _editor_state, _json, _who
 from .numbers import NumberError
+from .schedule import default_timezone, valid_timezone
 from .templates import TEMPLATES, get_template
 
 log = logging.getLogger("phone_agent.onboarding")
@@ -95,17 +96,20 @@ async def create_business(request: Request) -> dict:
     business_id = store.create_business(_slug(store, name))
     if who.user:
         store.grant(who.user["id"], business_id, role="owner")
-    store.save_draft(business_id, _fresh_catalog(template.id, name), None, None, who.label)
+    store.save_draft(business_id, _fresh_catalog(template.id, name, str(data.get("timezone") or "")),
+                     None, None, who.label)
     log.info("%s created business %s (%s)", who.label, business_id, template.id)
     return {"id": business_id, **_editor_state(request, store.business(business_id))}
 
 
-def _fresh_catalog(template_id: str, name: str) -> dict:
+def _fresh_catalog(template_id: str, name: str, tz: str | None = None) -> dict:
     """A new business's starting draft: just its name and default settings, no items."""
     return {
         "template": template_id,
-        "settings": {"name": name, "order_types": ["pickup"], "pickup_minutes": 20,
-                     "payment": {"required_before_cooking": False, "pay_within_minutes": 30}, "notes": []},
+        "settings": {"name": name, "timezone": tz if tz and valid_timezone(tz) else default_timezone(),
+                     "order_types": ["pickup"], "pickup_minutes": 20,
+                     "payment": {"required_before_cooking": False, "pay_within_minutes": 30},
+                     "about": "", "faq": []},
         "items": [],
     }
 
@@ -128,7 +132,8 @@ async def start_over(request: Request, business_id: int) -> dict:
     if draft is None:
         raise HTTPException(status_code=404, detail="nothing to start over")
     catalog = draft["catalog"]
-    fresh = _fresh_catalog(catalog.get("template"), str(catalog.get("settings", {}).get("name") or row.slug))
+    old = catalog.get("settings", {})
+    fresh = _fresh_catalog(catalog.get("template"), str(old.get("name") or row.slug), old.get("timezone"))
     if store.save_draft(row.id, fresh, None, data.get("revision"), who.label) is None:
         raise HTTPException(status_code=409, detail="someone else changed this business; reload first")
     log.info("%s started %s over", who.label, row.slug)
@@ -201,8 +206,16 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
             for key in ("address", "hours"):  # fill blanks only; never overwrite what the owner typed
                 if result["business"].get(key) and not settings.get(key):
                     settings[key] = result["business"][key].strip()[:400]
-            notes = list(settings.get("notes") or [])
-            settings["notes"] = (notes + [n.strip()[:400] for n in result["notes"] if n.strip() and n not in notes])[:30]
+            if result["about"] and not str(settings.get("about") or "").strip():
+                settings["about"] = result["about"]
+                settings["placeholders"] = sorted(set(settings.get("placeholders") or []) | {"about"})
+            faq = list(settings.get("faq") or [])
+            asked = {str(f.get("q", "")).strip().lower() for f in faq}
+            for f in result["faq"]:  # drafted answers, flagged until the owner checks them
+                if f["q"].lower() not in asked and len(faq) < 40:
+                    faq.append({**f, "from_menu": True})
+                    asked.add(f["q"].lower())
+            settings["faq"] = faq
             catalog["settings"] = settings
             base = draft["base_catalog_id"] if draft else row_now.catalog_id
             if store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label) is not None:
@@ -210,7 +223,9 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
         else:
             raise ImportError_("Someone kept changing this catalog while it was read. Please try again.")
         log.info("business %s: read %d items from %s", row.slug, len(result["items"]), job["source"])
-        job["result"] = {"added": len(result["items"]), "unreadable": result["unreadable"]}
+        job["result"] = {"added": len(result["items"]), "unreadable": result["unreadable"],
+                         "left_out": result["left_out"], "questions": len(result["faq"]),
+                         "rules": sum(1 for it in result["items"] if it.get("rules_from_menu"))}
         job["state"] = "done"
     except ImportError_ as e:
         job["state"], job["error"] = "error", str(e)

@@ -554,14 +554,17 @@ class Store:
 
     def _by_payment_id(self, payment_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT id, number, business_id, customer_phone, status, payment_status"
+            "SELECT id, number, business_id, customer_phone, status, payment_status, payload"
             " FROM orders WHERE payment_id = ?",
             (payment_id,),
         ).fetchone()
         if row is None:
             return None
+        payload = json.loads(row[6] or "{}")
         return {"order_id": row[0], "order_number": row[1], "business_id": row[2],
-                "customer_phone": row[3], "status": row[4], "payment_status": row[5]}
+                "customer_phone": row[3], "status": row[4], "payment_status": row[5],
+                # the scheduled pickup in words, or None for as soon as possible
+                "pickup": payload.get("pickup") if payload.get("pickup_at") else None}
 
     def recent(self, limit: int = 20, business_id: int | None = None) -> list[dict]:
         """Newest orders first, for one business or (business_id None) all of them."""
@@ -646,7 +649,7 @@ class Store:
         return {"id": row[0], "number": row[1], "business_id": row[2], "catalog_id": row[3],
                 "created_at": row[4], "customer_name": row[5], "customer_phone": row[6],
                 **{k: v for k, v in json.loads(row[7]).items()
-                   if k in ("items", "subtotal", "tax", "total", "lines")},
+                   if k in ("items", "subtotal", "tax", "total", "lines", "pickup_at", "pickup")},
                 "status": row[8], "payment_status": row[9], "payment_id": row[10],
                 "pos_status": row[11], "pos_order_id": row[12], "pos_attempts": row[13],
                 "pos_paid": bool(row[14])}

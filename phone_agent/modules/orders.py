@@ -72,6 +72,17 @@ TOOLS: list[dict] = [
         ["phone"],
     ),
     tool(
+        "set_pickup_time",
+        "Schedule the pickup for a later day or time when the caller asks for one, in the "
+        "business's local time. Leave out date to go back to as soon as possible. Refused if it's "
+        "too soon or something on the order can't be picked up then; tell the caller why.",
+        {
+            "date": {"type": "string", "description": "Pickup day, YYYY-MM-DD."},
+            "time": {"type": "string", "description": "Pickup time, HH:MM in 24-hour time."},
+        },
+        [],
+    ),
+    tool(
         "place_order",
         "Submit the order. Only call after reading the full order and total back to the caller "
         "and hearing them confirm it. If payment links are on, this texts the order details and "
@@ -118,8 +129,11 @@ def _place_order(session: CallSession) -> dict:
                 session.pos.order_placed(saved.id, catalog.business_id)  # in the background
             except Exception:
                 log.exception("couldn't queue order %s for the POS", saved.number)
-    result: dict = {"placed": True, "order_number": session.order_number, "total": order.total,
-                    "ready_in_minutes": catalog.settings.get("pickup_minutes")}
+    result: dict = {"placed": True, "order_number": session.order_number, "total": order.total}
+    if order.pickup_at:
+        result["pickup"] = order.pickup_words()
+    else:
+        result["ready_in_minutes"] = catalog.settings.get("pickup_minutes")
     if not payments:
         result["payment"] = "pay at pickup"
         return result
@@ -140,7 +154,7 @@ def _place_order(session: CallSession) -> dict:
         "required_before_cooking": required,
         "link_valid_minutes": catalog.pay_within_minutes,
     }
-    if required:
+    if required and not order.pickup_at:
         result["ready_in_minutes"] = f"{catalog.settings.get('pickup_minutes')} after payment"
     return result
 
@@ -177,6 +191,9 @@ def handle(session: CallSession, name: str, args: dict) -> dict:
     if name == "set_customer_phone":
         order.set_phone(req(args, "phone", str))
         return {"customer_phone": order.customer_phone}
+    if name == "set_pickup_time":
+        order.set_pickup(opt(args, "date", str, ""), opt(args, "time", str, ""))
+        return {"pickup": order.pickup_words()}
     if name == "place_order":
         if req(args, "caller_confirmed", bool) is not True:
             raise OrderError("Read the order and total back and get the caller's confirmation first.")
@@ -195,9 +212,13 @@ extras only if relevant; don't upsell more than once per call.
 - Use the tools to change the order. The order tools are the source of truth for prices \
 and totals, so never compute totals yourself.
 - Orders are {order_types} only. Get the name for the order.
+- Pickup is as soon as possible unless the caller asks for a later day or time; then call \
+set_pickup_time, keeping to the opening hours. Some items say which days they're available, \
+how many days ahead they must be ordered, or that they're in person only. The tools enforce \
+this, so if one refuses, tell the caller why and offer what does work.
 - When the caller is finished, read the whole order and the total back (call view_order \
 first), and ask them to confirm. Only after a clear yes, call place_order.
-- After placing, give the order number and pickup time, ask if there's anything else, and \
+- After placing, give the order number and the pickup time (or how soon it'll be ready), ask if there's anything else, and \
 when they're done say goodbye and call end_call.
 {payment}
 {rules}- If the caller wants something you can't do ({declines}), say \

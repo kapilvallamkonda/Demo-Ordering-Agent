@@ -35,8 +35,9 @@ gift, convenience). Salons and other appointment businesses need bookings, which
 Get from the user: the business's name, what it sells (menu or product list: photos,
 PDF, link or text), and as much of this as they know: address, hours, sales tax rate,
 typical minutes until an order is ready for pickup, whether to wait for payment before
-preparing orders, preferred area code for the number, notes for the agent (cuisine and
-allergy guidance for a restaurant; policies like ID checks for a shop), the staff
+preparing orders, preferred area code for the number, a one-line description of the
+business (`about`), answers to questions callers ask (`faq`: delivery, catering, allergies,
+ID checks), items with day or notice rules, the staff
 email(s) to invite, and **which POS they use**. Square and Clover can be connected
 (step 6b), and the catalog can then be imported from the POS instead of photos. Toast
 isn't supported yet (partner application pending). Don't block on the optional ones;
@@ -78,14 +79,14 @@ DATABASE_PATH=<scratchpad>/try.db CATALOG_PATH=data/businesses/<slug>.json \
   .venv/bin/python -m phone_agent.cli <<'EOF'
 <a normal order using an item with a required option>
 <answer the option question>
-<a question the notes or descriptions answer, e.g. what's vegetarian / what's good as a gift>
+<a question the faq or descriptions answer, e.g. do you deliver / what's vegetarian>
 <ask for something the business doesn't sell>
 EOF
 ```
 
 Check the agent names the business, uses the template's words (menu vs catalog),
 asks for required options, quotes prices that match the file, and declines unknown
-items gracefully. Fix the file or notes and repeat if not.
+items gracefully. Fix the file (items, `about`, `faq`) and repeat if not.
 
 ## 5. Get the phone number
 
@@ -145,7 +146,7 @@ fly ssh console --app phone-agent-604b -C "python -m phone_agent.pos import-cata
   > data/businesses/<slug>.json
 ```
 
-Then repeat steps 3 (check; add description tags and notes by hand) and 6 (commit,
+Then repeat steps 3 (check; add description tags, `about` and `faq` by hand) and 6 (commit,
 deploy, `set-catalog`). Re-import whenever they change prices on the POS. Tell the user
 that on Square, orders show on the POS only once paid (recommend paying first).
 

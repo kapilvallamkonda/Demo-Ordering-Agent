@@ -323,6 +323,7 @@
       el("div", {},
         el("span", { class: "who" }, o.customer_name || "No name"),
         o.customer_phone ? el("span", { class: "phone" }, fmtPhone(o.customer_phone)) : null,
+        o.pickup_at ? el("div", { style: "font-weight:650;color:var(--accent);margin-top:4px" }, "Pickup " + o.pickup) : null,
         el("ul", { class: "items" }, lines)),
       el("div", { class: "right" },
         el("div", { class: "total" }, money(o.total)),

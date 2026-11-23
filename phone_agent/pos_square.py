@@ -1,7 +1,7 @@
 """Square: send orders with the Orders API, import the catalog from the Catalog API.
 
-Orders are created as pickup orders (a PICKUP fulfillment, ASAP, with the prep time from
-the catalog settings). Square only shows an API order in Square POS and the Seller
+Orders are created as pickup orders (a PICKUP fulfillment: ASAP with the prep time from
+the catalog settings, or SCHEDULED at the pickup time the caller chose). Square only shows an API order in Square POS and the Seller
 Dashboard once it is paid, so:
   - When the payment link is paid, we record an EXTERNAL payment (source "Stripe payment
     link") for the order's total, and the order appears for the kitchen.
@@ -114,8 +114,8 @@ class SquareProvider:
                 "pickup_details": {
                     "recipient": {"display_name": order.customer_name[:255],
                                   **({"phone_number": order.customer_phone} if order.customer_phone else {})},
-                    "schedule_type": "ASAP",
-                    "prep_time_duration": f"PT{max(1, order.pickup_minutes)}M",
+                    **({"schedule_type": "SCHEDULED", "pickup_at": order.pickup_at} if order.pickup_at else
+                       {"schedule_type": "ASAP", "prep_time_duration": f"PT{max(1, order.pickup_minutes)}M"}),
                     "note": order.note[:500],
                 },
             }],

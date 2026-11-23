@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (wordmark logo and app icon).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (item ordering rules, scheduled pickup, About and Common questions).
 
 ## 1. Goal
 
@@ -196,8 +196,11 @@ one lock, and one machine.
 
 - **Business:** id, slug (e.g. `hyderabad-house`), the Twilio number callers dial
   (unique), active flag, current catalog version.
-- **Catalog version:** business, time, the full catalog JSON (items plus the `restaurant`
-  settings block: name, hours, address, tax rate, pickup minutes, payment rule, notes).
+- **Catalog version:** business, time, the full catalog JSON (items plus the settings
+  block: name, hours, address, time zone, tax rate, pickup minutes, payment rule, `about`
+  and `faq`). Items can carry ordering rules: `days` (days of the week it can be picked
+  up), `notice_days` (days ahead it must be ordered) and `in_person_only`, enforced by
+  `order.py` through `schedule.py`. Day based on purpose: no time-of-day windows.
   Publishing a catalog adds a version; old ones are kept.
 - **Order:** lines, customer name, caller phone (from Twilio, not from the model),
   order type (pickup), placed flag. Subtotal, tax and total are computed.
@@ -257,12 +260,13 @@ one lock, and one machine.
 
 | Tool | Effect |
 |---|---|
-| `add_item` | Add a catalog item with options, extras, notes. Rejects unknown items, missing required options, invalid extras. |
+| `add_item` | Add a catalog item with options, extras, notes. Rejects unknown items, missing required options, invalid extras, in-person-only items, and items whose days or notice don't fit the pickup. |
 | `remove_item` | Remove a line. |
 | `update_quantity` | Change a line's quantity; 0 removes it. |
 | `view_order` | Current lines, subtotal, tax, total. |
 | `set_customer_name` | Name the order is under. |
 | `set_customer_phone` | Mobile number for the text, when it differs from caller ID or caller ID is hidden. Must be a full number. |
+| `set_pickup_time` | Schedule the pickup for a later day and time (business time), or clear it for as soon as possible. Refused if sooner than the ready time, more than 30 days ahead, or if an item on the order can't be picked up then (its days or notice). |
 | `place_order` | Save the order; requires caller confirmation, a name, at least one item, and (with payments on) a phone number. Then creates the payment link and texts it; the result tells the agent whether it was sent. |
 | `end_call` | Hang up after the goodbye. |
 
@@ -275,7 +279,7 @@ public URL, account SID and SMS sender number), Stripe (secret key, webhook secr
 storage (database file; catalog file for the terminal chat), admin (`/orders` token),
 POS (`POS_SECRET_KEY`, which turns POS sending on and encrypts tokens; Square and Clover
 app credentials and environment), branding (`BRAND_NAME`, the product name on every
-page). Payment links are on
+page), `DEFAULT_TIMEZONE` (for businesses without `settings.timezone`). Payment links are on
 only when `STRIPE_SECRET_KEY` and the Twilio SMS settings are all set; otherwise
 customers pay at pickup. Per-business settings (tax, pickup time, pay-first rule,
 hours, notes) live in each business's catalog, not in environment variables.
@@ -681,6 +685,10 @@ A business sets itself up without us, like creating any online account.
 
 ## 17. Open issues and next steps
 
+- Scheduled pickups and item rules: opening hours are free text, so a pickup outside them
+  is only prevented by the prompt; Clover gets a scheduled pickup only as words in the
+  order note (Square gets a SCHEDULED fulfillment). Ready-made choice sets (e.g. spice
+  levels applied to a whole section) aren't built; rules can be copied to a section.
 - Self-serve (section 16): needs a Google OAuth client (`GOOGLE_CLIENT_ID` and
   `GOOGLE_CLIENT_SECRET`) and `OPERATOR_EMAILS` on the server before anyone can sign up.
   Not built yet: billing and the card-raises-the-limit flow, releasing a number when a
@@ -778,3 +786,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | A reading in progress stays visible with the panel closed (corner pill with section and count; click to reopen) and survives a page reload (`GET .../import` returns the running job). |
 | 2026-11-22 | Start over: before its first publish, an owner can reset a business to how it was when created (catalog and all details cleared; name and type kept). |
 | 2026-11-22 | New logo: lowercase "ringcart" wordmark on the landing page and sign-in, and an "r" app icon (favicon, Apple touch icon, Android icons, web app manifest; the manager's header uses it too). |
+| 2026-11-22 | Notes replaced by **About your business** and **Common questions** (`settings.about`, `settings.faq` of question/answer pairs with suggestions per template; the agent answers from them and says it doesn't know anything else; old `notes` kept as "Other notes"). **Item ordering rules**, day based: `days`, `notice_days`, `in_person_only`, enforced in `order.py` via `schedule.py` against the pickup day in the business's time zone (`settings.timezone`, set from the owner's browser; `DEFAULT_TIMEZONE`). **Scheduled pickups**: `set_pickup_time` tool, pickup shown on orders, texts and the POS (Square SCHEDULED fulfillment). The agent gets today's date in a second, uncached system block. The menu reader drafts About, answers and item rules, flagged until the owner checks them. |

@@ -9,7 +9,9 @@ from __future__ import annotations
 import itertools
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
+from . import schedule
 from .catalog import Catalog
 from .session import ToolError
 
@@ -70,7 +72,32 @@ class Order:
     customer_phone: str = ""
     order_type: str = "pickup"
     placed: bool = False
+    pickup_at: datetime | None = None  # a scheduled pickup, in business time; None = as soon as possible
+    clock: object = field(default=None, repr=False)  # returns an aware datetime; tests set it
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1), repr=False)
+
+    # ---- time ------------------------------------------------------------
+
+    def now(self) -> datetime:
+        return schedule.now_in(self.catalog.tz, self.clock)
+
+    @property
+    def ready_minutes(self) -> int:
+        return int(self.catalog.settings.get("pickup_minutes") or 20)
+
+    def pickup_time(self) -> datetime:
+        """When the order will be picked up: the scheduled time, or as soon as it's ready."""
+        return self.pickup_at or self.now() + timedelta(minutes=self.ready_minutes)
+
+    def _rule_problems(self, pickup: datetime) -> list[str]:
+        now = self.now()
+        problems = []
+        for line in self.lines:
+            item = self.catalog.get(line.item_id)
+            why = item and schedule.check_item(item, pickup, now)
+            if why and why not in problems:
+                problems.append(why)
+        return problems
 
     # ---- mutations -------------------------------------------------------
 
@@ -89,6 +116,11 @@ class Order:
         if not item.available:
             raise OrderError(f"{item.name} is {self.catalog.template.words['unavailable']}. "
                              "Tell the caller and suggest something similar.")
+        why = schedule.check_item(item, self.pickup_time(), self.now())
+        if why:
+            raise OrderError(why + (" Tell the caller and suggest something else." if item.in_person_only else
+                                    " If the caller can pick up on a day that works, call set_pickup_time "
+                                    "first and add it again; otherwise suggest something else."))
         quantity = _check_quantity(quantity)
         options = dict(options or {})
         extras = list(dict.fromkeys(extras or []))  # dedupe, keep order
@@ -159,12 +191,45 @@ class Order:
         self._ensure_open()
         self.customer_phone = normalize_phone(phone)
 
+    def set_pickup(self, date: str | None, time: str | None) -> None:
+        """Schedule the pickup (business time), or with no date go back to as soon as possible.
+        Refused if it's too soon, too far ahead, or something on the order can't be picked up then."""
+        self._ensure_open()
+        if not date:
+            problems = self._rule_problems(self.now() + timedelta(minutes=self.ready_minutes))
+            if problems:
+                raise OrderError("Can't make it as soon as possible: " + " ".join(problems))
+            self.pickup_at = None
+            return
+        try:
+            when = datetime.strptime(f"{date.strip()} {(time or '').strip()}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            raise OrderError("Give the date as YYYY-MM-DD and the time as HH:MM (24-hour), in the "
+                             "business's local time.")
+        when = when.replace(tzinfo=self.catalog.tz)
+        now = self.now()
+        earliest = now + timedelta(minutes=self.ready_minutes)
+        if when < earliest - timedelta(minutes=1):
+            raise OrderError(f"That's too soon: the earliest pickup is {schedule.say_time(earliest)}.")
+        if when > now + timedelta(days=schedule.MAX_ADVANCE_DAYS):
+            raise OrderError(f"Pickups can be scheduled up to {schedule.MAX_ADVANCE_DAYS} days ahead.")
+        problems = self._rule_problems(when)
+        if problems:
+            raise OrderError("That pickup time doesn't work for everything on the order: "
+                             + " ".join(problems) + " Ask the caller what they'd like to do.")
+        self.pickup_at = when
+
     def mark_placed(self) -> None:
         self._ensure_open()
         if not self.lines:
             raise OrderError("The order is empty.")
         if not self.customer_name:
             raise OrderError("Get the caller's name for the order before placing it.")
+        if self.pickup_at and self.pickup_at < self.now():
+            raise OrderError("The scheduled pickup time has already passed. Ask the caller for a new one.")
+        problems = self._rule_problems(self.pickup_time())
+        if problems:
+            raise OrderError(" ".join(problems) + " Sort this out with the caller before placing the order.")
         self.placed = True
 
     # ---- reads -----------------------------------------------------------
@@ -193,8 +258,15 @@ class Order:
             "customer_name": self.customer_name or None,
             "customer_phone": self.customer_phone or None,
             "order_type": self.order_type,
+            "pickup": self.pickup_words(),
+            "pickup_at": self.pickup_at.isoformat() if self.pickup_at else None,
             "placed": self.placed,
         }
+
+    def pickup_words(self) -> str:
+        if self.pickup_at:
+            return schedule.say_time(self.pickup_at)
+        return f"as soon as possible (ready in about {self.ready_minutes} minutes)"
 
     # ---- helpers ---------------------------------------------------------
 

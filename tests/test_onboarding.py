@@ -181,14 +181,18 @@ def test_create_business_rules(app, monkeypatch):
 EXTRACTED = {
     "items": [
         {"name": "Croissant", "category": "Pastry", "price": 3.5, "price_was_printed": True,
-         "description": "Butter. Bestseller.", "options": [], "extras": [{"name": "jam", "price": 0.5}]},
+         "description": "Butter. Bestseller.", "options": [], "extras": [{"name": "jam", "price": 0.5}],
+         "days": [], "notice_days": 0, "in_person_only": False},
         {"name": "Cake", "category": "Cakes", "price": 30, "price_was_printed": False, "description": "",
          "options": [{"name": "Size", "required": True,
                       "choices": [{"name": "6 inch", "added_price": 0}, {"name": "8 inch", "added_price": 10}]}],
-         "extras": []},
+         "extras": [], "days": ["sat", "sun"], "notice_days": 1, "in_person_only": False},
     ],
     "business": {"name": "Rosa's", "address": "1 Main St", "hours": None},
-    "notes": ["Cakes need a day's notice."],
+    "about": "Family bakery with breads and custom cakes.",
+    "faq": [{"question": "Do you deliver?", "answer": "No, pickup only."},
+            {"question": "Do you make custom cakes?", "answer": ""}],
+    "left_out": ["Soup of the day"],
     "unreadable": ["bottom of page 2"],
 }
 
@@ -226,7 +230,14 @@ def test_import_reads_photos_into_the_draft(app):
     assert items["cake"]["options"] == {"size": {"choices": {"6 inch": 0, "8 inch": 10}, "required": True}}
     assert items["cake"]["placeholder_price"] is True
     settings = out["catalog"]["settings"]
-    assert settings["address"] == "1 Main St" and "Cakes need a day's notice." in settings["notes"]
+    assert settings["address"] == "1 Main St"
+    # About and the printed policies are drafted and flagged for the owner to check.
+    assert settings["about"] == "Family bakery with breads and custom cakes." and "about" in settings["placeholders"]
+    assert settings["faq"] == [{"q": "Do you deliver?", "a": "No, pickup only.", "from_menu": True}]
+    assert out["left_out"] == ["Soup of the day"] and out["questions"] == 1 and out["rules"] == 1
+    # Ordering rules printed on the menu land on the item, flagged too.
+    assert items["cake"]["days"] == ["sat", "sun"] and items["cake"]["notice_days"] == 1
+    assert items["cake"]["rules_from_menu"] is True and "days" not in items["croissant"]
     assert settings["name"] == "Rosa's Bakery"  # what the owner typed wins
     call = fake.requests[-1]
     content = call["messages"][0]["content"]
@@ -468,7 +479,8 @@ def test_start_over_before_publishing_only(app):
     b = new_business(c, "Rosa's Bakery")
     ed = c.get(f"/api/manage/businesses/{b['id']}/editor").json()
     cat = ed["catalog"]
-    cat["settings"].update(tax_rate=0.08, hours="9-5", notes=["Cash only"])
+    cat["settings"].update(tax_rate=0.08, hours="9-5", about="Bakery", faq=[{"q": "Parking?", "a": "Yes"}],
+                           timezone="America/Denver")
     cat["items"] = [{"id": "tea", "name": "Tea", "category": "Drinks", "price": 2.0, "description": ""}]
     rev = c.put(f"/api/manage/businesses/{b['id']}/draft", json={"catalog": cat, "revision": ed["draft"]["revision"]},
                 headers=W).json()["revision"]
@@ -484,7 +496,8 @@ def test_start_over_before_publishing_only(app):
     fresh = r.json()["catalog"]
     assert fresh["items"] == [] and fresh["template"] == "retail"
     assert fresh["settings"]["name"] == "Rosa's Bakery" and "tax_rate" not in fresh["settings"]
-    assert fresh["settings"]["notes"] == [] and "hours" not in fresh["settings"]
+    assert fresh["settings"]["faq"] == [] and fresh["settings"]["about"] == "" and "hours" not in fresh["settings"]
+    assert fresh["settings"]["timezone"] == "America/Denver"  # kept: it's where the business is
     # After publishing, it's refused (Discard goes back to the published version instead).
     fill_and_publish(c, b["id"])
     r = c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": None}, headers=W)

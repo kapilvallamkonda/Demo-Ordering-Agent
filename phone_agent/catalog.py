@@ -1,7 +1,7 @@
 """Catalog loading and lookup.
 
 A Catalog is one business's catalog plus its settings (the "settings" block: name, tax,
-pickup time, payment rule, notes). Catalogs come from the database for live calls (see
+pickup time, payment rule, time zone, about, common questions). Catalogs come from the database for live calls (see
 businesses.py) or from a JSON file for tests and the terminal chat.
 """
 
@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import schedule
 from .templates import DEFAULT as DEFAULT_TEMPLATE
 from .templates import Template, get_template
 
@@ -37,6 +38,10 @@ class CatalogItem:
     # "choices": {option: {choice: {"variation"|"modifier": id}}}, "extras": {extra: id}}
     pos: dict = field(default_factory=dict)
     available: bool = True  # False: sold out / off the catalog for now (staff toggle it in /manage)
+    # When it can be ordered (schedule.py): days of the week, days of notice, in person only.
+    days: tuple[str, ...] = ()
+    notice_days: int = 0
+    in_person_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,11 @@ class Catalog:
         minutes = int(self.settings.get("payment", {}).get("pay_within_minutes", 30))
         return max(30, min(minutes, 24 * 60))
 
+    @property
+    def tz(self):
+        """The business's time zone (settings.timezone), for pickup times and item rules."""
+        return schedule.zone(self.settings.get("timezone"))
+
     def get(self, item_id: str) -> CatalogItem | None:
         return self.items.get(item_id)
 
@@ -86,9 +96,17 @@ class Catalog:
             f"Order types: {', '.join(r.get('order_types', []))}",
             f"Typical pickup time: {r.get('pickup_minutes')} minutes",
         ]
+        about = str(r.get("about") or "").strip()
+        if about:
+            lines.append(f"About the {words['business']}: {about}")
+        faq = [f for f in r.get("faq") or [] if isinstance(f, dict) and f.get("q") and f.get("a")]
+        if faq:
+            lines.append("Answers to common questions (use these; for anything else not covered here, "
+                         "say you don't know rather than guess):")
+            lines.extend(f"- Q: {f['q']} A: {f['a']}" for f in faq)
         notes = r.get("notes") or []
         if notes:
-            lines.append("Notes:")
+            lines.append("Other notes:")
             lines.extend(f"- {n}" for n in notes)
         lines += [
             "",
@@ -101,7 +119,9 @@ class Catalog:
             lines.append(f"\n## {cat}")
             for it in items:
                 sold_out = "" if it.available else f" | {words['unavailable'].upper()}: can't be ordered"
-                lines.append(f"- {it.id} | {it.name} | ${it.price:.2f} | {it.description}{sold_out}")
+                rules = schedule.describe_rules(it)
+                rules = f" | {rules.upper() if it.in_person_only else rules}" if rules else ""
+                lines.append(f"- {it.id} | {it.name} | ${it.price:.2f} | {it.description}{sold_out}{rules}")
                 for grp in it.options.values():
                     choices = ", ".join(
                         f"{c}" + (f" (+${d:.2f})" if d else "") for c, d in grp.choices.items()
@@ -154,7 +174,13 @@ def _parse(raw: dict, business_id: int | None, slug: str | None, catalog_id: int
             extras=dict(it.get("extras", {})),
             pos=dict(it.get("pos") or {}),
             available=it.get("available", True) is not False,
+            days=tuple(d for d in schedule.DAYS if d in set(it.get("days") or ())),
+            notice_days=int(it.get("notice_days") or 0),
+            in_person_only=it.get("in_person_only") is True,
         )
+        problems = schedule.validate_item_rules(it)
+        if problems:
+            raise CatalogError(problems[0])
     if not items:
         raise CatalogError("catalog has no items")
     template_id = raw.get("template") or DEFAULT_TEMPLATE

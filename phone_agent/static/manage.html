@@ -187,6 +187,15 @@
   .step { display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .step h3 { margin: 0 0 4px; font-size: 16px; } .step p { margin: 0 0 10px; }
   .step.current { border-color: var(--accent); }
+  .faq { display: flex; flex-direction: column; gap: 10px; }
+  .faq-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .faq-row.drafted { border-color: var(--warn); }
+  .faq-row .faq-q { font-weight: 600; }
+  .faq-suggest .tags { margin-top: 6px; }
+  .ocard .pickup { font-weight: 650; color: var(--accent); margin-top: 4px; }
+  .daypick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .daypick .chip { min-width: 48px; justify-content: center; }
+  .field.rules .switch { margin: 6px 0 10px; }
   .chip-incomplete { display: inline-block; margin-left: 10px; vertical-align: 2px; padding: 2px 9px; border-radius: 999px;
                      background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 650; }
   .missing-note { margin-bottom: 14px; }
@@ -396,7 +405,8 @@
     screen(el("form", { onsubmit: async e => {
         e.preventDefault(); err.textContent = ""; submit.disabled = true;
         try {
-          const r = await api("POST", "/businesses", { name: name.value, template: chosen });
+          let tz = ""; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
+          const r = await api("POST", "/businesses", { name: name.value, template: chosen, timezone: tz });
           S.me = await api("GET", "/me"); S.rid = r.id; store.set("manage.business", r.id); S.tab = "home";
           await loadEditor();
         } catch (x) { err.textContent = x.message; submit.disabled = false; }
@@ -539,7 +549,7 @@
       const field = input ? el("input", { type: "text", value: input.value || "", style: "width:100%", "aria-label": title }) : null;
       const done = v => { dlg.close(); resolve(v); };
       dlg.replaceChildren(el("form", { method: "dialog", onsubmit: e => { e.preventDefault(); done(field ? field.value.trim() : true); } },
-        el("h2", {}, title), body ? el("p", { class: "sub" }, body) : null, field,
+        el("h2", {}, title), body ? el("p", { class: "sub", style: "white-space:pre-line" }, body) : null, field,
         el("div", { class: "row", style: "justify-content:flex-end;margin-top:14px" },
           cancel ? el("button", { class: "btn", type: "button", onclick: () => done(null) }, cancel) : null,
           el("button", { class: "btn " + (danger ? "danger" : "primary"), type: "submit" }, ok))));
@@ -648,6 +658,18 @@
 
   // ---- catalog tab ----
   const isEstimated = it => !!it.placeholder_price;
+  const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];
+  // Short labels for an item's ordering rules (same meaning as schedule.py).
+  function ruleBadges(it) {
+    const out = [];
+    if (it.in_person_only) out.push("In person only");
+    const d = it.days || [];
+    if (d.length && d.length < 7) out.push(d.length === 2 && d.includes("sat") && d.includes("sun") ? "Weekends only"
+      : d.length === 5 && !d.includes("sat") && !d.includes("sun") ? "Weekdays only"
+      : DAYS.filter(([k]) => d.includes(k)).map(([, l]) => l).join(", ") + " only");
+    if (it.notice_days) out.push(it.notice_days === 1 ? "1 day notice" : `${it.notice_days} days notice`);
+    return out;
+  }
   const isOff = it => it.available === false;
 
   function catalogView() {
@@ -700,9 +722,11 @@
       el("div", { class: "main" },
         el("div", { class: "name" }, it.name),
         it.description ? el("div", { class: "desc" }, it.description) : null,
-        (opts || extras || isEstimated(it) || isOff(it) || it.pos) ? el("div", { class: "badges" },
+        (opts || extras || isEstimated(it) || isOff(it) || it.pos || ruleBadges(it).length) ? el("div", { class: "badges" },
           isOff(it) ? el("span", { class: "badge bad" }, W().unavailable_short) : null,
           isEstimated(it) ? el("span", { class: "badge warn" }, "Estimated price") : null,
+          it.rules_from_menu ? el("span", { class: "badge warn" }, "Check rules") : null,
+          ruleBadges(it).map(b => el("span", { class: "badge" }, b)),
           opts ? el("span", { class: "badge" }, opts + (opts > 1 ? " choices" : " choice")) : null,
           extras ? el("span", { class: "badge" }, extras + (extras > 1 ? " extras" : " extra")) : null,
           it.pos ? el("span", { class: "badge ok" }, "POS") : null) : null),
@@ -770,6 +794,7 @@
         el("label", { class: "switch", style: "color:inherit" },
           el("input", { type: "checkbox", checked: !isOff(it), onchange: e => { if (e.target.checked) delete it.available; else it.available = false; edit(true); } }),
           el("span", {}, isOff(it) ? `${W().unavailable_short}: the agent says it's unavailable` : "Available to order"))),
+      rulesEditor(it, edit),
       optionsEditor(it, edit),
       extrasEditor(it, edit),
       !isNew ? el("p", { class: "sub" }, `${cap(W().item)} id: ${it.id}` + (it.pos ? " · linked to the POS" : "")) : null);
@@ -818,6 +843,49 @@
     return el("span", { class: "money" }, el("span", {}, "$"),
       el("input", { id, type: "number", min: 0, step: "0.01", inputmode: "decimal", value: Number(value || 0).toFixed(2),
                     oninput: e => { const v = parseFloat(e.target.value); onset(isFinite(v) ? round2(v) : 0); } }));
+  }
+
+  // When it can be ordered: days of the week, days of notice, in person only.
+  function rulesEditor(it, edit) {
+    const touch = () => { delete it.rules_from_menu; };
+    const days = new Set(it.days && it.days.length ? it.days : DAYS.map(([k]) => k));
+    const setDays = () => {
+      const list = DAYS.map(([k]) => k).filter(k => days.has(k));
+      if (list.length === 7 || !list.length) delete it.days; else it.days = list;
+      touch(); edit(true);
+    };
+    const sameSection = S.catalog.items.filter(o => o !== it && o.category === it.category);
+    return el("div", { class: "field rules" },
+      el("span", { class: "lbl" }, "When it can be ordered"),
+      it.rules_from_menu ? el("div", { class: "placeholder" }, `These rules were read from your ${W().catalog}. Check them, or confirm they're right.`,
+        el("button", { class: "btn small", type: "button", onclick: () => { touch(); edit(true); } }, "They're right")) : null,
+      el("label", { class: "switch", style: "color:inherit" },
+        el("input", { type: "checkbox", checked: !!it.in_person_only,
+          onchange: e => { if (e.target.checked) it.in_person_only = true; else delete it.in_person_only; touch(); edit(true); } }),
+        el("span", {}, "In person only")),
+      el("span", { class: "help", style: "margin-top:-6px" }, it.in_person_only
+        ? "Callers can ask about it, but the agent won't take it on a phone order."
+        : "Turn on for things sold only at the counter, like bar drinks."),
+      it.in_person_only ? null : el("div", {},
+        el("span", { class: "help" }, "Days it can be picked up"),
+        el("div", { class: "daypick", role: "group", "aria-label": "Days it can be picked up" },
+          DAYS.map(([k, label]) => el("button", { type: "button", class: "chip", "aria-pressed": days.has(k) ? "true" : "false",
+            onclick: () => { days.has(k) ? days.delete(k) : days.add(k); if (!days.size) return toast("Pick at least one day."); setDays(); } }, label))),
+        el("div", { class: "row", style: "margin-top:10px;align-items:center" },
+          el("label", { for: "f-notice", class: "help", style: "margin:0" }, "Order at least"),
+          el("input", { id: "f-notice", type: "number", min: 0, max: 30, step: 1, style: "max-width:80px", value: it.notice_days || 0,
+            oninput: e => { const n = parseInt(e.target.value, 10); if (n > 0) it.notice_days = Math.min(n, 30); else delete it.notice_days; touch(); edit(); } }),
+          el("span", { class: "help", style: "margin:0" }, "days ahead (0: same day)"))),
+      sameSection.length && (it.days || it.notice_days || it.in_person_only) ? el("button", { class: "linkish", type: "button", onclick: async () => {
+        const ok = await ask({ title: `Use these rules for all of ${it.category}?`,
+          body: `The other ${sameSection.length} ${sameSection.length === 1 ? W().item : W().items} in ${it.category} get the same days, notice and in-person setting.`, ok: "Apply" });
+        if (!ok) return;
+        for (const o of sameSection) {
+          for (const k of ["days", "notice_days", "in_person_only"]) { if (it[k]) o[k] = Array.isArray(it[k]) ? [...it[k]] : it[k]; else delete o[k]; }
+          delete o.rules_from_menu;
+        }
+        changed(false); refreshListQuietly(); toast(`Updated ${sameSection.length} ${W().items}.`);
+      } }, `Use these rules for everything in ${it.category}`) : null);
   }
 
   function optionsEditor(it, edit) {
@@ -939,6 +1007,7 @@
       fields.map(f => {
         const id = "s-" + f.path.replace(/\./g, "-");
         let v = getPath(r, f.path);
+        if (f.hide_when_empty && (v == null || v === "" || (Array.isArray(v) && !v.length))) return null;
         if (typeof v === "string" && v.includes("not available on this line yet")) v = "";  // old "unset" marker
         let input;
         if (f.type === "text") input = el("input", { id, type: "text", value: v ?? "", maxlength: f.max_length, placeholder: f.required ? null : "Not set",
@@ -953,6 +1022,14 @@
           el("span", { class: "muted" }, "%"));
         else if (f.type === "boolean") input = el("label", { class: "switch", style: "color:inherit" },
           el("input", { id, type: "checkbox", checked: !!v, onchange: e => set(f, e.target.checked, true) }), el("span", {}, v ? "On" : "Off"));
+        else if (f.type === "select" || f.type === "timezone") {
+          const opts = (f.options || []).slice();
+          if (v && !opts.some(([k]) => k === v)) opts.push([v, v]);
+          input = el("select", { id, onchange: e => set(f, e.target.value) },
+            v ? null : el("option", { value: "" }, "Choose…"),
+            opts.map(([k, label]) => el("option", { value: k, selected: k === v }, f.type === "timezone" ? `${label} (${k})` : label)));
+        }
+        else if (f.type === "faq") input = faqEditor(r, f, id);
         else if (f.type === "string_list") input = el("textarea", { id, rows: Math.max(4, (v || []).length + 1),
           oninput: e => set(f, e.target.value.split("\n").map(s => s.trim()).filter(Boolean)) }, (v || []).join("\n"));
         const unconfirmed = (r.placeholders || []).includes(f.path);
@@ -960,11 +1037,41 @@
           el("label", { for: id }, f.label, f.required ? el("span", { class: "muted" }, " *") : null,
             f.required ? el("span", { class: "req-tag" }, "Required") : null),
           input,
-          unconfirmed ? el("div", { class: "placeholder" }, "This was estimated during setup. Change it, or confirm it's right.",
+          unconfirmed ? el("div", { class: "placeholder" }, f.path === "about"
+              ? `Drafted from your ${W().catalog}. Change it, or confirm it's right.`
+              : "This was estimated during setup. Change it, or confirm it's right.",
             el("button", { class: "btn small", type: "button", onclick: () => { confirm(f); changed(); } }, "It's right")) : null,
           f.help ? el("span", { class: "help" }, f.help) : null);
       }))),
       el("p", { class: "sub" }, "Callers hear changes after you publish.")), posPanel(), startOverPanel());
+  }
+
+  // Common questions: what callers ask that isn't about one item, and the owner's answer.
+  function faqEditor(r, f, id) {
+    const list = Array.isArray(r.faq) ? r.faq : (r.faq = []);
+    const have = new Set(list.map(x => (x.q || "").trim().toLowerCase()));
+    const suggestions = (S.ed.template.faq_suggestions || []).filter(q => !have.has(q.toLowerCase()));
+    const add = q => {
+      list.push({ q, a: "" }); changed(true);
+      setTimeout(() => { const a = [...document.querySelectorAll(".faq .faq-a")].pop(); if (a) { a.scrollIntoView({ block: "center" }); a.focus(); } });
+    };
+    return el("div", { class: "faq", id },
+      list.length ? list.map((x, i) => el("div", { class: "faq-row" + (x.from_menu ? " drafted" : "") },
+        el("div", { class: "row" },
+          el("input", { type: "text", class: "grow faq-q", value: x.q || "", maxlength: 200, placeholder: "Question, e.g. Do you deliver?",
+            "aria-label": `Question ${i + 1}`, oninput: e => { x.q = e.target.value; delete x.from_menu; changed(false); } }),
+          el("button", { class: "btn small", type: "button", "aria-label": `Remove question ${i + 1}`,
+            onclick: () => { list.splice(i, 1); changed(true); } }, "✕")),
+        el("textarea", { class: "faq-a", rows: 2, maxlength: 600, placeholder: "Your answer, the way you'd say it on the phone",
+          "aria-label": `Answer to: ${x.q || "question " + (i + 1)}`,
+          oninput: e => { x.a = e.target.value; delete x.from_menu; changed(false); } }, x.a || ""),
+        x.from_menu ? el("div", { class: "placeholder" }, `Drafted from your ${W().catalog}. Change it, or confirm it's right.`,
+          el("button", { class: "btn small", type: "button", onclick: () => { delete x.from_menu; changed(true); } }, "It's right"))
+          : !(x.a || "").trim() ? el("span", { class: "help" }, "No answer yet: the agent won't use this one.") : null))
+        : el("p", { class: "sub" }, "No questions yet. Start with one of these, or add your own."),
+      suggestions.length ? el("div", { class: "faq-suggest" }, el("span", { class: "help" }, "Callers often ask:"),
+        el("div", { class: "tags" }, suggestions.map(q => el("button", { class: "chip", type: "button", onclick: () => add(q) }, "+ " + q)))) : null,
+      el("button", { class: "btn small", type: "button", onclick: () => add("") }, "+ Add a question"));
   }
 
   // ---- history tab ----
@@ -1010,6 +1117,7 @@
         el("span", { class: "grow" }), el("strong", {}, money(o.total))),
       el("div", {}, el("span", { class: "who" }, o.customer_name || "No name"),
         o.customer_phone ? el("span", { class: "sub" }, " · " + fmtPhone(o.customer_phone)) : null),
+      o.pickup_at ? el("div", { class: "pickup" }, "Pickup " + o.pickup) : null,
       el("ul", { class: "olines" }, (o.lines || []).map(l => el("li", {}, l.description.replace(/ \| /g, " · ")))),
       el("div", { class: "badges" }, badge(STATUS[o.status] || [o.status, ""]), badge(PAY[o.payment_status] || [o.payment_status, ""]),
         o.pos_status ? badge({ sent: ["On POS", "ok"], held: ["To POS when paid", ""], pending: ["Sending to POS", ""],
@@ -1266,6 +1374,7 @@
     const item = (S.catalog.items.find(i => i.id === a.item_id) || {}).name || a.item_id;
     return { add_item: `Added ${a.quantity || 1} × ${item}`, remove_item: "Removed an item", update_quantity: "Changed a quantity",
              set_customer_name: `Name: ${a.name}`, set_customer_phone: "Updated the phone number", place_order: "Placed the order (test only)",
+             set_pickup_time: a.date ? `Pickup set for ${a.date} ${a.time || ""}`.trim() : "Pickup as soon as possible",
              end_call: "Hung up" }[e.tool] || e.tool;
   };
 
@@ -1383,8 +1492,12 @@
     S.tab = panelOpen ? "catalog" : S.tab;
     await loadEditor();
     toast(`Added ${out.added} ${W().items}. Check prices, then publish.`);
-    if (panelOpen && out.unreadable && out.unreadable.length)
-      ask({ title: "A few things couldn't be read", body: out.unreadable.join(" · "), cancel: null });
+    const notes = [
+      out.rules ? `${out.rules} ${out.rules === 1 ? W().item : W().items} got ordering rules from your ${W().catalog} (like weekends only). They're marked "Check rules".` : "",
+      out.questions ? `${out.questions} answer${out.questions === 1 ? "" : "s"} for Common questions drafted in Settings. Check them before publishing.` : "",
+      out.left_out && out.left_out.length ? "Left out (specials and market-price items): " + out.left_out.join(", ") + "." : "",
+      out.unreadable && out.unreadable.length ? "Couldn't read: " + out.unreadable.join(", ") + "." : ""].filter(Boolean);
+    if (panelOpen && notes.length) ask({ title: "Worth a look", body: notes.join("\n\n"), cancel: null });
   }
 
   function importProgress(r, elapsed) {

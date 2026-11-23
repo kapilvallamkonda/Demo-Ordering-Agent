@@ -58,10 +58,29 @@ def check_catalog(raw: dict) -> dict:
     for key in ("hours", "address"):
         if not r.get(key) or NOT_SET in str(r.get(key)):
             warnings.append(f"{by_path[key]['label']} not set: the agent will say it doesn't have it")
-    if not r.get("notes"):
-        warnings.append("No notes for the phone agent: add cuisine, spice and allergy guidance")
+    words = catalog.template.words
+    if not str(r.get("about") or "").strip():
+        warnings.append(f"About your business is empty: the agent can't describe the {words['business']}")
+    faq = [f for f in r.get("faq") or [] if isinstance(f, dict)]
+    unanswered = [f.get("q") for f in faq if f.get("q") and not str(f.get("a") or "").strip()]
+    if unanswered:
+        warnings.append(f"{len(unanswered)} common question(s) have no answer yet, so the agent won't use "
+                        "them: " + ", ".join(unanswered[:6]))
+    drafted = [f.get("q") for f in faq if f.get("from_menu")]
+    if drafted:
+        blockers.append("Answers drafted from your menu, not yet checked: " + ", ".join(drafted[:6])
+                        + (" ..." if len(drafted) > 6 else ""))
+    rules_unchecked = [it["name"] for it in raw["items"] if it.get("rules_from_menu")]
+    if rules_unchecked:
+        n = len(rules_unchecked)
+        blockers.append(f"{n} {words['item'] if n == 1 else words['items']} {'has' if n == 1 else 'have'} "
+                        f"ordering rules read from your "
+                        f"{words['catalog']}, not yet checked: " + ", ".join(rules_unchecked[:8])
+                        + (" ..." if len(rules_unchecked) > 8 else ""))
 
-    unconfirmed = r.get("placeholders") or []
+    unconfirmed = [p for p in r.get("placeholders") or [] if p != "about"]
+    if "about" in (r.get("placeholders") or []):
+        blockers.append(f"About your business was drafted from your {words['catalog']}, not yet checked")
     if unconfirmed:
         names = [by_path[p]["label"] if p in by_path else p for p in unconfirmed]
         blockers.append("Settings estimated, not yet confirmed: " + ", ".join(names))
@@ -87,6 +106,8 @@ def check_catalog(raw: dict) -> dict:
             errors.append(f"{label}: price must be more than $0 and at most ${MAX_PRICE:.0f}")
         if "available" in it and not isinstance(it["available"], bool):
             errors.append(f"{label}: available must be true or false")
+        if "rules_from_menu" in it and not isinstance(it["rules_from_menu"], bool):
+            errors.append(f"{label}: rules_from_menu must be true or false")
         for name, grp in (it.get("options") or {}).items():
             choices = grp.get("choices") or {}
             if not str(name).strip():

@@ -35,7 +35,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full high-level design.
 
 | Path | What it is |
 |---|---|
-| `data/businesses/<slug>.json` | One catalog file per business (template, settings and items), e.g. `hyderabad-house.json`, a restaurant with about 210 items. Optional `settings.notes` lines are added to the prompt. Live calls use the copy stored in the database; these files are what you load in. |
+| `data/businesses/<slug>.json` | One catalog file per business (template, settings and items), e.g. `hyderabad-house.json`, a restaurant with about 210 items. Optional `settings.about` and `settings.faq` (common questions with answers) are added to the prompt; items can carry day and notice rules. Live calls use the copy stored in the database; these files are what you load in. |
 | `.claude/skills/add-business/` | Claude Code skill (`/add-business`) that onboards a business end to end: menu or product photos to a catalog file, checks, Twilio number, registration on Fly, verification. Includes `scripts/check_catalog.py` and the catalog format guide. |
 | `tests/fixtures/catalog.json` | Small fixed catalog the tests use, so they don't depend on real ones. |
 | `phone_agent/modules/` | What a call can do: one module per capability (`orders.py` now; bookings coming soon), each with its tools, rules, prompt section and per-call state. Add a module here. |
@@ -194,6 +194,7 @@ They include a full phone order over the WebSocket.
 | `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
+| `DEFAULT_TIMEZONE` | `America/Chicago` | Time zone for businesses that haven't set one (new businesses take it from the owner's browser). Pickup days and item day rules use the business's time zone. |
 | `BRAND_NAME` | `Ringcart` | Product name shown on the website, sign-in and dashboards (`phone_agent/brand.py`). |
 | `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |
 | `CATALOG_PATH` | `data/businesses/hyderabad-house.json` | Catalog file for the terminal chat when `--business` isn't given. Live calls use catalogs in the database. |
@@ -266,7 +267,7 @@ Operators (`OPERATOR_EMAILS`) see every business and the go-live queue. See
 
 Businesses edit their own catalog at `/manage`: items, descriptions, prices,
 choices and extras, sold-out switches, and settings (greeting, hours, address, pickup
-time, tax, payment rule, notes for the agent). Changes save to a draft automatically and
+time, tax, payment rule, time zone, About and Common questions). Changes save to a draft automatically and
 reach callers when someone presses Publish. See [docs/DESIGN.md](docs/DESIGN.md) section 14.
 
 ```bash

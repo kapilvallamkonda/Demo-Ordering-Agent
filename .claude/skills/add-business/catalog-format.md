@@ -16,15 +16,19 @@ readable.
     "pickup_minutes": 25,
     "tax_rate": 0.08,
     "payment": {"required_before_cooking": false, "pay_within_minutes": 30},
+    "timezone": "America/Chicago",
     "placeholders": ["tax_rate"],
-    "notes": [
-      "Indian restaurant (Andhra / Hyderabadi / South Indian / Indo-Chinese).",
-      "Dishes are made at the spice level normal for the dish. If the caller wants it milder or spicier, put that in the item's notes."
+    "about": "Indian restaurant: Andhra, Hyderabadi, South Indian and Indo-Chinese.",
+    "faq": [
+      {"q": "Can dishes be made milder?", "a": "Yes, just tell us how spicy you'd like it and we'll note it on the order."},
+      {"q": "Do you deliver?", "a": "No, pickup only."}
     ]
   },
   "items": [
     {"id": "butter_chicken", "name": "Butter Chicken", "category": "Non-Veg Entrees (served with white rice)", "price": 18.0, "description": "Non-veg. Chef special."},
     {"id": "hyderabadi_dum_biryani", "name": "Hyderabadi Dum Biryani", "category": "Biryanis", "price": 15.0, "description": "Non-veg.", "options": {"protein": {"choices": {"veg": 0.0, "egg": 1.0, "chicken": 4.0, "goat": 6.0}, "required": true}}},
+    {"id": "chicken_pulav", "name": "Chicken Pulav", "category": "Pulav (weekends)", "price": 16.99, "description": "Non-veg.", "days": ["sat", "sun"]},
+    {"id": "black_forest_cake", "name": "Black Forest Cake", "category": "Cakes", "price": 30.0, "description": "", "notice_days": 1},
     {"id": "soda", "name": "Soda (can)", "category": "Drinks", "price": 2.0, "description": "Vegetarian.", "options": {"flavor": {"choices": {"coke": 0.0, "sprite": 0.0}, "required": true}}, "placeholder_price": true}
   ]
 }
@@ -49,7 +53,10 @@ Top-level key: the kind of business, `"restaurant"` (default when missing) or
 | `payment.required_before_cooking` | `true`: the order is prepared only after the payment link is paid; `false`: paying by link is optional. Ask the business. |
 | `payment.pay_within_minutes` | How long the link is valid; 30 to 1440. |
 | `placeholders` | Names of settings you guessed (e.g. `["tax_rate", "pickup_minutes"]`). The checker blocks on these. Remove each one once the business confirms it (staff can also confirm them in `/manage`). |
-| `notes` | Lines added to the agent's instructions: cuisine, how spice requests work, allergy guidance, store policies, anything sold in person but not by phone. Never tell the agent to send callers to "call the business": they already are. |
+| `timezone` | The business's time zone (`America/Chicago`). Pickup days and item day rules use it. Default `DEFAULT_TIMEZONE`. |
+| `about` | One or two plain sentences on what the business is and sells; the agent uses it to describe the business. |
+| `faq` | Common questions callers ask that aren't about one item, with the owner's answer: `[{"q": "Do you deliver?", "a": "No, pickup only."}]`. The agent answers from these and says it doesn't know anything else. Unanswered ones are skipped. `"from_menu": true` marks an answer drafted from the menu until the owner checks it (the checker blocks on these). Never tell the agent to send callers to "call the business": they already are. |
+| `notes` | Old free-form lines, still added to the prompt as "Other notes". Don't add new ones: use `about`, `faq` or item rules. |
 
 ## Items
 
@@ -64,6 +71,10 @@ Top-level key: the kind of business, `"restaurant"` (default when missing) or
 | `extras` | Optional paid add-ons: `{"extra cheese": 1.5}`. |
 | `available` | Optional. `false` = sold out for now (staff toggle this in `/manage`); the agent won't take it. |
 | `placeholder_price` | `true` when the price wasn't given and you estimated it. The checker blocks on these. |
+| `days` | Optional. Days it can be picked up, e.g. `["sat", "sun"]` for weekends only (`mon` ... `sun`). Missing = every day. Enforced by the order code. |
+| `notice_days` | Optional. How many days ahead it must be ordered (`1` = by the day before). Enforced against the pickup day. |
+| `in_person_only` | Optional. `true` = sold at the counter only (e.g. bar drinks); the agent won't add it to a phone order. |
+| `rules_from_menu` | `true` when `days` / `notice_days` / `in_person_only` were read from the menu and not yet checked by the owner. The checker blocks on these. |
 
 ## Turning menu or price-list photos into items
 
@@ -76,6 +87,9 @@ Top-level key: the kind of business, `"restaurant"` (default when missing) or
 - Copy prices exactly. If a price is unreadable or missing, don't guess silently: either
   leave the item out and list it for the business, or estimate it and set
   `placeholder_price: true`. Ask the user which.
-- Daily specials and "market price" items: leave them out and add a note telling the
-  agent they're available in person.
+- Daily specials and "market price" items: leave them out, or add them with
+  `in_person_only: true` if callers should hear they exist.
+- Printed rules go on the items: "weekends only" is `days`, "a day's notice" is
+  `notice_days`, "dine-in only" is `in_person_only`. Printed policies (delivery, catering,
+  allergies) go in `faq` as question and answer.
 - Kids-only or time-limited items: say so in the category or description.

@@ -15,9 +15,16 @@
       "tax_rate",
       "pickup_minutes"
     ],
-    "notes": [
-      "Italian-American pizzeria. Pizzas come in 12 and 16 inch.",
-      "For allergies, say you can't guarantee anything and suggest asking staff at pickup."
+    "about": "Italian-American pizzeria. Pizzas come in 12 and 16 inch.",
+    "faq": [
+      {
+        "q": "Is anything allergen-free?",
+        "a": "We can't guarantee anything is allergen-free. Please ask staff at pickup."
+      },
+      {
+        "q": "Do you deliver?",
+        "a": "No, pickup only."
+      }
     ]
   },
   "items": [
