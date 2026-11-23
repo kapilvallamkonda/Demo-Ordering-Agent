@@ -1,7 +1,7 @@
 """Square: send orders with the Orders API, import the catalog from the Catalog API.
 
 With Square connected, callers pay by a Square payment link (payment_link below, driven by
-pos.SquarePayments): Square creates the order, and it appears on the register once paid.
+pos.LinkPayments): Square creates the order, and it appears on the register once paid.
 Otherwise orders are created as pickup orders (a PICKUP fulfillment: ASAP with the prep time from
 the catalog settings, or SCHEDULED at the pickup time the caller chose). Square only shows an API order in Square POS and the Seller
 Dashboard once it is paid, so:
@@ -32,6 +32,7 @@ SIZE_WORDS = re.compile(r"\b(small|medium|large|regular|x-?large|half|full|\d+\s
 
 class SquareProvider:
     name = "square"
+    pays_by_link = True  # callers pay by a Square payment link (pos.LinkPayments)
     refresh_margin = 7 * 24 * 3600  # access tokens last 30 days
 
     def __init__(self, application_id: str, application_secret: str, environment: str = "sandbox",

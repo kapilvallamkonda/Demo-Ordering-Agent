@@ -1,0 +1,49 @@
+{
+  "template": "events",
+  "settings": {
+    "name": "Example Wedding Supplies",
+    "order_types": ["pickup"],
+    "pickup_minutes": 60,
+    "max_advance_days": 180,
+    "tax_rate": 0.0825,
+    "payment": {"required_before_cooking": true, "pay_within_minutes": 120},
+    "placeholders": ["tax_rate", "pickup_minutes"],
+    "about": "Wedding and ceremony supplies: fresh flower garlands, traditional ceremony items and wedding packages, for pickup.",
+    "faq": [
+      {"q": "Do you ship?", "a": "Phone orders are for pickup. For shipping, order on our website."},
+      {"q": "Can I change the flowers or colours on a garland?", "a": "Often, yes. Tell us what you'd like and we'll get back to you with a price."}
+    ],
+    "guides": [
+      {"title": "What's needed for a Telugu wedding",
+       "text": "Most families need, by ceremony: Pelli Kuthuru and Mangala Snanam: haldi jewelry, turmeric, a decorated coconut. Kanyadanam: a Kanyadanam set (plate, kalasham, coconut). Jeelakarra Bellam: cumin and jaggery paste, the couple's garlands. Talambralu: Navaratna talambralu (coloured rice), two talambrala basins. Also common: basingalu for the couple, a sanapeeta, and pooja flowers. A wedding package covers most of this in one order."},
+      {"title": "Choosing garlands",
+       "text": "Bride and groom garlands are sold as a pair. Lengths: 4 feet suits most couples; 5 feet for a fuller look. Fresh garlands are made 1 to 2 days before pickup and keep 2 days refrigerated. Order at least 7 days ahead; garlands made in India need 21 days."}
+    ]
+  },
+  "items": [
+    {"id": "rose_garland_pair", "name": "Rose & Baby's Breath Garland Pair", "category": "Garlands",
+     "price": 120.0, "description": "Fresh roses and baby's breath, one garland each for the bride and groom. Made to order. Order early.",
+     "notice_days": 7,
+     "options": {"length": {"choices": {"4 feet": 0.0, "5 feet": 30.0}, "required": true},
+                 "colour": {"choices": {"red": 0.0, "pink": 0.0, "peach": 0.0, "white": 0.0}, "required": true}}},
+    {"id": "imported_garland_pair", "name": "Imported Jasmine Garland Pair", "category": "Garlands",
+     "price": 180.0, "description": "Jasmine and rose garlands made in India. Imported from India. Order early.",
+     "notice_days": 21,
+     "options": {"length": {"choices": {"4 feet": 0.0, "5 feet": 40.0}, "required": true}}},
+    {"id": "decorated_coconut", "name": "Decorated Wedding Coconut", "category": "Ceremony items",
+     "price": 25.0, "description": "Coconut decorated with kundan and ribbons. Customizable.",
+     "options": {"colour": {"choices": {"red and gold": 0.0, "green and gold": 0.0, "pink and gold": 0.0}, "required": true}}},
+    {"id": "kanyadanam_set", "name": "Kanyadanam Set", "category": "Ceremony items",
+     "price": 65.0, "description": "Plate, kalasham and decorated coconut for the Kanyadanam. Part of a set."},
+    {"id": "navaratna_talambralu", "name": "Navaratna Talambralu", "category": "Ceremony items",
+     "price": 30.0, "description": "Nine-colour rice for the Talambralu ceremony, about 5 lb. Bestseller."},
+    {"id": "basingalu", "name": "Basingalu (pair)", "category": "Ceremony items",
+     "price": 45.0, "description": "Traditional forehead ornaments for the bride and groom."},
+    {"id": "pooja_flowers", "name": "Pooja Flowers", "category": "Flowers",
+     "price": 20.0, "description": "Loose mixed flowers for pooja, about 1 lb. Seasonal.",
+     "extras": {"extra pound": 15.0}},
+    {"id": "silver_package", "name": "Silver Wedding Package", "category": "Wedding packages",
+     "price": 450.0, "description": "Garland pair, Kanyadanam set, talambralu with basins, basingalu and pooja flowers. Part of a set. Order early.",
+     "notice_days": 7}
+  ]
+}

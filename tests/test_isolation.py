@@ -331,3 +331,17 @@ def test_a_square_outage_only_delays_that_business_payment_check(monkeypatch):
     # Long after, it gives up locally so the order doesn't hang forever.
     assert hub.check_payment(session.order_id, now=created + 31 * 60 + 3601) == "expired"
     assert store.order_for_pos(session.order_id)["status"] == "cancelled"
+
+
+def test_inquiries_are_kept_per_business():
+    """Custom requests (modules/inquiries.py) are numbered, listed and updated per business."""
+    from phone_agent.storage import Store
+
+    store = Store(":memory:")
+    a, b = seed_business(store), seed_business(store, "taco-town", "+15550008888")
+    assert store.save_inquiry(a, call_id="CA1", summary="catering for 80") == 1
+    assert store.save_inquiry(b, call_id="CA2", summary="custom cake") == 1  # own numbering
+    assert [q["summary"] for q in store.inquiries(b)] == ["custom cake"]
+    assert store.set_inquiry_status(b, 1, "closed")
+    assert store.inquiries(a)[0]["status"] == "new"
+    assert not store.set_inquiry_status(a, 2, "closed")

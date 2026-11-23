@@ -626,7 +626,7 @@
   }
 
   let refreshTimer = null;
-  const TABS = () => [["home", "Home"], ["orders", "Orders"], ["calls", "Calls"], ["insights", "Insights"], ["catalog", cap(W().catalog)],
+  const TABS = () => [["home", "Home"], ["orders", "Orders"], ["calls", "Calls"], ["requests", "Requests"], ["insights", "Insights"], ["catalog", cap(W().catalog)],
     ["settings", "Settings"], ["team", "Team"], ["history", "History"]]
     .concat(S.me.operator ? [["analytics", "Analytics"], ["operator", "Operator"]] : []);
 
@@ -653,7 +653,7 @@
         el("div", { id: "view" })));
     renderHeader(); renderChecks();
     const view = document.getElementById("view");
-    const views = { home: homeView, orders: ordersView, calls: callsView, catalog: catalogView, settings: settingsView,
+    const views = { home: homeView, orders: ordersView, calls: callsView, requests: requestsView, catalog: catalogView, settings: settingsView,
                     team: teamView, history: historyView, operator: operatorView,
                     insights: () => analyticsView(false), analytics: () => analyticsView(true) };
     view.append(views[S.tab]());
@@ -919,8 +919,8 @@
             onclick: () => { days.has(k) ? days.delete(k) : days.add(k); if (!days.size) return toast("Pick at least one day."); setDays(); } }, label))),
         el("div", { class: "row", style: "margin-top:10px;align-items:center" },
           el("label", { for: "f-notice", class: "help", style: "margin:0" }, "Order at least"),
-          el("input", { id: "f-notice", type: "number", min: 0, max: 30, step: 1, style: "max-width:80px", value: it.notice_days || 0,
-            oninput: e => { const n = parseInt(e.target.value, 10); if (n > 0) it.notice_days = Math.min(n, 30); else delete it.notice_days; touch(); edit(); } }),
+          el("input", { id: "f-notice", type: "number", min: 0, max: 120, step: 1, style: "max-width:80px", value: it.notice_days || 0,
+            oninput: e => { const n = parseInt(e.target.value, 10); if (n > 0) it.notice_days = Math.min(n, 120); else delete it.notice_days; touch(); edit(); } }),
           el("span", { class: "help", style: "margin:0" }, "days ahead (0: same day)"))),
       sameSection.length && (it.days || it.notice_days || it.in_person_only) ? el("button", { class: "linkish", type: "button", onclick: async () => {
         const ok = await ask({ title: `Use these rules for all of ${it.category}?`,
@@ -1070,6 +1070,10 @@
           input = el("div", {}, el("label", { class: "switch", style: "color:inherit" },
               el("input", { id, type: "checkbox", checked: true, disabled: true }), el("span", {}, "Always on with Square")),
             el("span", { class: "help" }, "Callers get a Square payment link by text. The money goes to your Square account, and the order shows on your Square register as soon as it's paid. Square only shows orders from other apps once they're paid."));
+        else if (f.type === "boolean" && f.path === "payment.required_before_cooking" && S.ed.pos_provider === "shopify")
+          input = el("div", {}, el("label", { class: "switch", style: "color:inherit" },
+              el("input", { id, type: "checkbox", checked: true, disabled: true }), el("span", {}, "Always on with Shopify")),
+            el("span", { class: "help" }, "Callers get your Shopify checkout link by text. Once they pay, the order is in your Shopify admin and the money in your Shopify account."));
         else if (f.type === "boolean") input = el("label", { class: "switch", style: "color:inherit" },
           el("input", { id, type: "checkbox", checked: !!v, onchange: e => set(f, e.target.checked, true) }), el("span", {}, v ? "On" : "Off"));
         else if (f.type === "select" || f.type === "timezone") {
@@ -1080,6 +1084,9 @@
             opts.map(([k, label]) => el("option", { value: k, selected: k === v }, f.type === "timezone" ? `${label} (${k})` : label)));
         }
         else if (f.type === "faq") input = faqEditor(r, f, id);
+        else if (f.type === "guides") input = guidesEditor(r, f, id);
+        else if (f.type === "phone") input = el("input", { id, type: "tel", value: v ?? "", placeholder: "Not set", style: "max-width:220px",
+          oninput: e => set(f, e.target.value.trim() || undefined) });
         else if (f.type === "languages") input = el("div", { id, class: "row wrap" }, (f.options || []).map(([code, label]) =>
           el("label", { class: "switch", style: "color:inherit;margin-right:16px" },
             el("input", { type: "checkbox", checked: (Array.isArray(v) ? v : f.default || []).includes(code), onchange: e => {
@@ -1130,6 +1137,29 @@
       suggestions.length ? el("div", { class: "faq-suggest" }, el("span", { class: "help" }, "Callers often ask:"),
         el("div", { class: "tags" }, suggestions.map(q => el("button", { class: "chip", type: "button", onclick: () => add(q) }, "+ " + q)))) : null,
       el("button", { class: "btn small", type: "button", onclick: () => add("") }, "+ Add a question"));
+  }
+
+  // Guides: longer write-ups the agent reads when a caller needs advice (modules/guides.py).
+  function guidesEditor(r, f, id) {
+    const list = Array.isArray(r.guides) ? r.guides : (r.guides = []);
+    const add = () => {
+      list.push({ title: "", text: "" }); changed(true);
+      setTimeout(() => { const t = [...document.querySelectorAll(".guides .faq-q")].pop(); if (t) { t.scrollIntoView({ block: "center" }); t.focus(); } });
+    };
+    return el("div", { class: "faq guides", id },
+      list.length ? list.map((x, i) => el("div", { class: "faq-row" + (x.from_menu ? " drafted" : "") },
+        el("div", { class: "row" },
+          el("input", { type: "text", class: "grow faq-q", value: x.title || "", maxlength: 120, placeholder: "Title, e.g. What's needed for a Telugu wedding",
+            "aria-label": `Guide ${i + 1} title`, oninput: e => { x.title = e.target.value; delete x.from_menu; changed(false); } }),
+          el("button", { class: "btn small", type: "button", "aria-label": `Remove guide ${i + 1}`,
+            onclick: () => { list.splice(i, 1); changed(true); } }, "✕")),
+        el("textarea", { class: "faq-a", rows: 6, maxlength: f.max_length || 6000, placeholder: "Explain it the way you would to a customer.",
+          "aria-label": `Guide ${i + 1} text`, oninput: e => { x.text = e.target.value; delete x.from_menu; changed(false); } }, x.text || ""),
+        x.from_menu ? el("div", { class: "placeholder" }, "Drafted from your website. Change it, or confirm it's right.",
+          el("button", { class: "btn small", type: "button", onclick: () => { delete x.from_menu; changed(true); } }, "It's right"))
+          : !(x.text || "").trim() ? el("span", { class: "help" }, "No text yet: the agent won't use this one.") : null))
+        : el("p", { class: "sub" }, "No guides yet."),
+      list.length < (f.max_items || 30) ? el("button", { class: "btn small", type: "button", onclick: add }, "+ Add a guide") : null);
   }
 
   // ---- history tab ----
@@ -1337,6 +1367,35 @@
     });
   }
 
+  // ---- requests: custom requests callers left for a quote or callback ----
+  const REQUEST_STATUS = { new: ["New", "warn"], contacted: ["Contacted", ""], closed: ["Closed", "ok"] };
+  function requestsView() {
+    const box = el("div", { class: "calls" }, loading());
+    return later(box, async () => {
+      const list = await api("GET", `/businesses/${S.rid}/inquiries`);
+      if (!list.length) return el("div", { class: "empty" }, "No requests yet. When a caller asks for something your " +
+        `${W().catalog} can't price (custom work, a large order, something you don't list), the agent takes it down here.`);
+      return list.map(q => {
+        const setStatus = async status => {
+          try { await api("POST", `/businesses/${S.rid}/inquiries/${q.number}`, { status }); q.status = status; render(); }
+          catch (e) { toast(e.message); }
+        };
+        return el("div", { class: "panel call" },
+          el("div", { class: "row wrap" }, el("strong", {}, `#${q.number} `, q.customer_name || "Caller"),
+            " ", el("span", { class: "sub" }, fmtPhone(q.customer_phone) || ""), " ", badge(REQUEST_STATUS[q.status] || [q.status, ""]),
+            el("span", { class: "sub grow", style: "text-align:right" }, fmtTime(q.created_at))),
+          el("p", {}, q.summary),
+          q.event_date ? el("p", { class: "sub" }, "Event date: " + q.event_date) : null,
+          q.budget ? el("p", { class: "sub" }, "Budget: " + q.budget) : null,
+          q.details ? el("p", { class: "sub", style: "white-space:pre-wrap" }, q.details) : null,
+          el("div", { class: "row wrap" },
+            q.status !== "contacted" ? el("button", { class: "btn small", onclick: () => setStatus("contacted") }, "Mark contacted") : null,
+            q.status !== "closed" ? el("button", { class: "btn small", onclick: () => setStatus("closed") }, "Close") : null,
+            q.status !== "new" ? el("button", { class: "btn small", onclick: () => setStatus("new") }, "Reopen") : null));
+      });
+    });
+  }
+
   // ---- team ----
   function teamView() {
     const box = el("div", {}, loading());
@@ -1369,17 +1428,31 @@
     const box = el("section", { class: "panel", style: "margin-top:14px" }, loading());
     return later(box, async () => {
       const pos = await api("GET", `/businesses/${S.rid}/pos`);
-      const head = [el("h2", {}, "Point of sale"), el("p", { class: "sub" }, "Send phone orders straight to your Square or Clover register.")];
-      if (pos.connected) return [...head, el("p", {}, badge(["Connected", "ok"]), " ", cap(pos.connected.provider)),
+      const head = [el("h2", {}, "Point of sale and online store"), el("p", { class: "sub" }, "Send phone orders straight to your Square or Clover register, or your Shopify store.")];
+      if (pos.connected) return [...head, el("p", {}, badge(["Connected", "ok"]), " ", cap(pos.connected.provider),
+          pos.connected.provider === "shopify" && pos.connected.merchant_id ? el("span", { class: "sub" }, " · " + pos.connected.merchant_id) : null),
         pos.connected.provider === "square" ? el("p", { class: "sub" }, "Callers pay by a Square payment link we text them. Once they pay, the order appears on your Square register with the pickup time, and the money is in your Square account. Unpaid orders are cancelled when the link expires.") : null,
+        pos.connected.provider === "shopify" ? el("p", { class: "sub" }, "Callers pay through your Shopify checkout: we text them the link to a draft order with the pickup time and notes. Once they pay, it's an order in your Shopify admin and the money is in your Shopify account. Drafts not paid in time are deleted. Shopify adds tax at checkout from your store's tax settings.") : null,
+        isOwner() ? el("button", { class: "btn small", onclick: async () => {
+          if (!await ask({ title: `Import your ${cap(pos.connected.provider)} catalog?`, body: `Your ${W().items} are replaced with what's in ${cap(pos.connected.provider)}, with prices and choices. Settings stay. Nothing changes for callers until you publish.`, ok: "Import" })) return;
+          try { await flush(); const r = await api("POST", `/businesses/${S.rid}/pos/import`); toast((r.notes || []).join(" ") || `${r.items} imported.`); loadEditor(); }
+          catch (e) { toast(e.message); }
+        } }, "Import catalog") : null,
+        " ",
         isOwner() ? el("button", { class: "btn small danger", onclick: async () => {
           if (!await ask({ title: "Disconnect your POS?", body: "New orders will only show here.", ok: "Disconnect", danger: true })) return;
           await api("DELETE", `/businesses/${S.rid}/pos`); render();
         } }, "Disconnect") : null];
       if (!pos.available.length) return [...head, el("p", { class: "sub" }, "Coming soon.")];
-      return [...head, isOwner() ? el("div", { class: "row wrap" }, pos.available.map(p => el("button", { class: "btn", onclick: async () => {
-        try { location.href = (await api("POST", `/businesses/${S.rid}/pos`, { provider: p })).url; } catch (e) { toast(e.message); }
-      } }, "Connect " + cap(p)))) : el("p", { class: "sub" }, "Ask the owner to connect it.")];
+      const shop = el("input", { type: "text", placeholder: "your-store.myshopify.com", "aria-label": "Shopify store address", style: "max-width:240px" });
+      const connect = async p => {
+        if (p === "shopify" && !shop.value.trim()) { shop.focus(); return toast("Enter your store's .myshopify.com address first (Shopify: Settings > Domains)."); }
+        try { location.href = (await api("POST", `/businesses/${S.rid}/pos`, { provider: p, shop: shop.value.trim() })).url; } catch (e) { toast(e.message); }
+      };
+      return [...head, isOwner() ? el("div", { class: "row wrap" }, pos.available.filter(p => p !== "shopify").map(p =>
+          el("button", { class: "btn", onclick: () => connect(p) }, "Connect " + cap(p))),
+          pos.available.includes("shopify") ? el("span", { class: "row" }, shop, el("button", { class: "btn", onclick: () => connect("shopify") }, "Connect Shopify")) : null)
+        : el("p", { class: "sub" }, "Ask the owner to connect it.")];
     });
   }
 

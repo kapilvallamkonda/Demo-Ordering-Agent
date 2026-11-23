@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .catalog import Catalog
     from .order import Order
-    from .payments import PaymentService
+    from .payments import PaymentService, SmsSender
     from .pos import PosHub
     from .storage import Store
 
@@ -72,6 +72,7 @@ class CallSession:
     caller_phone: str | None = None  # caller ID in E.164, if Twilio gave one
     payments: "PaymentService | None" = None
     pos: "PosHub | None" = None
+    sms: "SmsSender | None" = None  # texts staff (inquiry alerts); None in tests and the terminal chat
     end_requested: bool = False
     language: str = "en-US"  # the call's language; switch_language changes it (languages.py)
     log: list[dict] = field(default_factory=list)
@@ -79,6 +80,8 @@ class CallSession:
     order: "Order | None" = None
     order_number: int | None = None  # per-business number, what the caller hears
     order_id: int | None = None  # internal row id
+    # inquiries module state
+    inquiry_number: int | None = None
 
     def __post_init__(self) -> None:
         if self.catalog is None and self.order is not None:

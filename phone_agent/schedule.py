@@ -21,8 +21,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_NAMES = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
              "sat": "Saturday", "sun": "Sunday"}
-MAX_NOTICE_DAYS = 30
-MAX_ADVANCE_DAYS = 30  # how far ahead a pickup can be scheduled
+MAX_NOTICE_DAYS = 120  # imported wedding garlands can need weeks
+MAX_ADVANCE_DAYS = 30  # how far ahead a pickup can be scheduled, unless settings.max_advance_days says
+MAX_ADVANCE_LIMIT = 365
 
 # Offered in the settings form (US first; any IANA name is accepted).
 TIMEZONES = (

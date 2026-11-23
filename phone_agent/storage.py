@@ -187,7 +187,7 @@ class Store:
     # edit a step that has shipped; add a new one.
 
     def _migrate(self) -> None:
-        steps = [self._v2_self_serve, self._v3_analytics]
+        steps = [self._v2_self_serve, self._v3_analytics, self._v4_inquiries]
         with self._lock:
             version = self._conn.execute("PRAGMA user_version").fetchone()[0] or 1
             for number, step in enumerate(steps, start=2):
@@ -195,6 +195,29 @@ class Store:
                     step(self._conn)
                     self._conn.execute(f"PRAGMA user_version = {number}")
                     self._conn.commit()
+
+    @staticmethod
+    def _v4_inquiries(c: sqlite3.Connection) -> None:
+        """Custom requests callers leave for staff to quote on (modules/inquiries.py)."""
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS inquiries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_id INTEGER NOT NULL,
+                number INTEGER NOT NULL,  -- per business, what staff and the caller hear
+                call_id TEXT,
+                created_at REAL NOT NULL,
+                customer_name TEXT,
+                customer_phone TEXT,
+                event_date TEXT,  -- YYYY-MM-DD
+                summary TEXT NOT NULL,
+                details TEXT,
+                budget TEXT,
+                status TEXT NOT NULL DEFAULT 'new',  -- new, contacted, closed
+                updated_at REAL,
+                UNIQUE (business_id, number)
+            )"""
+        )
+        c.execute("CREATE INDEX IF NOT EXISTS inquiries_business_created ON inquiries(business_id, created_at)")
 
     @staticmethod
     def _v3_analytics(c: sqlite3.Connection) -> None:
@@ -786,6 +809,48 @@ class Store:
         return [{"call_id": r[0], "started_at": r[1], "ended_at": r[2], "caller_phone": r[3],
                  "order_number": r[4], "business_id": r[5], "caller_turns": r[6], "outcome": r[7],
                  "review": json.loads(r[8]) if r[8] else None} for r in rows]
+
+    # ---- inquiries (custom requests) -------------------------------------------------------
+
+    INQUIRY_STATUSES = ("new", "contacted", "closed")
+
+    def save_inquiry(self, business_id: int, *, call_id: str | None, summary: str, details: str = "",
+                     event_date: str | None = None, budget: str | None = None,
+                     customer_name: str | None = None, customer_phone: str | None = None) -> int:
+        """Save a custom request; returns its number within the business."""
+        with self._lock:
+            (number,) = self._conn.execute(
+                "SELECT COALESCE(MAX(number), 0) + 1 FROM inquiries WHERE business_id = ?", (business_id,)
+            ).fetchone()
+            self._conn.execute(
+                "INSERT INTO inquiries (business_id, number, call_id, created_at, customer_name, customer_phone,"
+                " event_date, summary, details, budget) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_id, number, call_id, time.time(), customer_name, customer_phone, event_date,
+                 summary, details, budget))
+            self._conn.commit()
+            return int(number)
+
+    def inquiries(self, business_id: int, status: str | None = None, limit: int = 200) -> list[dict]:
+        sql = ("SELECT number, call_id, created_at, customer_name, customer_phone, event_date, summary,"
+               " details, budget, status, updated_at FROM inquiries WHERE business_id = ?")
+        args: tuple = (business_id,)
+        if status:
+            sql += " AND status = ?"
+            args += (status,)
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY number DESC LIMIT ?", args + (limit,)).fetchall()
+        keys = ("number", "call_id", "created_at", "customer_name", "customer_phone", "event_date", "summary",
+                "details", "budget", "status", "updated_at")
+        return [dict(zip(keys, r)) for r in rows]
+
+    def set_inquiry_status(self, business_id: int, number: int, status: str) -> bool:
+        if status not in self.INQUIRY_STATUSES:
+            raise ValueError(f"status must be one of {', '.join(self.INQUIRY_STATUSES)}")
+        with self._lock:
+            cur = self._conn.execute("UPDATE inquiries SET status = ?, updated_at = ? WHERE business_id = ? AND number = ?",
+                                     (status, time.time(), business_id, number))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     # ---- analytics --------------------------------------------------------------------
 

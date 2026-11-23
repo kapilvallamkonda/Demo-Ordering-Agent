@@ -101,7 +101,7 @@ def test_manage_editor_sends_the_template(tmp_path, monkeypatch):
             assert "Gift-wrappable." in ed["template"]["tags"]
             assert next(f for f in ed["schema"] if f["path"] == "name")["label"] == "Business name"
             listed = {t["id"]: t["status"] for t in c.get("/api/manage/templates", headers=auth).json()}
-            assert listed == {"restaurant": "available", "retail": "available", "salon": "coming_soon"}
+            assert listed == {"restaurant": "available", "retail": "available", "events": "available", "salon": "coming_soon"}
             r = c.post("/voice", data={"To": "+15550004444"})
             assert "How can I help you today?" in r.text
     finally:

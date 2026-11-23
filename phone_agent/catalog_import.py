@@ -106,10 +106,19 @@ SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "guides": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}, "text": {"type": "string"}},
+                "required": ["title", "text"],
+                "additionalProperties": False,
+            },
+        },
         "left_out": {"type": "array", "items": {"type": "string"}},
         "unreadable": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["items", "business", "about", "faq", "left_out", "unreadable"],
+    "required": ["items", "business", "about", "faq", "guides", "left_out", "unreadable"],
     "additionalProperties": False,
 }
 
@@ -140,6 +149,10 @@ the owner would say it on the phone. No marketing words. Null if you can't tell.
 custom orders, deposits, what comes with a dish), each as the question a caller would ask and a \
 short plain answer. Only what's printed; never invent a policy. Don't repeat rules that are \
 already on items (their days, notice or in-person only).
+- guides: longer advice printed on the page that a caller might need explained (a buying or size \
+guide, what's needed for an occasion or ceremony, how far ahead to order, care instructions), each \
+with a short title and its content rewritten as plain sentences the owner would say, at most a few \
+hundred words each. Only what's printed; never add advice. Usually empty for a menu.
 - unreadable: anything you could see but not read."""
 
 
@@ -248,9 +261,11 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
         raise ImportError_("Reading the files didn't work this time. Please try again.") from e
     faq = [{"q": f["question"].strip()[:200], "a": f["answer"].strip()[:600]}
            for f in data.get("faq") or [] if f.get("question", "").strip() and f.get("answer", "").strip()]
+    guides = [{"title": g["title"].strip()[:120], "text": g["text"].strip()[:6000]}
+              for g in data.get("guides") or [] if g.get("title", "").strip() and g.get("text", "").strip()]
     return {"items": [to_catalog_item(it) for it in data.get("items", []) if it.get("name")],
             "business": data.get("business") or {}, "about": (data.get("about") or "").strip()[:500],
-            "faq": faq, "left_out": data.get("left_out") or [], "unreadable": data.get("unreadable") or []}
+            "faq": faq, "guides": guides, "left_out": data.get("left_out") or [], "unreadable": data.get("unreadable") or []}
 
 
 def _report(model, usage, t0, session_id, distinct_id, error=False) -> None:

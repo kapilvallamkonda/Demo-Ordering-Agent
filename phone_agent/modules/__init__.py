@@ -10,8 +10,9 @@ brings, in one place:
   prompt   prompt(catalog, payment_links) -> its section of the system prompt
   start    start(session) -> sets up its per-call state on the CallSession
 
-Built: "orders" (cart, pickup, payment links, POS). Coming soon: "bookings" (services,
-staff, availability, appointments). A module with no handler isn't built: templates that
+Built: "orders" (cart, pickup, payment links, POS), "guides" (the business's longer
+write-ups, read on demand) and "inquiries" (custom requests staff quote on). Coming soon:
+"bookings" (services, staff, availability, appointments). A module with no handler isn't built: templates that
 need it are "coming soon" and can't be used.
 
 To add a module: write phone_agent/modules/<name>.py exposing MODULE, add it to
@@ -24,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import orders
+from . import guides, inquiries, orders
 
 
 @dataclass(frozen=True)
@@ -55,12 +56,30 @@ ORDERS = Module(
     start=orders.start,
 )
 
+GUIDES = Module(
+    name="guides",
+    description="Look up the business's guides (ceremony checklists, size guides, how far ahead "
+                "to order) before advising the caller.",
+    tools=tuple(guides.TOOLS),
+    handle=guides.handle,
+    prompt=guides.prompt,
+)
+
+INQUIRIES = Module(
+    name="inquiries",
+    description="Take down custom requests the catalog can't price, for staff to quote on.",
+    tools=tuple(inquiries.TOOLS),
+    handle=inquiries.handle,
+    prompt=inquiries.prompt,
+    start=inquiries.start,
+)
+
 BOOKINGS = Module(
     name="bookings",
     description="Book appointments for services with a length and a staff member. Coming soon.",
 )
 
-MODULES: dict[str, Module] = {m.name: m for m in (ORDERS, BOOKINGS)}
+MODULES: dict[str, Module] = {m.name: m for m in (ORDERS, GUIDES, INQUIRIES, BOOKINGS)}
 BUILT = frozenset(name for name, m in MODULES.items() if m.built)
 
 

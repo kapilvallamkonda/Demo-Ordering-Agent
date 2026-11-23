@@ -9,6 +9,7 @@
   start over          POST /api/manage/businesses/{id}/start-over    (before the first publish)
   team                GET/POST/DELETE /api/manage/businesses/{id}/team
   orders and calls    GET /api/manage/businesses/{id}/orders|calls|calls/{call_id}
+  requests            GET /api/manage/businesses/{id}/inquiries, POST .../inquiries/{number}
   POS                 GET/POST/DELETE /api/manage/businesses/{id}/pos
   operator            GET /api/manage/admin/requests, POST .../{id}/approve|reject
   analytics           GET /api/manage/admin/analytics (operator), GET .../{id}/insights (a business)
@@ -225,6 +226,13 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
                     faq.append({**f, "from_menu": True})
                     asked.add(f["q"].lower())
             settings["faq"] = faq
+            guides = list(settings.get("guides") or [])
+            titled = {str(g.get("title", "")).strip().lower() for g in guides}
+            for g in result.get("guides") or []:  # drafted, flagged like the questions
+                if g["title"].lower() not in titled and len(guides) < 30:
+                    guides.append({**g, "from_menu": True})
+                    titled.add(g["title"].lower())
+            settings["guides"] = guides
             catalog["settings"] = settings
             base = draft["base_catalog_id"] if draft else row_now.catalog_id
             if store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label) is not None:
@@ -523,6 +531,31 @@ async def calls(request: Request, business_id: int, limit: int = 100) -> list[di
     return request.app.state.store.recent_calls(max(1, min(limit, 500)), business_id=row.id)
 
 
+@router.get("/api/manage/businesses/{business_id}/inquiries")
+async def inquiries(request: Request, business_id: int, status: str = "") -> list[dict]:
+    """Custom requests callers left (modules/inquiries.py), newest first."""
+    who = _who(request)
+    row = _business(request, who, business_id)
+    return request.app.state.store.inquiries(row.id, status=status or None)
+
+
+@router.post("/api/manage/businesses/{business_id}/inquiries/{number}")
+async def inquiry_status(request: Request, business_id: int, number: int) -> dict:
+    """Mark a request contacted or closed (or new again)."""
+    who = _who(request)
+    _check_write(request)
+    row = _business(request, who, business_id)
+    status = str((await _json(request)).get("status", ""))
+    store = request.app.state.store
+    try:
+        if not store.set_inquiry_status(row.id, number, status):
+            raise HTTPException(status_code=404, detail="no such request")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _capture("inquiry_status_changed", {"status": status})
+    return {"number": number, "status": status}
+
+
 @router.get("/api/manage/businesses/{business_id}/calls/{call_id}")
 async def call_transcript(request: Request, business_id: int, call_id: str) -> dict:
     who = _who(request)
@@ -544,7 +577,8 @@ async def pos_status(request: Request, business_id: int) -> dict:
     conn = request.app.state.store.pos_connection(row.id)
     return {"available": sorted(hub.providers) if hub else [],
             "connected": None if not conn else {"provider": conn["provider"], "environment": conn["environment"],
-                                                "location_id": conn["location_id"]}}
+                                                "location_id": conn["location_id"],
+                                                "merchant_id": conn["merchant_id"]}}
 
 
 @router.post("/api/manage/businesses/{business_id}/pos")
@@ -562,11 +596,50 @@ async def pos_connect(request: Request, business_id: int) -> dict:
     base = os.environ.get("PUBLIC_BASE_URL", "") or str(request.base_url).rstrip("/")
     provider = str(data.get("provider", ""))
     try:
-        url = connect_url(provider, row.id, base, hub.providers)
+        url = connect_url(provider, row.id, base, hub.providers, shop=str(data.get("shop") or ""))
     except PosError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _capture("pos_connection_started", {"provider": provider})
     return {"url": url}
+
+
+@router.post("/api/manage/businesses/{business_id}/pos/import")
+async def pos_import(request: Request, business_id: int) -> dict:
+    """Replace the draft's items with the connected POS's catalog (keeping settings, and item
+    ids of items imported before). The owner reviews it and publishes as usual."""
+    from .pos import PosError, merge_import
+
+    who = _who(request)
+    _check_write(request)
+    row = _business(request, who, business_id)
+    _owner(who, row.id)
+    hub = getattr(request.app.state, "pos", None)
+    store = request.app.state.store
+    if hub is None or store.pos_connection(row.id) is None:
+        raise HTTPException(status_code=400, detail="connect your POS or store first")
+    provider = store.pos_connection(row.id)["provider"]
+    try:
+        conn = await asyncio.to_thread(hub.connection, row.id)
+        imported = await asyncio.to_thread(hub.provider(provider).catalog, conn)
+    except PosError as e:
+        store.track("pos_import_failed", row.id, provider=provider, error=str(e)[:160])
+        raise HTTPException(status_code=502, detail=f"Couldn't read your {provider.title()} catalog: {e}")
+    if not imported:
+        raise HTTPException(status_code=400, detail="no products with a price were found")
+    for _ in range(3):
+        row_now = store.business(row.id)
+        draft = store.draft(row.id)
+        current = draft["catalog"] if draft else store.catalog_payload(row_now.catalog_id)
+        catalog, notes = merge_import(current, imported, conn.provider)
+        base = draft["base_catalog_id"] if draft else row_now.catalog_id
+        revision = store.save_draft(row.id, catalog, base, draft["revision"] if draft else None, who.label)
+        if revision is not None:
+            break
+    else:
+        raise HTTPException(status_code=409, detail="the catalog changed while importing; try again")
+    store.track("pos_catalog_imported", row.id, provider=conn.provider, items=len(catalog["items"]))
+    _capture("pos_catalog_imported", {"provider": conn.provider, "items": len(catalog["items"])})
+    return {"items": len(catalog["items"]), "notes": notes, "revision": revision}
 
 
 @router.delete("/api/manage/businesses/{business_id}/pos")

@@ -20,6 +20,8 @@ Field types:
   languages       list of language codes callers can switch to (languages.py), shown as checkboxes
   faq             list of {"q": question, "a": answer}, max_items; optional "from_menu": true
                   marks one the menu reader drafted, until the owner edits or confirms it
+  guides          list of {"title", "text"}, max_items, max_length per text; "from_menu" as for faq
+  phone           a phone number (US 10 digits or E.164)
 
 A field with "hide_when_empty" is only shown in the form when it has a value.
 """
@@ -49,6 +51,9 @@ SETTINGS: list[dict] = [
              "key or asking. English is always on."},
     {"path": "pickup_minutes", "group": "Orders", "type": "integer", "label": "Typical pickup time (minutes)",
      "min": 5, "max": 180, "required": True, "help": "How long until an order is usually ready."},
+    {"path": "max_advance_days", "group": "Orders", "type": "integer",
+     "label": "Furthest pickup date (days ahead)", "min": 1, "max": 365,
+     "help": "How far ahead callers can order for. Leave blank for 30 days."},
     {"path": "tax_rate", "group": "Orders", "type": "percent", "label": "Sales tax", "min": 0, "max": 0.15,
      "required": True, "help": "Added to every order. Enter the percent, e.g. 8.25."},
     {"path": "payment.required_before_cooking", "group": "Payment", "type": "boolean",
@@ -64,6 +69,14 @@ SETTINGS: list[dict] = [
      "max_items": 40, "max_length": 600,
      "help": "What callers ask that isn't about one item, and what you tell them. The agent uses "
              "these answers; for anything else it says it doesn't know."},
+    {"path": "guides", "group": "What your agent knows", "type": "guides", "label": "Guides",
+     "max_items": 30, "max_length": 6000,
+     "help": "Longer write-ups the agent reads when a caller needs advice: what's needed for a "
+             "ceremony, sizes and which to choose, how far ahead to order. Write them as you'd "
+             "explain it to a customer."},
+    {"path": "notify_phone", "group": "Requests", "type": "phone", "label": "Text new requests to",
+     "help": "A mobile number that gets a text when a caller leaves a custom request (a quote, a "
+             "large order, something not in your catalog). You'll also see them under Requests."},
 ]
 
 BY_PATH = {f["path"]: f for f in SETTINGS}
@@ -157,6 +170,32 @@ def validate_settings(business: Any, template=None) -> list[str]:
                     else:
                         continue
                     break
+        elif t == "guides":
+            if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+                errors.append(f"{label} must be a list of titles and texts")
+            elif len(value) > f.get("max_items", 100):
+                errors.append(f"{label}: at most {f['max_items']}")
+            else:
+                for v in value:
+                    title, text = v.get("title", ""), v.get("text", "")
+                    if not isinstance(title, str) or not isinstance(text, str):
+                        errors.append(f"{label}: titles and texts must be text")
+                    elif len(title) > 120 or len(text) > f.get("max_length", 6000):
+                        errors.append(f"{label}: \"{title[:40]}\" is too long")
+                    elif not isinstance(v.get("from_menu", False), bool):
+                        errors.append(f"{label}: from_menu must be true or false")
+                    else:
+                        continue
+                    break
+        elif t == "phone":
+            from .order import OrderError, normalize_phone
+
+            try:
+                if not isinstance(value, str):
+                    raise OrderError("not text")
+                normalize_phone(value)
+            except OrderError:
+                errors.append(f"{label}: enter a mobile number, e.g. 214 555 0123")
         elif t == "string_list":
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 errors.append(f"{label} must be a list of text")

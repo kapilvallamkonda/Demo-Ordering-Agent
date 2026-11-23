@@ -68,6 +68,7 @@ class PhoneAgent:
         payments: PaymentService | None = None,
         pos=None,
         posthog_distinct_id: str | None = None,
+        sms=None,
     ):
         self.client = client or anthropic.AsyncAnthropic()
         # PostHog AI events (web_analytics): the owner testing in the browser, or none for a call.
@@ -83,7 +84,7 @@ class PhoneAgent:
                                [lang.code for lang in languages.for_business(catalog.settings)])
         self.session = start_session(CallSession(
             catalog=catalog, store=store, call_id=call_id, caller_phone=caller_phone,
-            payments=payments, pos=pos))
+            payments=payments, pos=pos, sms=sms))
         # The system prompt and tools are identical across calls, so they get cached.
         # The date line comes last so the cached prefix stays the same across calls.
         now = schedule.now_in(catalog.tz)
@@ -96,9 +97,10 @@ class PhoneAgent:
             },
             {
                 "type": "text",
-                "text": f"Right now it's {schedule.say_time(now)} where the "
-                        f"{catalog.template.words['business']} is. Use this for \"today\", \"tomorrow\" "
-                        "and days of the week.",
+                "text": f"Right now it's {schedule.say_time(now)}, {now.year}, where the "
+                        f"{catalog.template.words['business']} is. Use this for \"today\", \"tomorrow\", "
+                        "days of the week, and the year of a date the caller gives without one (the next "
+                        "time that date comes round).",
             },
         ]
         self.messages: list = []

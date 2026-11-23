@@ -118,6 +118,9 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "payments"):
         app.state.payments = payment_service_from_env(PUBLIC_BASE_URL)
     log.info("payment links %s", "on" if app.state.payments else "off (pay at pickup)")
+    # Texts to staff (new custom requests); None without Twilio SMS settings.
+    if not hasattr(app.state, "sms"):
+        app.state.sms = sms_from_env()
     # Point-of-sale integrations; None unless POS_SECRET_KEY is set (it encrypts the tokens).
     if not hasattr(app.state, "pos"):
         app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env(), sms=sms_from_env())
@@ -420,8 +423,9 @@ async def pos_callback(request: Request, provider: str, code: str = "", state: s
     request.app.state.store.track("pos_connected", business_id, provider=provider)
     extra = ("" if conn.location_id or provider != "square" else
              " One more step on our side: this account has several locations, and we'll pick yours.")
+    when = " once callers pay the checkout link we text them" if provider == "shopify" else ""
     return HTMLResponse(_page(f"{name} is connected",
-                              f"Phone orders will now appear in {provider.title()}.{extra} You can close this page."))
+                              f"Phone orders will now appear in {provider.title()}{when}.{extra} You can close this page."))
 
 
 class RelayCall:
@@ -537,6 +541,7 @@ class RelayCall:
                     caller_phone=msg.get("from"),
                     payments=payments,
                     pos=getattr(app_state, "pos", None),
+                    sms=getattr(app_state, "sms", None),
                 )
             except Exception:
                 log.exception("business %s: couldn't start the agent for call %s", catalog.slug,

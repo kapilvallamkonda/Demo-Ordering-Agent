@@ -211,8 +211,8 @@ class Order:
         earliest = now + timedelta(minutes=self.ready_minutes)
         if when < earliest - timedelta(minutes=1):
             raise OrderError(f"That's too soon: the earliest pickup is {schedule.say_time(earliest)}.")
-        if when > now + timedelta(days=schedule.MAX_ADVANCE_DAYS):
-            raise OrderError(f"Pickups can be scheduled up to {schedule.MAX_ADVANCE_DAYS} days ahead.")
+        if when > now + timedelta(days=self.catalog.max_advance_days):
+            raise OrderError(f"Pickups can be scheduled up to {self.catalog.max_advance_days} days ahead.")
         problems = self._rule_problems(when)
         if problems:
             raise OrderError("That pickup time doesn't work for everything on the order: "

@@ -6,14 +6,17 @@ access). From then on every placed order is sent to the POS in the background, w
 retries, and its result is shown on the dashboard (`orders.pos_status`). The call never
 waits on the POS: the caller already has their order number.
 
-Providers: Square (pos_square.py) and Clover (pos_clover.py). Each one implements
-`Provider` below. Access tokens are stored encrypted with POS_SECRET_KEY.
+Providers: Square (pos_square.py), Clover (pos_clover.py) and Shopify (pos_shopify.py).
+Each one implements `Provider` below. Square and Shopify take payment by a link we text
+the caller (LinkPayments); Clover gets the order straight away. Access tokens are stored encrypted with POS_SECRET_KEY.
 
 Admin commands (run on the server, e.g. `fly ssh console -C "python -m ..."`):
 
     python -m phone_agent.pos status
-    python -m phone_agent.pos connect-link SLUG square|clover      (prints a link for the owner)
-    python -m phone_agent.pos connect-token SLUG square|clover --merchant ID [--location ID]
+    python -m phone_agent.pos connect-link SLUG square|clover|shopify [--shop STORE.myshopify.com]
+                                    (prints a link for the owner)
+    python -m phone_agent.pos connect-token SLUG square|clover|shopify --merchant ID [--location ID]
+                                    (Shopify: --merchant is the store's .myshopify.com address)
                                     (sandbox/testing: token read from POS_ACCESS_TOKEN)
     python -m phone_agent.pos set-location SLUG LOCATION_ID          (Square, several locations)
     python -m phone_agent.pos import-catalog SLUG > catalog.json           (catalog from the POS)
@@ -223,6 +226,7 @@ class Provider(Protocol):
 def providers_from_env() -> dict[str, Provider]:
     """Every provider whose app credentials are set."""
     from .pos_clover import CloverProvider
+    from .pos_shopify import ShopifyProvider
     from .pos_square import SquareProvider
 
     out: dict[str, Provider] = {}
@@ -230,6 +234,8 @@ def providers_from_env() -> dict[str, Provider]:
         out["square"] = SquareProvider.from_env()
     if os.environ.get("CLOVER_APP_ID") or os.environ.get("POS_ALLOW_TOKENS"):
         out["clover"] = CloverProvider.from_env()
+    if os.environ.get("SHOPIFY_CLIENT_ID") or os.environ.get("POS_ALLOW_TOKENS"):
+        out["shopify"] = ShopifyProvider.from_env()
     return out
 
 
@@ -586,12 +592,13 @@ class PosHub:
         return "retry" if self.send(order_id) == "retry" else "done"
 
 
-class SquarePayments:
-    """How a business connected to Square takes payment: a Square payment link, texted to
-    the caller. The money goes straight to the business's Square account, and the order
-    shows on its Square register once paid. Square only shows orders from other apps once
-    they're paid, so for these businesses paying is required to confirm the order
-    (always_required). Same interface as payments.PaymentService."""
+class LinkPayments:
+    """How a business connected to Square or Shopify takes payment: the POS's own payment
+    link (a Square payment link, a Shopify draft order's checkout), texted to the caller.
+    The money goes straight to the business's account, and the order shows in its POS once
+    paid. Square only shows orders from other apps once they're paid, and a Shopify draft
+    only becomes an order at checkout, so for these businesses paying is required to
+    confirm the order (always_required). Same interface as payments.PaymentService."""
 
     always_required = True
 
@@ -610,20 +617,27 @@ class SquarePayments:
         return link
 
 
+SquarePayments = LinkPayments  # the earlier name
+
+
+def pays_by_link(provider) -> bool:
+    return bool(getattr(provider, "pays_by_link", False))
+
+
 def payments_for(hub: PosHub | None, store: Store, catalog: Catalog, default):
     """The payment service for a call to this business, and its catalog as the agent should
-    see it: Square-connected businesses take Square payment links and always require
+    see it: businesses on Square or Shopify take that POS's payment link and always require
     payment; everyone else uses the server-wide service (or none: pay at pickup)."""
     import dataclasses
 
-    if hub is None or hub.sms is None or catalog.business_id is None or "square" not in hub.providers:
+    if hub is None or hub.sms is None or catalog.business_id is None:
         return default, catalog
     row = store.pos_connection(catalog.business_id)
-    if row is None or row["provider"] != "square":
+    if row is None or not pays_by_link(hub.providers.get(row["provider"])):
         return default, catalog
     settings = dict(catalog.settings)
     settings["payment"] = {**(settings.get("payment") or {}), "required_before_cooking": True}
-    return SquarePayments(hub, hub.sms), dataclasses.replace(catalog, settings=settings)
+    return LinkPayments(hub, hub.sms), dataclasses.replace(catalog, settings=settings)
 
 
 # ---- catalog import ----------------------------------------------------------------------
@@ -673,11 +687,16 @@ def _hub(store: Store) -> PosHub:
     return PosHub(store, BusinessDirectory(store), providers_from_env(), run_inline=True)
 
 
-def connect_url(provider: str, business_id: int, base_url: str, providers: dict[str, Provider]) -> str:
+def connect_url(provider: str, business_id: int, base_url: str, providers: dict[str, Provider],
+                shop: str = "") -> str:
+    """The owner's connect link. Shopify needs the store's .myshopify.com address (shop)."""
     if provider not in providers:
         raise PosError(f"{provider} app credentials aren't set on this server", retry=False)
     redirect = f"{base_url.rstrip('/')}/pos/{provider}/callback"
-    return providers[provider].authorize_url(make_state(provider, business_id), redirect)
+    state = make_state(provider, business_id)
+    if provider == "shopify":
+        return providers[provider].authorize_url(state, redirect, shop=shop)
+    return providers[provider].authorize_url(state, redirect)
 
 
 def main(argv: list[str] | None = None, store: Store | None = None, hub: PosHub | None = None) -> int:
@@ -687,7 +706,9 @@ def main(argv: list[str] | None = None, store: Store | None = None, hub: PosHub 
     for name in ("connect-link", "connect-token"):
         p = sub.add_parser(name)
         p.add_argument("slug")
-        p.add_argument("provider", choices=["square", "clover"])
+        p.add_argument("provider", choices=["square", "clover", "shopify"])
+        if name == "connect-link":
+            p.add_argument("--shop", default="", help="Shopify: the store's .myshopify.com address")
         if name == "connect-token":
             p.add_argument("--merchant", help="merchant id (Clover: required)")
             p.add_argument("--location", help="location id (Square: if it has several)")
@@ -725,13 +746,17 @@ def main(argv: list[str] | None = None, store: Store | None = None, hub: PosHub 
             base = os.environ.get("PUBLIC_BASE_URL", "")
             if not base:
                 raise SystemExit("PUBLIC_BASE_URL isn't set")
-            print(connect_url(args.provider, business(args.slug).id, base, hub.providers))
+            print(connect_url(args.provider, business(args.slug).id, base, hub.providers, shop=args.shop))
         elif args.cmd == "connect-token":
             token = os.environ.get("POS_ACCESS_TOKEN", "").strip()
             if not token:
                 raise SystemExit("put the access token in POS_ACCESS_TOKEN (not on the command line)")
-            if args.provider == "clover" and not args.merchant:
-                raise SystemExit("Clover needs --merchant")
+            if args.provider in ("clover", "shopify") and not args.merchant:
+                raise SystemExit(f"{args.provider.title()} needs --merchant")
+            if args.provider == "shopify":
+                from .pos_shopify import normalize_shop
+
+                args.merchant = normalize_shop(args.merchant)
             conn = hub.save_connection(business(args.slug).id, args.provider, args.environment,
                                        {"access_token": token}, args.merchant, args.location)
             print(f"connected {args.slug} to {args.provider} ({args.environment}),"

@@ -74,6 +74,15 @@ class Catalog:
         return max(30, min(minutes, 24 * 60))
 
     @property
+    def max_advance_days(self) -> int:
+        """How far ahead a pickup can be scheduled (settings.max_advance_days, default 30)."""
+        try:
+            days = int(self.settings.get("max_advance_days") or schedule.MAX_ADVANCE_DAYS)
+        except (TypeError, ValueError):
+            days = schedule.MAX_ADVANCE_DAYS
+        return max(1, min(days, schedule.MAX_ADVANCE_LIMIT))
+
+    @property
     def tz(self):
         """The business's time zone (settings.timezone), for pickup times and item rules."""
         return schedule.zone(self.settings.get("timezone"))

@@ -34,7 +34,7 @@ def build_system_prompt(catalog: Catalog, payment_links: bool = False) -> str:
     t = catalog.template
     name = catalog.settings.get("name", f"the {t.words['business']}")
     parts = [_HEADER.format(role=t.role.format(name=name), catalog=t.words["catalog"])]
-    parts += [m.prompt(catalog, payment_links) for m in modules_for(t.modules) if m.prompt]
+    parts += [p for m in modules_for(t.modules) if m.prompt for p in [m.prompt(catalog, payment_links)] if p]
     offered = langs.for_business(catalog.settings)
     if offered:
         parts.append(_LANGUAGES.format(

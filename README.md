@@ -225,7 +225,9 @@ They include a full phone order over the WebSocket.
 | `SQUARE_API_VERSION` | `2025-01-23` | `Square-Version` header. |
 | `CLOVER_APP_ID`, `CLOVER_APP_SECRET` | unset | Clover app credentials (developer dashboard), for connect links. |
 | `CLOVER_ENVIRONMENT` | `sandbox` | `sandbox` or `production` (North America). |
-| `POS_ALLOW_TOKENS` | unset | Enables both providers without app credentials, for `pos connect-token` with a sandbox token. |
+| `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | unset | Shopify app credentials (Dev Dashboard), for connect links. The app's redirect URL is `<PUBLIC_BASE_URL>/pos/shopify/callback`; scopes `read_products`, `write_draft_orders`, `read_orders`. |
+| `SHOPIFY_API_VERSION` | `2026-10` | Admin GraphQL API version. |
+| `POS_ALLOW_TOKENS` | unset | Enables every provider without app credentials, for `pos connect-token` with a sandbox token. |
 
 Voice settings are read on every incoming call, so changing them only needs a server
 restart, no code change. Speech costs are billed through your Twilio account. Valid provider

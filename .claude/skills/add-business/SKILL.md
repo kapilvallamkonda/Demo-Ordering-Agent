@@ -28,8 +28,9 @@ the user's answer.
 ## 1. Gather
 
 Pick the **template** first: `.venv/bin/python -m phone_agent.businesses templates`.
-`restaurant` (menu of dishes) or `retail` (a shop's products: bakery, florist, liquor,
-gift, convenience). Salons and other appointment businesses need bookings, which are
+`restaurant` (menu of dishes), `retail` (a shop's products: bakery, florist, liquor,
+gift, convenience) or `events` (event and wedding supplies: garlands, ceremony items, sets;
+consultative, with guides and custom requests). Salons and other appointment businesses need bookings, which are
 **coming soon**: tell the user they can't be set up yet.
 
 Get from the user: the business's name, what it sells (menu or product list: photos,
@@ -38,7 +39,7 @@ typical minutes until an order is ready for pickup, whether to wait for payment 
 preparing orders, preferred area code for the number, a one-line description of the
 business (`about`), answers to questions callers ask (`faq`: delivery, catering, allergies,
 ID checks), items with day or notice rules, the staff
-email(s) to invite, and **which POS they use**. Square and Clover can be connected
+email(s) to invite, and **which POS they use**. Square, Clover and Shopify can be connected
 (step 6b), and the catalog can then be imported from the POS instead of photos. Toast
 isn't supported yet (partner application pending). Don't block on the optional ones;
 anything missing gets a placeholder (step 2) and goes on the hand-off list.

@@ -110,7 +110,7 @@ def test_bad_rules_and_settings_are_refused():
             {"id": "a", "name": "A", "category": "C", "price": 1, "days": ["someday"]}]})
     with pytest.raises(CatalogError, match="notice"):
         parse_catalog({"settings": {"name": "X"}, "items": [
-            {"id": "a", "name": "A", "category": "C", "price": 1, "notice_days": 99}]})
+            {"id": "a", "name": "A", "category": "C", "price": 1, "notice_days": 121}]})
     t = get_template("restaurant")
     base = {"name": "X", "pickup_minutes": 20, "tax_rate": 0.08}
     assert any("Time zone" in e for e in validate_settings({**base, "timezone": "Mars/Base"}, t))

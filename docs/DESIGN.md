@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (plan: consultative selling and Shopify).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (event & wedding supplies template, guides, custom requests, Shopify).
 
 ## 1. Goal
 
@@ -267,8 +267,10 @@ one lock, and one machine.
 | `view_order` | Current lines, subtotal, tax, total. |
 | `set_customer_name` | Name the order is under. |
 | `set_customer_phone` | Mobile number for the text, when it differs from caller ID or caller ID is hidden. Must be a full number. |
-| `set_pickup_time` | Schedule the pickup for a later day and time (business time), or clear it for as soon as possible. Refused if sooner than the ready time, more than 30 days ahead, or if an item on the order can't be picked up then (its days or notice). |
+| `set_pickup_time` | Schedule the pickup for a later day and time (business time), or clear it for as soon as possible. Refused if sooner than the ready time, further ahead than the business allows (`settings.max_advance_days`, default 30, up to 365), or if an item on the order can't be picked up then (its days or notice, up to 120 days). |
 | `place_order` | Save the order; requires caller confirmation, a name, at least one item, and (with payments on) a phone number. Then creates the payment link and texts it; the result tells the agent whether it was sent. |
+| `read_guide` | (guides module) The text of one of the business's guides, by title; only titles are in the prompt. Lists the titles if none matches. |
+| `record_inquiry` | (inquiries module) Save a custom request for staff to quote on: summary, details, event date, budget, name, phone (caller ID unless given). Requires the caller's confirmation; refuses a past or malformed event date. Texts the business's `notify_phone` in the background. |
 | `end_call` | Hang up after the goodbye. |
 
 ## 8. Configuration
@@ -278,12 +280,13 @@ Groups: Claude (model, effort, fast mode), voice (text-to-speech and speech-to-t
 provider, voice, language, extra ConversationRelay attributes), Twilio (auth token,
 public URL, account SID and SMS sender number), Stripe (secret key, webhook secret),
 storage (database file; catalog file for the terminal chat), admin (`/orders` token),
-POS (`POS_SECRET_KEY`, which turns POS sending on and encrypts tokens; Square and Clover
-app credentials and environment), branding (`BRAND_NAME`, the product name on every
+POS (`POS_SECRET_KEY`, which turns POS sending on and encrypts tokens; Square, Clover
+and Shopify app credentials and environment), branding (`BRAND_NAME`, the product name on every
 page), `DEFAULT_TIMEZONE` (for businesses without `settings.timezone`). Payment links are on
 only when `STRIPE_SECRET_KEY` and the Twilio SMS settings are all set; otherwise
-customers pay at pickup. Per-business settings (tax, pickup time, pay-first rule,
-hours, notes) live in each business's catalog, not in environment variables.
+customers pay at pickup. Per-business settings (tax, pickup time, how far ahead pickups
+can be scheduled, pay-first rule, hours, about, common questions, guides, the staff number
+for request texts) live in each business's catalog, not in environment variables.
 
 ## 9. Security
 
@@ -478,10 +481,11 @@ only when staff don't pick up ("no answer" forwarding is an easy first step for 
 Phone orders go onto the business's own point of sale, so the kitchen works from the
 system it already uses, and a catalog can be imported from the POS instead of typed in.
 Code: `phone_agent/pos.py` (connections, background sending, import, admin
-commands), `pos_square.py`, `pos_clover.py`.
+commands), `pos_square.py`, `pos_clover.py`, `pos_shopify.py`.
 
-**Connecting.** The operator runs `pos connect-link SLUG square|clover` and sends the
-link to the owner, who approves access (OAuth). The callback (`/pos/<provider>/callback`)
+**Connecting.** The owner clicks Connect in Settings (or the operator runs
+`pos connect-link SLUG square|clover|shopify [--shop STORE]` and sends them the link) and
+approves access (OAuth). Shopify asks for the store's `.myshopify.com` address first. The callback (`/pos/<provider>/callback`)
 stores the tokens encrypted and picks the location (Square, when there's one) or the
 pickup order type and default tax rate (Clover). Square tokens last 30 days and are
 refreshed a week early; Clover's are short-lived and refreshed when within 5 minutes.
@@ -505,6 +509,30 @@ POS price changes.
 | Retries | Idempotency keys from our order id. | Partial order deleted, then recreated. |
 | Catalog import | Catalog: variations become a required `size`/`type` option, single-select modifier lists become options, multi-select become extras; variable-price items skipped. | Items with modifier groups (max 1 is an option, otherwise extras); hidden and variable-price items skipped. |
 
+**Shopify (`pos_shopify.py`, Admin GraphQL API 2026-10).** For online stores, e.g. an
+event supplies shop already selling on Shopify. Built like Square's payment link
+(`LinkPayments`, `pays_by_link` on the provider):
+- Connect: Shopify OAuth for one store (scopes `read_products`, `write_draft_orders`,
+  `read_orders`), offline token (doesn't expire). The callback's `hmac` is checked with
+  the app secret and the `shop` must be a `.myshopify.com` address; the merchant id is the
+  shop address. `setup` reads the shop's name and currency.
+- Import: active products, 50 per page; the cheapest variant is the price, and variants
+  become one required option (named after the product's option, e.g. `length`, or
+  `choice` with the variant titles when there are several option names). Product type is
+  the category. Ids kept (`pos.item`, `pos.choices`).
+- Order: `place_order` creates a **draft order** (`draftOrderCreate`): variant lines for
+  linked items, custom lines with our price otherwise (and when extras were added), the
+  phone order note, item notes, tags and attributes (phone order number, pickup time,
+  phone). Its checkout link (`invoiceUrl`) is texted; the caller pays on Shopify's page,
+  into the store's account, and Shopify turns the draft into an order. We poll the draft
+  every 20 seconds: paid when it has an `order`; past the window it's deleted
+  (`draftOrderDelete`) and the order cancelled. Payment is always required, as for Square.
+- Shopify works out tax at checkout from the store's tax settings, so the amount paid can
+  differ from the total the agent read out. Pickup isn't a delivery method on the draft
+  (only written in the note and attributes), so if the products need shipping, Shopify's
+  checkout may ask for an address: to check on a real store.
+- Not yet tried against a real store (needs a Shopify app and a development store).
+
 **Square businesses pay by Square payment link (required).** Square only shows orders
 from other apps once they're paid, so for a business connected to Square every phone
 order is paid by a **Square payment link** (`payments_for` in `pos.py`, chosen per call):
@@ -527,7 +555,10 @@ order is paid by a **Square payment link** (`payments_for` in `pos.py`, chosen p
 - Open question, to settle with businesses: pay at pickup for Square owners (the order
   would be in Ringcart only, staff key it in), or a $0 / external-payment workaround.
 
-**Importing a catalog.** `pos import-catalog SLUG > data/businesses/SLUG.json` writes a catalog
+**Importing a catalog.** The owner clicks "Import catalog" in Settings
+(`POST /api/manage/businesses/{id}/pos/import`): the draft's items are replaced by the POS's,
+settings kept, and they review and publish as usual. Or the operator runs
+`pos import-catalog SLUG > data/businesses/SLUG.json`, which writes a catalog
 file using the business's current settings block (or `--base`), then it goes through
 the normal checker, review, commit, deploy and `set-catalog`. Item ids of items imported
 before are kept (matched by POS id), since old orders refer to them. Imported items have
@@ -603,9 +634,9 @@ business is a **template** (`phone_agent/templates.py`):
 
 | Part | What it is | Example (restaurant / shop) |
 |---|---|---|
-| `modules` | What a call can do (`phone_agent/modules/`). Each module brings its tools, their handlers (business rules in code), its prompt section and its per-call state. | `orders` / `orders` |
+| `modules` | What a call can do (`phone_agent/modules/`). Each module brings its tools, their handlers (business rules in code), its prompt section and its per-call state. | `orders`, `guides`, `inquiries` (all three templates) |
 | `words` | How the manager and the agent name things. | menu, dish, section, "sold out today" / catalog, product, category, "out of stock" |
-| `role`, `rules`, `declines` | The agent's role line, extra rules, and what it politely declines. | "phone ordering assistant", declines delivery and reservations / declines shipping, returns, special orders |
+| `role`, `rules`, `declines` | The agent's role line, extra rules, and what it politely declines. | "phone ordering assistant", declines delivery and reservations / declines shipping, returns |
 | `greeting` | Default first line (a business can set its own). | "What can I get started for you today?" / "How can I help you today?" |
 | `tags` | Description tag chips in the editor. | Vegetarian, Spicy / Bestseller, Gift-wrappable |
 | `setting_overrides`, `extra_settings` | Changes to the settings form (labels, help) and settings only this kind of business has. | "Restaurant name", "Wait for payment before cooking" / "Business name" |
@@ -616,8 +647,34 @@ them. The prompt is assembled from the phone rules (shared), the orders rules wi
 the template's words, the template's role and rules, the payment rule and the catalog.
 For restaurants it's byte-for-byte the prompt from before templates.
 
-**Templates now:** `restaurant` and `retail` (shops: bakeries, florists, liquor, gift and
-convenience stores) are available. `salon` (services and appointments) is listed as
+**Templates now:** `restaurant`, `retail` (shops: bakeries, florists, liquor, gift and
+convenience stores) and `events` (event and wedding supplies: garlands, flowers, ceremony
+items and sets) are available. `events` is for consultative selling: the agent asks the
+event date and ceremonies, suggests what's usually needed (from the catalog and the
+guides) a little at a time, offers a set or package that covers it, schedules the pickup
+for when it's needed, and takes custom work as a request. Its starter allows pickups 180
+days ahead and items with up to 120 days' notice.
+
+**Modules every available template has:**
+- `orders`: the cart, pickup and payment (sections 3, 7 and 13).
+- `guides` (`modules/guides.py`): the business's longer write-ups (`settings.guides`, a
+  list of `{title, text}`, up to 30 of 6,000 characters), e.g. a ceremony checklist, garland
+  sizes, how far ahead to order. Only the titles are in the system prompt; the agent calls
+  `read_guide` for the text, so the prompt stays short and cached however much a business
+  writes. Edited under Settings > What your agent knows; the menu reader drafts them from
+  a business's pages (flagged until confirmed, like drafted questions). No guides: no
+  prompt section.
+- `inquiries` (`modules/inquiries.py`): custom requests for what the catalog can't price
+  (custom designs, setups, rentals, catering, large quantities). The agent collects what,
+  when, how many, style, budget and name, reads it back and calls `record_inquiry`, and
+  tells the caller the team will get back to them; it never promises a price. Saved in the
+  `inquiries` table (per business, numbered per business, status new / contacted / closed),
+  listed in the manager's **Requests** tab, and texted to the business's `notify_phone`
+  (Settings > Requests) in a background thread from the shared SMS number. Test chats
+  (browser and terminal) don't save requests, as they don't save orders.
+
+The agent is also given the year with today's date, so a date without a year ("March
+14th") is read as the next one. `salon` (services and appointments) is listed as
 **coming soon**: it needs the `bookings` module, so `parse_catalog` refuses it and it can't
 be registered.
 
@@ -651,6 +708,11 @@ and "menu" appear only where they mean the restaurant template.
 - Templates and modules are code, not configuration (2026-11-22).
 - Bookings are "coming soon"; the extension points exist, the module doesn't
   (2026-11-22).
+- Consultative businesses use the same framework, not a separate agent (2026-11-23): their
+  needs (guides, custom requests, ordering months ahead) are generic modules and settings
+  any template can use.
+- Guides are looked up by a tool rather than put in the prompt (2026-11-23): they can be
+  long, most calls don't need them, and the prompt is cached per business.
 
 ## 16. Self-serve sign-up and onboarding
 
@@ -801,30 +863,14 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 
 ## 18. Open issues and next steps
 
-- **Next: consultative selling and Shopify** (planned for event and wedding suppliers such
-  as a Telugu wedding accessories shop on Shopify; all of it generic, usable by any
-  template). In order:
-  1. *Event and wedding supplies template* (`templates.py`): its wording ("items", "your
-     event"), agent rules for consultative selling (ask the event date and ceremonies,
-     suggest complete sets from the catalog, confirm quantities and dates), and a
-     per-business limit on how far ahead pickups can be scheduled (30 days today).
-  2. *Guides*: longer owner-editable write-ups per business (ceremony checklists, garland
-     sizes, how far ahead to order), looked up by the agent through a tool rather than
-     always in the prompt; the menu reader can draft them from the business's own pages.
-  3. *Inquiries module* (`phone_agent/modules/`): for work the catalog can't price, the
-     agent records event date, ceremony, quantities, colours, budget and contact as an
-     inquiry instead of an order; staff see it in `/manage` and are alerted.
-  4. *Shopify* (`pos_shopify.py`, alongside Square and Clover): the owner installs our app
-     (OAuth; scopes `read_products` and `write_draft_orders`), we import the catalog with
-     variant prices through the Admin GraphQL API (2026-10), and an order becomes a
-     **draft order** (`draftOrderCreate`: variant line items plus custom items with their
-     own price, note), whose `invoiceUrl` checkout link is texted to the caller like
-     Square's payment link. Paid when the draft's `order` is set (`completedAt`); unpaid
-     drafts stay in Shopify for staff. Still to confirm in the docs: how local pickup is
-     represented on a draft order (only `shippingLine` is documented), the
-     `DraftOrderStatus` values, and whether to poll or use webhooks.
-  Not in this round: shipping and delivery, rentals (dates, deposits, returns; close to
-  bookings), several pickup locations per business.
+- Consultative selling and Shopify (sections 13 and 15), built 2026-11-23. Still open:
+  Shopify hasn't been tried against a real store (needs a Shopify app's client id and
+  secret and a development store): check how pickup shows at checkout (only in the note
+  today; checkout may ask for a shipping address), the draft's tax versus what the agent
+  read out, and whether to use Shopify webhooks instead of polling. Requests have no email
+  alert (only the optional text to `notify_phone`). Not built: shipping and delivery,
+  rentals (dates, deposits, returns; close to bookings), several pickup locations per
+  business, catalog re-import without replacing hand-written items.
 
 - Scheduled pickups and item rules: opening hours are free text, so a pickup outside them
   is only prevented by the prompt; Clover gets a scheduled pickup only as words in the
@@ -940,3 +986,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Telugu voice ElevenLabs `v4_turbo`; Telugu listening Deepgram `nova-3` set in the switch message (Google recognition never delivered usable text on real calls). Verified by an automated call that speaks a Telugu order. |
 | 2026-11-23 | Correction: Deepgram `te` was rejected (64107) and the call stayed on English recognition; Telugu listening is Deepgram `nova-3` `multi`, verified with no relay errors. |
 | 2026-11-23 | Planned next: event and wedding supplies template, Guides, Inquiries module, Shopify (draft orders with a texted checkout link). |
+| 2026-11-23 | Built: event & wedding supplies template; guides (`read_guide`) and custom requests (`record_inquiry`, Requests tab, `notify_phone` text) for every template; `settings.max_advance_days`; notice up to 120 days; the year in the agent's date line; Shopify (OAuth, product import, draft orders paid at Shopify checkout); owner-run POS catalog import. |
