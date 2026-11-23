@@ -100,7 +100,7 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     first_switch = kinds.index(("language", "te-IN"))
     first_telugu = next(i for i, k in enumerate(kinds) if k[0] == "text" and "నమస్కారం" in (k[1] or ""))
     assert first_switch < first_telugu  # voice and listening switch before the Telugu words
-    assert sent[first_switch]["transcriptionLanguage"] == "te"  # Deepgram, set in the switch
+    assert sent[first_switch]["transcriptionLanguage"] == "multi"  # Deepgram multilingual, in the switch
     assert ("language", "en-US") in kinds  # the agent switched back on request
     assert "already switched to Telugu" in json.dumps(fake.requests[0]["messages"])
     # Listening switched at the keypress, before any agent text (the caller may speak first).

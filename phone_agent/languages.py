@@ -75,9 +75,11 @@ def _telugu() -> Language:
         speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
         stt_code=os.environ.get("TELUGU_STT_CODE", ""),
         # Listening in Telugu: Google (declared above, accepted by Twilio) never delivered usable
-        # text on real calls; Deepgram nova-3 does, fast, but Twilio only accepts it set in the
-        # switch message (declaring it in the call setup failed with 64114/64101). "none" disables.
-        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "Deepgram:nova-3-general:te").strip().replace("none", ""),
+        # text on real calls. Deepgram nova-3 in multilingual mode ("multi", which covers Telugu
+        # and Telugu mixed with English), set in the switch message, does: fast and in Telugu
+        # script. Twilio rejects Deepgram with "te" (64107) or "te-IN" (64114), and in the call
+        # setup (64101). "none" uses the declared Google recognition.
+        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "Deepgram:nova-3-general:multi").strip().replace("none", ""),
         confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
                 "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
     )

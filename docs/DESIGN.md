@@ -733,14 +733,15 @@ Telugu setup).
   ElevenLabs, which don't cover Telugu, so the caller (or the agent, when asked) switches.
 - **Elsewhere:** transcripts hold what was said; the AI call review writes in English;
   call metrics record the language; texts with the payment link stay in English.
-- **Listening in Telugu is Deepgram `nova-3` (code `te`), set in the switch message**
-  (`TELUGU_SWITCH_STT`, "provider:model:code"). Found by automated test calls that press 2
-  and speak a Telugu order: Google `long` delivered nothing or garbled text after up to a
-  minute; Google `chirp_3` isn't offered for te-IN on Google's global endpoint (64101);
-  Deepgram declared in the call setup failed (64114 with te-IN, 64101 with te); Deepgram in
-  the switch message works and delivers the caller's words as soon as they stop.
-  Deepgram writes Telugu in Latin letters ("naaku oka chicken biryani kaavaali"), which
-  Claude understands.
+- **Listening in Telugu is Deepgram `nova-3` in multilingual mode (`multi`, which covers
+  Telugu and Telugu mixed with English), set in the switch message** (`TELUGU_SWITCH_STT`,
+  "provider:model:code"). Found by automated test calls that press 2 and speak a Telugu
+  order, checking Twilio's alerts and the relay's error messages each time: Google `long`
+  delivered nothing or garbled text after up to a minute; Google `chirp_3` isn't offered
+  for te-IN on Google's global endpoint (64101); Deepgram in the call setup failed (64114
+  with te-IN, 64101 with te); Deepgram `te` in the switch message is rejected (64107, the
+  call silently stays on English recognition); Deepgram `multi` works: the order came back
+  in Telugu script about 1.5 s after the caller stopped.
 - **Risk:** an invalid voice/model combination stops the call from connecting (Twilio
   error 64101), so the Telugu voice and model can be changed by env (`TELUGU_VOICE`,
   `TELUGU_SPEECH_MODEL`, `TELUGU_TTS_PROVIDER`, `TELUGU_STT_PROVIDER`) and the
@@ -912,3 +913,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Telugu on by default for businesses that haven't chosen (`DEFAULT_LANGUAGES`, empty to turn it off everywhere). |
 | 2026-11-23 | Telugu recognition model `chirp_3` → `long`: the first real call failed with Twilio 64101 (te-IN/chirp_3 isn't on Google's global endpoint). Default turned off on the server until a real call succeeds. |
 | 2026-11-23 | Telugu voice ElevenLabs `v4_turbo`; Telugu listening Deepgram `nova-3` set in the switch message (Google recognition never delivered usable text on real calls). Verified by an automated call that speaks a Telugu order. |
+| 2026-11-23 | Correction: Deepgram `te` was rejected (64107) and the call stayed on English recognition; Telugu listening is Deepgram `nova-3` `multi`, verified with no relay errors. |
