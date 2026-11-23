@@ -741,10 +741,17 @@ Three layers (`phone_agent/analytics.py`, `web_analytics.py`):
    shows each call's outcome, reason and summary. Charts are single-series bars in the
    brand color, values labeled, details on hover.
 
-**Outside tools, off unless configured:** PostHog (`POSTHOG_KEY`; loaded from
-`/web-analytics.js`, CSP extended only then): page views per tab, funnels and session
-replays, with all text and inputs masked on the business pages and no one identified by
-email. Sentry (`SENTRY_DSN`, project `ringcart-server` in the `ringcart` organization):
+**Outside tools, off unless configured:** PostHog (`POSTHOG_KEY`, `web_analytics.py`).
+In the browser (loaded from `/web-analytics.js`, CSP extended only then): page views per
+tab, funnels and session replays, with all text and inputs masked on the business pages;
+signed-in staff are identified by account ID only, never email or name. On the server:
+events for setup actions (business created, menu read, test chat, publish, go-live, team,
+POS) linked to the browser session by `PosthogASGIMiddleware`, and every Claude call as a
+PostHog AI event (`$ai_generation`: model, tokens, latency, trace and session ids) plus a
+`$ai_span` per tool run, built by us from the response, never prompts or replies. We don't
+use PostHog's Claude client wrapper: it only covers `messages`, and the extra settings it
+needs break `beta.messages.stream`, which every Claude call here uses (tested).
+PostHog's exception capture is off; errors belong to Sentry. Sentry (`SENTRY_DSN`, project `ringcart-server` in the `ringcart` organization):
 every uncaught exception and every ERROR log record becomes an issue (the app catches
 and logs most failures, so the logging integration is what makes them visible), requests
 and Claude calls are traced (all of them outside production, 10% in production;
@@ -863,3 +870,5 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-22 | "Other notes" removed: `settings.notes` is no longer shown or given to the agent; About, Common questions and item rules replace it. Settings panels no longer print empty parts as "null". Business names come from the draft before the first publish (`Store.business_name`). POS order note says plain "Pay at pickup" when no payment link was sent. |
 | 2026-11-22 | **Analytics**: per-call outcome and metrics, an `events` log across setup, calls, orders, payments, POS and failures, an AI review of each call (Claude Haiku 5.5), an operator **Analytics** tab and a per-business **Insights** tab, call summaries in Calls. Optional PostHog (masked replays) and Sentry. Database schema version 3. |
 | 2026-11-22 | Sentry set up for the server (`ringcart-server`): errors including logged ones, tracing (10% in production), logs; strict privacy settings. Verified with a test error from the running app. |
+
+| 2026-11-22 | PostHog on the server (from the PostHog wizard, reworked): setup events, Claude calls as AI events without content, ID-only identification, no exception capture. The wizard's Claude wrapper was replaced because it broke every call once PostHog was on. |

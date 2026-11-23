@@ -35,7 +35,7 @@ from .catalog import CatalogError, parse_catalog
 from .catalog_check import check_catalog
 from . import analytics, menu_link
 from .catalog_import import ImportError_, Progress, merge_items, read_catalog
-from .manage import Who, _business, _check_write, _editor_state, _json, _who
+from .manage import Who, _business, _capture, _check_write, _editor_state, _json, _who
 from .numbers import NumberError
 from .schedule import default_timezone, valid_timezone
 from .templates import TEMPLATES, get_template
@@ -98,6 +98,7 @@ async def create_business(request: Request) -> dict:
     if who.user:
         store.grant(who.user["id"], business_id, role="owner")
     store.track("business_created", business_id, user_id=(who.user or {}).get("id"), template=template.id)
+    _capture("business_created", {"template": template.id})
     store.save_draft(business_id, _fresh_catalog(template.id, name, str(data.get("timezone") or "")),
                      None, None, who.label)
     log.info("%s created business %s (%s)", who.label, business_id, template.id)
@@ -178,11 +179,14 @@ async def import_catalog(request: Request, business_id: int, files: list[UploadF
     for f in files:
         data = await f.read()
         uploads.append(((f.content_type or "").split(";")[0].strip().lower(), data))
-    store.track("menu_import_started", row.id, source="link" if url.strip() else "files", files=len(uploads))
+    source = "link" if url.strip() else "files"
+    store.track("menu_import_started", row.id, source=source, files=len(uploads))
+    _capture("menu_import_started", {"source": source, "file_count": len(uploads)})
     job_id = secrets.token_urlsafe(12)
     job = {"business_id": row.id, "state": "running", "stage": "fetching" if url.strip() else "reading",
            "started": time.time(), "finished": None, "progress": Progress(), "result": None, "error": None,
-           "source": "a link" if url.strip() else f"{len(uploads)} files"}
+           "source": "a link" if url.strip() else f"{len(uploads)} files",
+           "ai_session_id": f"menu-import-{job_id}"}
     jobs[job_id] = job
     job["task"] = asyncio.create_task(_run_import(request.app, row, job, uploads, url.strip(), mode, who))
     return {"job": job_id}
@@ -198,7 +202,8 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
         draft = store.draft(row.id)
         start_catalog = draft["catalog"] if draft else store.catalog_payload(row.catalog_id)
         result = await read_catalog(app_.state.client, uploads, get_template(start_catalog.get("template")),
-                                    start_catalog["settings"], job["progress"])
+                                    start_catalog["settings"], job["progress"], ai_session_id=job["ai_session_id"],
+                                    distinct_id=str(who.user["id"]) if who.user else None)
         job["stage"] = "saving"
         # Merge into the draft as it is now: the owner may have kept editing while it read.
         for _ in range(3):
@@ -318,10 +323,13 @@ async def test_chat(request: Request, business_id: int) -> dict:
             raise HTTPException(status_code=400, detail=f"fix the catalog first: {e}")
         if len(sessions) >= MAX_TEST_SESSIONS:
             raise HTTPException(status_code=503, detail="too many test chats right now; try again shortly")
-        agent = PhoneAgent(catalog, client=request.app.state.client, caller_phone="+15550000000")
         sid = secrets.token_urlsafe(12)
+        agent = PhoneAgent(catalog, client=request.app.state.client, call_id=sid,
+                           caller_phone="+15550000000",
+                           posthog_distinct_id=str(who.user["id"]) if who.user else None)
         session = sessions[sid] = {"business_id": row.id, "agent": agent, "last": now, "events": []}
         store.track("test_chat_started", row.id)
+        _capture("test_chat_started")
         session["greeting"] = agent.greeting
         agent.on_tool = lambda name, args, result, is_error: session["events"].append(
             {"tool": name, "args": args, "error": is_error, "result": result[:300]})
@@ -368,6 +376,7 @@ def _buy(request: Request, row, area_code: str | None, user_id: int | None) -> d
     store.add_go_live_request(row.id, user_id, area_code, "done", phone_number=bought.phone_number)
     log.info("business %s is live on %s", row.slug, bought.phone_number)
     store.track("went_live", row.id)
+    _capture("business_went_live")
     return {"status": "live", "phone_number": bought.phone_number}
 
 
@@ -404,6 +413,7 @@ async def go_live(request: Request, business_id: int) -> dict:
         store.add_go_live_request(row.id, who.user["id"] if who.user else None, area_code, "pending")
         log.info("business %s: go-live request queued for approval", row.slug)
         store.track("go_live_pending", row.id)
+        _capture("business_go_live_requested")
         return {"status": "pending"}
     return _buy(request, row, area_code, who.user["id"] if who.user else None)
 
@@ -415,6 +425,7 @@ async def pause(request: Request, business_id: int) -> dict:
     row = _business(request, who, business_id)
     _owner(who, row.id)
     request.app.state.store.update_business(row.id, active=False)
+    _capture("business_paused")
     return {"active": False}
 
 
@@ -427,6 +438,7 @@ async def resume(request: Request, business_id: int) -> dict:
     if not row.phone_number or row.catalog_id is None:
         raise HTTPException(status_code=400, detail="go live first")
     request.app.state.store.update_business(row.id, active=True)
+    _capture("business_resumed")
     return {"active": True}
 
 
@@ -474,6 +486,7 @@ async def add_teammate(request: Request, business_id: int) -> list[dict]:
     user = store.user_by_email(email)
     user_id = user["id"] if user else store.add_user(email)
     store.grant(user_id, row.id, role)
+    _capture("team_member_added", {"role": role, "existing_account": user is not None})
     return store.team(row.id)
 
 
@@ -489,6 +502,7 @@ async def remove_teammate(request: Request, business_id: int, user_id: int) -> l
     if any(m["user_id"] == user_id and m["role"] == "owner" for m in members) and len(owners) <= 1:
         raise HTTPException(status_code=400, detail="a business needs at least one owner")
     store.revoke(user_id, row.id)
+    _capture("team_member_removed")
     return store.team(row.id)
 
 
@@ -546,10 +560,13 @@ async def pos_connect(request: Request, business_id: int) -> dict:
     if hub is None:
         raise HTTPException(status_code=503, detail="POS connections aren't set up on this server")
     base = os.environ.get("PUBLIC_BASE_URL", "") or str(request.base_url).rstrip("/")
+    provider = str(data.get("provider", ""))
     try:
-        return {"url": connect_url(str(data.get("provider", "")), row.id, base, hub.providers)}
+        url = connect_url(provider, row.id, base, hub.providers)
     except PosError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _capture("pos_connection_started", {"provider": provider})
+    return {"url": url}
 
 
 @router.delete("/api/manage/businesses/{business_id}/pos")
@@ -559,6 +576,7 @@ async def pos_disconnect(request: Request, business_id: int) -> dict:
     row = _business(request, who, business_id)
     _owner(who, row.id)
     request.app.state.store.delete_pos_connection(row.id)
+    _capture("pos_disconnected")
     return {"connected": None}
 
 

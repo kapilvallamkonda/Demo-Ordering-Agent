@@ -10,6 +10,7 @@ import asyncio
 import time
 import logging
 import os
+import uuid
 from collections.abc import AsyncIterator, Callable
 
 import anthropic
@@ -17,7 +18,7 @@ import anthropic
 from .catalog import Catalog
 
 from .payments import PaymentService
-from . import schedule
+from . import schedule, web_analytics
 from .prompts import build_greeting, build_system_prompt
 from .storage import Store
 from .tools import CallSession, run_tool, start_session, tools_for
@@ -66,8 +67,15 @@ class PhoneAgent:
         caller_phone: str | None = None,
         payments: PaymentService | None = None,
         pos=None,
+        posthog_distinct_id: str | None = None,
     ):
         self.client = client or anthropic.AsyncAnthropic()
+        # PostHog AI events (web_analytics): the owner testing in the browser, or none for a call.
+        self._posthog_distinct_id = posthog_distinct_id
+        raw_session_id = str(call_id or uuid.uuid4())
+        if not all(char.isalnum() or char in "-_~.@()!':|" for char in raw_session_id):
+            raw_session_id = str(uuid.uuid4())
+        self._ai_session_id = f"call-{raw_session_id}"
         self.catalog = catalog
         self.greeting = build_greeting(catalog)
         self.tools = tools_for(catalog.template.modules)  # what this kind of business can do
@@ -176,6 +184,14 @@ class PhoneAgent:
             params["speed"] = "fast"
         return params
 
+    def _capture_tool_span(self, name: str, latency: float, trace_id: str) -> None:
+        """A tool run as a PostHog $ai_span: its name and how long it took, nothing else."""
+        props = {"$ai_trace_id": trace_id, "$ai_session_id": self._ai_session_id,
+                 "$ai_span_id": str(uuid.uuid4()), "$ai_span_name": name, "$ai_latency": round(latency, 3)}
+        if not self._posthog_distinct_id:
+            props["$process_person_profile"] = False
+        web_analytics.capture("$ai_span", props, self._posthog_distinct_id or "system:phone_agent")
+
     def _add_caller_text(self, text: str) -> None:
         # After an interrupted reply the history can already end on a user turn (a
         # tool_result, or a turn that never got an answer). Extend it instead of
@@ -193,9 +209,10 @@ class PhoneAgent:
         """Handle one caller utterance, yielding reply text as it streams."""
         self._tool_turn = self._muted = False
         self.stats["turns"] += 1
+        trace_id = str(uuid.uuid4())
         t0, first = time.monotonic(), True
         try:
-            async for chunk in self._respond(caller_text):
+            async for chunk in self._respond(caller_text, trace_id):
                 if first and chunk.strip():
                     self.stats["first_word_ms"].append(round((time.monotonic() - t0) * 1000))
                     first = False
@@ -204,7 +221,7 @@ class PhoneAgent:
         finally:
             self._tool_turn = self._muted = False
 
-    async def _respond(self, caller_text: str) -> AsyncIterator[str]:
+    async def _respond(self, caller_text: str, trace_id: str) -> AsyncIterator[str]:
         content = caller_text
         if self._pending_note:
             content = f"{self._pending_note}\n{caller_text}"
@@ -216,6 +233,7 @@ class PhoneAgent:
         while rounds < MAX_TOOL_ROUNDS:
             rounds += 1
             try:
+                t_call = time.monotonic()
                 async with self.client.beta.messages.stream(
                     **self._request_params(), messages=self.messages
                 ) as stream:
@@ -228,6 +246,10 @@ class PhoneAgent:
                     response = await stream.get_final_message()
                 json_retries = 0
                 self._count_usage(getattr(response, "usage", None))
+                web_analytics.capture_ai_generation(
+                    model=getattr(response, "model", None) or MODEL, usage=getattr(response, "usage", None),
+                    latency_s=time.monotonic() - t_call, trace_id=trace_id, session_id=self._ai_session_id,
+                    span_name="phone_agent", distinct_id=self._posthog_distinct_id)
             except ValueError:
                 # The SDK couldn't parse a streamed tool input at all. There is no complete
                 # tool_use to answer, so re-issue the turn (bounded).
@@ -239,6 +261,10 @@ class PhoneAgent:
                 continue
             except anthropic.APIError:
                 self.stats["api_errors"] += 1
+                web_analytics.capture_ai_generation(
+                    model=MODEL, usage=None, latency_s=time.monotonic() - t_call, trace_id=trace_id,
+                    session_id=self._ai_session_id, span_name="phone_agent",
+                    distinct_id=self._posthog_distinct_id, error=True)
                 log.exception("Claude API error")
                 yield ERROR_LINE
                 return
@@ -268,8 +294,10 @@ class PhoneAgent:
                 results = []
                 for block in tool_uses:
                     # Tools can call out to Stripe/Twilio; keep the event loop free for other calls.
+                    tool_started = time.monotonic()
                     text, is_error = await asyncio.to_thread(
                         run_tool, self.session, block.name, block.input)
+                    self._capture_tool_span(block.name, time.monotonic() - tool_started, trace_id)
                     log.info("tool %s(%s) -> %s", block.name, block.input, text)
                     self._count_tool(block.name, text, is_error)
                     if self.on_tool:

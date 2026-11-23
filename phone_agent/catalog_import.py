@@ -13,6 +13,8 @@ import json
 import logging
 import os
 import re
+import time
+import uuid
 
 from .schedule import DAYS, MAX_NOTICE_DAYS
 
@@ -205,7 +207,8 @@ def _unquote(s: str) -> str:
 
 
 async def read_catalog(client, files: list[tuple[str, bytes]], template, settings: dict,
-                       progress: Progress | None = None) -> dict:
+                       progress: Progress | None = None, ai_session_id: str | None = None,
+                       distinct_id: str | None = None) -> dict:
     """Returns {"items": [...catalog items...], "business": {...}, "about": str, "faq": [{q, a}],
     "left_out": [...], "unreadable": [...]}.
     Pass a Progress to follow along while it reads."""
@@ -214,6 +217,7 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
                            name=settings.get("name") or "the business",
                            tags=", ".join(t.rstrip(".") for t in template.tags) or "none")
     content = build_content(files, prompt)
+    t0 = time.monotonic()
     try:
         async with client.beta.messages.stream(
             model=MODEL,
@@ -228,7 +232,9 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
                     if event.type == "text":
                         progress.feed(event.text)
             message = await stream.get_final_message()
+        _report(getattr(message, "model", MODEL), getattr(message, "usage", None), t0, ai_session_id, distinct_id)
     except Exception as e:  # the SDK's typed errors; the owner just needs to retry
+        _report(MODEL, None, t0, ai_session_id, distinct_id, error=True)
         log.exception("catalog import call failed")
         raise ImportError_("Reading the files didn't work this time. Please try again.") from e
     if message.stop_reason == "refusal":
@@ -245,6 +251,15 @@ async def read_catalog(client, files: list[tuple[str, bytes]], template, setting
     return {"items": [to_catalog_item(it) for it in data.get("items", []) if it.get("name")],
             "business": data.get("business") or {}, "about": (data.get("about") or "").strip()[:500],
             "faq": faq, "left_out": data.get("left_out") or [], "unreadable": data.get("unreadable") or []}
+
+
+def _report(model, usage, t0, session_id, distinct_id, error=False) -> None:
+    """The menu reading as a PostHog AI event (tokens and timing only)."""
+    from .web_analytics import capture_ai_generation
+
+    capture_ai_generation(model=model, usage=usage, latency_s=time.monotonic() - t0, trace_id=str(uuid.uuid4()),
+                          session_id=session_id or "menu-import", span_name="menu_import",
+                          distinct_id=distinct_id, error=error)
 
 
 def to_catalog_item(it: dict) -> dict:

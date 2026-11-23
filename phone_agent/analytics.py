@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from collections import Counter
 
 log = logging.getLogger("phone_agent.analytics")
@@ -186,6 +187,7 @@ class CallReviewer:
                                              REVIEWS_PER_BUSINESS_PER_DAY):
                     log.info("business %s: daily call-review cap reached; skipping %s", business_id, call_id)
                     return None
+                t0 = time.monotonic()
                 async with self.client.beta.messages.stream(
                     model=self.model, max_tokens=4000,
                     output_config={"effort": "low", "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
@@ -194,6 +196,12 @@ class CallReviewer:
                                + "\n</transcript>"}],
                 ) as stream:
                     message = await stream.get_final_message()
+                from .web_analytics import capture_ai_generation
+
+                capture_ai_generation(model=getattr(message, "model", None) or self.model,
+                                      usage=getattr(message, "usage", None), latency_s=time.monotonic() - t0,
+                                      trace_id=str(uuid.uuid4()), session_id=f"call-{call_id}",
+                                      span_name="call_review")
                 if message.stop_reason in ("refusal", "max_tokens"):
                     log.warning("call %s review stopped: %s", call_id, message.stop_reason)
                     return None

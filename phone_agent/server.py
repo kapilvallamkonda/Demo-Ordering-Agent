@@ -132,10 +132,20 @@ async def lifespan(app: FastAPI):
                  ", ".join(app.state.pos.providers) or "no provider apps configured",
                  app.state.pos.resume())
     yield
+    ph = web_analytics.posthog_client()
+    if ph:
+        try:
+            ph.flush()
+        except Exception:
+            log.exception("couldn't flush PostHog events during shutdown")
 
 
 web_analytics.init_sentry()  # error alerts, when SENTRY_DSN is set
 app = FastAPI(title=brand.name(), lifespan=lifespan)
+if web_analytics.posthog_client():
+    from posthog.integrations.asgi import PosthogASGIMiddleware  # links browser sessions to server events
+
+    app.add_middleware(PosthogASGIMiddleware, client=web_analytics.posthog_client())
 app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
 app.include_router(onboarding_router)  # self-serve: create a business, read a menu, go live, team ...
 app.include_router(google_router)  # /auth/google: sign in with Google
@@ -158,8 +168,8 @@ for _name, _type in ICON_TYPES.items():
 
 
 @app.get("/web-analytics.js", include_in_schema=False)
-async def web_analytics_js(page: str = "landing") -> Response:
-    return Response(web_analytics.loader_js("manage" if page == "manage" else "landing"),
+async def web_analytics_js(request: Request, page: str = "landing") -> Response:
+    return Response(web_analytics.loader_js("manage" if page == "manage" else "landing", request.url.hostname),
                     media_type="application/javascript", headers={"Cache-Control": "public, max-age=300"})
 
 
@@ -531,6 +541,10 @@ class RelayCall:
                 return await self.decline(NOT_TAKING_CALLS, "agent_failed", catalog.business_id)
             self.business_id, self.slug = catalog.business_id, catalog.slug
             app_state.active_calls[self.business_id] = app_state.active_calls.get(self.business_id, 0) + 1
+            web_analytics.capture("voice_call_started", {
+                "business_id": catalog.business_id, "payment_links_enabled": bool(payments),
+                "pos_enabled": bool(getattr(app_state, "pos", None)), "$process_person_profile": False,
+            }, distinct_id=f"business:{catalog.business_id}")
             self.agent.on_tool = self.record_tool
             self.call_id, self.store = msg.get("callSid"), app_state.store
             self.caller_phone = msg.get("from")

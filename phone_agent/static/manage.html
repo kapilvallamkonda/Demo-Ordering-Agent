@@ -9,7 +9,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
-<script src="/web-analytics.js?page=manage" async></script>
+<script src="/web-analytics.js?page=manage"></script>
 <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <style>
@@ -415,6 +415,7 @@
     if (m) return showInvite(m[1]);
     try { S.me = await api("GET", "/me"); }
     catch (e) { if (e.status === 401) return showLogin(); return screen(el("p", {}, e.message)); }
+    identifyManagedUser();
     if (!S.me.businesses.length) return showCreate(true);
     const saved = Number(store.get("manage.business"));
     S.rid = S.me.businesses.some(r => r.id === saved) ? saved : S.me.businesses[0].id;
@@ -609,10 +610,17 @@
   }
 
   // ---- layout ----
+  // PostHog: link this browser to the owner's account ID only (never email or name).
+  function identifyManagedUser() {
+    if (!(S.me && S.me.user_id && window.posthog)) return;
+    try { window.posthog.identify(String(S.me.user_id)); } catch {}
+  }
+
   function signOutBtn() {
     return el("button", { class: "btn small", type: "button", onclick: async () => {
       try { await flush(); } catch {}
       try { await api("POST", "/logout"); } catch {}
+      if (window.posthog) window.posthog.reset();
       S.me = null; showLogin("Signed out.");
     } }, "Sign out");
   }

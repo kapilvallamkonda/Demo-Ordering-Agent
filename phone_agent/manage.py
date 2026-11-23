@@ -37,6 +37,15 @@ COOKIE = "oa_session"
 MAX_BODY = 2_000_000
 limiter = LoginLimiter()
 
+
+def _capture(event: str, properties: dict | None = None) -> None:
+    """A management action as a PostHog event, in the request's PostHog context (the signed-in
+    owner's browser session, linked by PosthogASGIMiddleware). Does nothing when PostHog is off."""
+    from .web_analytics import capture
+
+    capture(event, properties)
+
+
 def page_headers() -> dict:
     """PAGE_HEADERS, with PostHog's hosts allowed when it's configured (web_analytics.py)."""
     from .web_analytics import csp_extra
@@ -246,7 +255,8 @@ async def me(request: Request) -> dict:
         businesses.append({"id": r["id"], "slug": r["slug"], "name": name or r["slug"], "active": r["active"],
                            "phone_number": r["phone_number"], "role": who.role(r["id"]),
                            "template": r["template"], "status": r["status"]})
-    return {"who": who.label, "name": (who.user or {}).get("name") or ("Operator" if who.operator else ""),
+    return {"who": who.label, "user_id": (who.user or {}).get("id"),
+            "name": (who.user or {}).get("name") or ("Operator" if who.operator else ""),
             "email": (who.user or {}).get("email"), "operator": who.operator, "businesses": businesses}
 
 
@@ -316,6 +326,7 @@ async def discard_draft(request: Request, business_id: int) -> dict:
     _check_write(request)
     row = _business(request, who, business_id)
     request.app.state.store.delete_draft(row.id)
+    _capture("catalog_draft_discarded")
     log.info("%s discarded the draft catalog of %s", who.label, row.slug)
     return _editor_state(request, row)
 
@@ -338,11 +349,15 @@ async def publish(request: Request, business_id: int) -> JSONResponse:
     result = check_catalog(draft["catalog"])
     if result["errors"]:
         store.track("publish_blocked", row.id, errors=len(result["errors"]), first=result["errors"][0][:120])
+        _capture("catalog_publish_blocked", {"error_count": len(result["errors"])})
         return JSONResponse(status_code=422, content={"detail": "fix the errors first", "check": result})
     first_publish = row.catalog_id is None
     catalog_id = store.publish_draft(row.id, draft["catalog"], who.label)
-    store.track("published", row.id, first=first_publish, items=len(draft["catalog"].get("items", [])),
-                blockers=len(result["blockers"]))
+    item_count = len(draft["catalog"].get("items", []))
+    blocker_count = len(result["blockers"])
+    store.track("published", row.id, first=first_publish, items=item_count, blockers=blocker_count)
+    _capture("catalog_published", {"is_first_publish": first_publish, "item_count": item_count,
+                                    "blocker_count": blocker_count})
     log.info("%s published catalog version %s for %s", who.label, catalog_id, row.slug)
     return JSONResponse({"catalog_id": catalog_id, **_editor_state(request, store.business(row.id))})
 
@@ -374,5 +389,6 @@ async def restore(request: Request, business_id: int, catalog_id: int) -> dict:
     if existing:
         store.delete_draft(row.id)
     store.save_draft(row.id, old, row.catalog_id, None, who.label)
+    _capture("catalog_version_restored")
     log.info("%s restored catalog version %s of %s into the draft", who.label, catalog_id, row.slug)
     return _editor_state(request, row)

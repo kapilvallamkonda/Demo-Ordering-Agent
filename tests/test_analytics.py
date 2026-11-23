@@ -171,3 +171,47 @@ def test_outside_tools_are_off_until_configured_and_mask_business_pages(app, mon
     assert "script-src https://us-assets.i.posthog.com" in csp and "connect-src 'self' https://us.i.posthog.com" in csp
     from phone_agent import web_analytics
     assert web_analytics.init_sentry() is False  # no SENTRY_DSN
+
+
+class FakePostHog:
+    def __init__(self):
+        self.events = []
+
+    def capture(self, event, distinct_id=None, properties=None):
+        self.events.append((event, distinct_id, properties or {}))
+
+
+def test_posthog_ai_events_never_change_claude_requests_or_send_content(monkeypatch):
+    """Regression: PostHog's Claude wrapper doesn't cover beta.messages.stream, so PostHog
+    settings in our requests made every call fail. We report AI events ourselves instead."""
+    import asyncio
+
+    from phone_agent import web_analytics
+    from phone_agent.agent import PhoneAgent
+    from phone_agent.catalog import load_catalog
+
+    from .conftest import FIXTURE_CATALOG
+
+    ph = FakePostHog()
+    monkeypatch.setattr(web_analytics, "_posthog", ph)
+    monkeypatch.setattr(web_analytics, "_posthog_ready", True)
+    usage = type("U", (), {"input_tokens": 1200, "output_tokens": 40, "cache_read_input_tokens": 900,
+                           "cache_creation_input_tokens": 0})()
+    reply = message(text_block("We have tiramisu tonight."))
+    reply.usage, reply.model = usage, "claude-opus-5-5"
+    fake = FakeClient([reply])
+    agent = PhoneAgent(load_catalog(FIXTURE_CATALOG), client=fake, call_id="CA9", caller_phone="+15550001111")
+
+    async def talk():
+        return "".join([c async for c in agent.respond("my number is 555 000 1111, any desserts?")])
+
+    assert "tiramisu" in asyncio.run(talk())
+    assert not [k for k in fake.requests[0] if "posthog" in k]  # the Claude request is untouched
+    gen = [(e, d, p) for e, d, p in ph.events if e == "$ai_generation"]
+    assert len(gen) == 1
+    _, distinct, props = gen[0]
+    assert props["$ai_input_tokens"] == 1200 and props["$ai_output_tokens"] == 40
+    assert props["$ai_model"] == "claude-opus-5-5" and props["$ai_session_id"] == "call-CA9"
+    assert distinct == "system:phone_agent" and props["$process_person_profile"] is False
+    blob = json.dumps(ph.events)
+    assert "555" not in blob and "desserts" not in blob and "tiramisu" not in blob  # no content
