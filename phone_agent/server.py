@@ -594,6 +594,9 @@ class RelayCall:
         self.record("event", f"Caller pressed {digit} for {lang.label}")
         await self.cancel_reply()
         self.agent.session.language = lang.code
+        # Switch listening now, not when the agent next speaks: the caller often starts
+        # talking in Telugu right after pressing the key.
+        await self.sync_language()
         self.reply_task = asyncio.create_task(self.reply(lang.confirm))
 
     async def sync_language(self) -> None:

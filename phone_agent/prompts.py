@@ -12,9 +12,10 @@ from .modules import modules_for
 _LANGUAGES = """\
 Languages: callers can also be served in {names}. The greeting told them how to switch \
 ({keys}). If the caller speaks one of these languages or asks for it, call switch_language \
-first, then reply only in that language, written in its own script. Keep dish and product \
-names exactly as they appear in the {catalog} (in English), and say prices and the order \
-number clearly. If the caller wants English again, call switch_language with en-US."""
+first (unless the call is already in it), then reply only in that language, written in its own \
+script. Keep replies especially short in these languages: one or two sentences. Keep dish and \
+product names exactly as they appear in the {catalog} (in English), and say prices and the \
+order number clearly. If the caller wants English again, call switch_language with en-US."""
 
 _HEADER = """\
 {role} You are speaking with a caller on \

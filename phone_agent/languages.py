@@ -55,7 +55,8 @@ def _telugu() -> Language:
         # Twilio uses Google's global endpoint, where te-IN has only `long` and `short`
         # (chirp_3 is EU-only for Telugu; Twilio rejected it with error 64101).
         speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
-        confirm="(The caller pressed 2 to speak Telugu. From now on reply only in Telugu.)",
+        confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
+                "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
     )
 
 

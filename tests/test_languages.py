@@ -102,7 +102,9 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     assert first_switch < first_telugu  # voice and listening switch before the Telugu words
     assert sent[first_switch]["transcriptionLanguage"] == "te-IN"
     assert ("language", "en-US") in kinds  # the agent switched back on request
-    assert "pressed 2 to speak Telugu" in json.dumps(fake.requests[0]["messages"])
+    assert "already switched to Telugu" in json.dumps(fake.requests[0]["messages"])
+    # Listening switched at the keypress, before any agent text (the caller may speak first).
+    assert sent[0]["type"] == "language" and sent[0]["transcriptionLanguage"] == "te-IN"
     assert any(t["name"] == "switch_language" for t in fake.requests[0]["tools"])
 
 
