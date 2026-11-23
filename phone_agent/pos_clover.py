@@ -91,7 +91,15 @@ class CloverProvider:
         if not conn.merchant_id:
             raise PosError("Clover didn't say which merchant was connected", retry=False)
         settings: dict = {}
-        types = self._call(conn, "GET", "/order_types").get("elements", [])
+        try:
+            types = self._call(conn, "GET", "/order_types").get("elements", [])
+        except PosError as e:
+            if "-> 401" in str(e) or "-> 403" in str(e):  # the token works but lacks the scope
+                raise PosError("Clover didn't give Ringcart permission to see orders. The app needs the "
+                               "Merchant (read), Inventory (read) and Orders (read and write) permissions "
+                               "in the Clover developer dashboard; after changing them, reinstall the app "
+                               "on the merchant and connect again.", retry=False) from e
+            raise
         pickup = next((t for t in types if PICKUP_TYPE.search(t.get("label", ""))), None)
         if pickup:
             settings["order_type_id"] = pickup["id"]

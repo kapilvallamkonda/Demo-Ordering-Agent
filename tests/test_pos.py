@@ -539,3 +539,11 @@ def test_payments_for_leaves_other_businesses_alone():
     assert pos_mod.payments_for(hub, store, catalog, default) == (default, catalog)  # not connected
     hub.sms = None
     assert pos_mod.payments_for(hub, store, catalog, default) == (default, catalog)  # can't text
+
+
+def test_clover_connect_without_order_permission_says_what_to_fix():
+    api = FakeApi({("GET", "/order_types"): (401, {"message": "401 Unauthorized"})})
+    prov = CloverProvider("app", "secret", http=api.client())
+    conn = pos_mod.Connection(1, "clover", "sandbox", "MERCH1", None, {"access_token": "tok"}, {})
+    with pytest.raises(PosError, match="Orders \\(read and write\\)"):
+        prov.setup(conn)
