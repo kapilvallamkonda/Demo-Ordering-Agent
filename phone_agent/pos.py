@@ -445,12 +445,15 @@ class PosHub:
                 self.store.set_pos_status(order_id, "sent", pos_order_id=rec["pos_order_id"])
                 self.store.set_pos_paid(order_id)
                 log.info("order #%s paid by payment link; it's on the POS", rec["number"])
+                self.store.track("payment_link_paid", rec["business_id"], provider=conn.provider,
+                                 minutes=round((now - rec["created_at"]) / 60, 1))
                 self._text(rec, changed and paid_text(catalog, rec["number"], changed.get("pickup")))
                 return "paid"
             if paid is None or now > deadline:
                 changed = self.store.mark_expired(rec["payment_id"])
                 self.store.set_pos_status(order_id, "cancelled", error="not paid in time; the payment link was cancelled")
                 log.info("order #%s: payment link expired unpaid; order cancelled", rec["number"])
+                self.store.track("payment_link_expired", rec["business_id"])
                 self._text(rec, changed and expired_text(catalog, rec["number"]))
                 return "expired"
             return "waiting"
@@ -461,6 +464,7 @@ class PosHub:
                 self.sms.send(rec["customer_phone"], body)
             except Exception:
                 log.exception("couldn't text payment update for order #%s", rec["number"])
+                self.store.track("sms_failed", rec.get("business_id"), what="payment_update")
 
     def retry(self, order_id: int) -> None:
         self.store.set_pos_status(order_id, "pending")
@@ -543,6 +547,7 @@ class PosHub:
                                           pos_order_id=e.partial_id)
                 log.warning("order id %s: POS send failed (%s): %s", order_id,
                             "will retry" if e.retry else "permanent", e)
+                self.store.track("pos_send_failed", rec["business_id"], error=str(e)[:160], retry=e.retry)
                 return "retry" if e.retry else "failed"
             except Exception as e:  # network errors, bugs: keep the order visible and retry
                 self.store.set_pos_status(order_id, "failed", error=f"{type(e).__name__}: {e}", attempted=True)

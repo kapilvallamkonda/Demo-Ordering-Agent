@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
@@ -33,6 +34,26 @@ MAX_JSON_RETRIES = 2
 
 REFUSAL_LINE = "Sorry, I can't help with that. Is there anything from the catalog I can get for you?"
 ERROR_LINE = "Sorry, I'm having trouble on my end. Could you say that again?"
+
+
+def refusal_kind(message: str) -> str | None:
+    """What kind of "no" a tool error was, for analytics (None: some other error)."""
+    m = message.lower()
+    if "unknown item_id" in m:
+        return "not_found"
+    if "in person only" in m:
+        return "in_person_only"
+    if "ahead; the earliest pickup day" in m:
+        return "notice"
+    if "weekends only" in m or "weekdays only" in m or "only on " in m:
+        return "days"
+    if "sold out" in m or "out of stock" in m or "not available right now" in m:
+        return "unavailable"
+    if "needs a '" in m:
+        return "missing_choice"
+    if "too soon" in m or "already passed" in m:
+        return "pickup_time"
+    return None
 
 
 class PhoneAgent:
@@ -79,6 +100,11 @@ class PhoneAgent:
         # tool_use without a tool_result, so an interruption mutes the reply instead.
         self._tool_turn = False
         self._muted = False
+        # Measurements for analytics (analytics.call_metrics turns these into the call's row).
+        self.stats: dict = {"started": time.time(), "turns": 0, "first_word_ms": [], "input_tokens": 0,
+                            "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
+                            "tool_calls": 0, "tool_errors": 0, "refusals": [], "not_found": 0,
+                            "api_errors": 0, "first_item_s": None, "max_cart": 0.0}
 
     @property
     def end_requested(self) -> bool:
@@ -102,6 +128,36 @@ class PhoneAgent:
             note = "(You were interrupted before the caller heard your reply"
         self._pending_note = (note + ". Anything after that, including tool results you "
                               "haven't told them about, they have not heard.)")
+
+    def _count_usage(self, usage) -> None:
+        if usage is None:
+            return
+        for key, attr in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                          ("cache_read_tokens", "cache_read_input_tokens"),
+                          ("cache_write_tokens", "cache_creation_input_tokens")):
+            value = getattr(usage, attr, 0)
+            if isinstance(value, int):
+                self.stats[key] += value
+
+    def _count_tool(self, name: str, result: str, is_error: bool) -> None:
+        st = self.stats
+        st["tool_calls"] += 1
+        if is_error:
+            st["tool_errors"] += 1
+            kind = refusal_kind(result)
+            if kind == "not_found":
+                st["not_found"] += 1
+            elif kind:
+                st["refusals"].append(kind)
+        order = self.session.order
+        if name == "add_item" and not is_error:
+            if st["first_item_s"] is None:
+                st["first_item_s"] = round(time.time() - st["started"], 1)
+        if order is not None:
+            try:
+                st["max_cart"] = max(st["max_cart"], float(order.total))
+            except Exception:
+                pass
 
     def _request_params(self) -> dict:
         params: dict = {
@@ -136,8 +192,13 @@ class PhoneAgent:
     async def respond(self, caller_text: str) -> AsyncIterator[str]:
         """Handle one caller utterance, yielding reply text as it streams."""
         self._tool_turn = self._muted = False
+        self.stats["turns"] += 1
+        t0, first = time.monotonic(), True
         try:
             async for chunk in self._respond(caller_text):
+                if first and chunk.strip():
+                    self.stats["first_word_ms"].append(round((time.monotonic() - t0) * 1000))
+                    first = False
                 if not self._muted:
                     yield chunk
         finally:
@@ -166,6 +227,7 @@ class PhoneAgent:
                             self._tool_turn = True
                     response = await stream.get_final_message()
                 json_retries = 0
+                self._count_usage(getattr(response, "usage", None))
             except ValueError:
                 # The SDK couldn't parse a streamed tool input at all. There is no complete
                 # tool_use to answer, so re-issue the turn (bounded).
@@ -176,6 +238,7 @@ class PhoneAgent:
                     return
                 continue
             except anthropic.APIError:
+                self.stats["api_errors"] += 1
                 log.exception("Claude API error")
                 yield ERROR_LINE
                 return
@@ -208,6 +271,7 @@ class PhoneAgent:
                     text, is_error = await asyncio.to_thread(
                         run_tool, self.session, block.name, block.input)
                     log.info("tool %s(%s) -> %s", block.name, block.input, text)
+                    self._count_tool(block.name, text, is_error)
                     if self.on_tool:
                         try:
                             self.on_tool(block.name, block.input, text, is_error)

@@ -136,6 +136,7 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
 
     store = request.app.state.store
     user = store.user_by_google(sub)
+    new_account = False
     if user is None:
         user = store.user_by_email(email)
         if user and user.get("google_sub") and user["google_sub"] != sub:
@@ -143,6 +144,7 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
         if user is None:
             store.add_user(email, str(profile.get("name", ""))[:80])
             user = store.user_by_email(email)
+            new_account = True
         store.link_google(user["id"], sub, str(profile.get("name", "")))
         user = store.user(user["id"])
     if not user["active"]:
@@ -155,4 +157,6 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
                     secure=secure_cookie(request), samesite="lax", path="/")
     resp.delete_cookie(STATE_COOKIE, path="/auth/google")
     log.info("%s signed in with Google", email)
+    store.track("signin", user_id=user["id"], user=user["id"], new=new_account, method="google",
+                visitor=request.cookies.get("rc_v"))
     return resp

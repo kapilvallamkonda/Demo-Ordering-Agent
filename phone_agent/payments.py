@@ -169,6 +169,7 @@ def handle_stripe_event(event: dict, store, catalog_for: Callable[[int | None], 
     if not changed:
         return "duplicate"
     log.info("order %s payment %s", changed["order_number"], outcome)
+    store.track("payment_link_" + ("paid" if outcome == "paid" else "expired"), changed.get("business_id"))
     if outcome == "paid" and on_paid:
         try:
             on_paid(changed["order_id"])

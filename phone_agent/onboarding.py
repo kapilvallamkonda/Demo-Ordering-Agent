@@ -11,6 +11,7 @@
   orders and calls    GET /api/manage/businesses/{id}/orders|calls|calls/{call_id}
   POS                 GET/POST/DELETE /api/manage/businesses/{id}/pos
   operator            GET /api/manage/admin/requests, POST .../{id}/approve|reject
+  analytics           GET /api/manage/admin/analytics (operator), GET .../{id}/insights (a business)
 
 Limits keep strangers from running up costs (all per day unless noted, all env-tunable):
 businesses per account, numbers bought automatically per account (in total) and across
@@ -32,7 +33,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from .catalog import CatalogError, parse_catalog
 from .catalog_check import check_catalog
-from . import menu_link
+from . import analytics, menu_link
 from .catalog_import import ImportError_, Progress, merge_items, read_catalog
 from .manage import Who, _business, _check_write, _editor_state, _json, _who
 from .numbers import NumberError
@@ -96,6 +97,7 @@ async def create_business(request: Request) -> dict:
     business_id = store.create_business(_slug(store, name))
     if who.user:
         store.grant(who.user["id"], business_id, role="owner")
+    store.track("business_created", business_id, user_id=(who.user or {}).get("id"), template=template.id)
     store.save_draft(business_id, _fresh_catalog(template.id, name, str(data.get("timezone") or "")),
                      None, None, who.label)
     log.info("%s created business %s (%s)", who.label, business_id, template.id)
@@ -137,6 +139,7 @@ async def start_over(request: Request, business_id: int) -> dict:
     if store.save_draft(row.id, fresh, None, data.get("revision"), who.label) is None:
         raise HTTPException(status_code=409, detail="someone else changed this business; reload first")
     log.info("%s started %s over", who.label, row.slug)
+    store.track("start_over", row.id, items=len(catalog.get("items", [])))
     return _editor_state(request, store.business(row.id))
 
 
@@ -175,6 +178,7 @@ async def import_catalog(request: Request, business_id: int, files: list[UploadF
     for f in files:
         data = await f.read()
         uploads.append(((f.content_type or "").split(";")[0].strip().lower(), data))
+    store.track("menu_import_started", row.id, source="link" if url.strip() else "files", files=len(uploads))
     job_id = secrets.token_urlsafe(12)
     job = {"business_id": row.id, "state": "running", "stage": "fetching" if url.strip() else "reading",
            "started": time.time(), "finished": None, "progress": Progress(), "result": None, "error": None,
@@ -223,15 +227,22 @@ async def _run_import(app_, row, job: dict, uploads: list, url: str, mode: str, 
         else:
             raise ImportError_("Someone kept changing this catalog while it was read. Please try again.")
         log.info("business %s: read %d items from %s", row.slug, len(result["items"]), job["source"])
+        store.track("menu_import_done", row.id, ok=True, items=len(result["items"]),
+                    seconds=round(time.time() - job["started"], 1), source=job["source"],
+                    rules=sum(1 for it in result["items"] if it.get("rules_from_menu")), questions=len(result["faq"]))
         job["result"] = {"added": len(result["items"]), "unreadable": result["unreadable"],
                          "left_out": result["left_out"], "questions": len(result["faq"]),
                          "rules": sum(1 for it in result["items"] if it.get("rules_from_menu"))}
         job["state"] = "done"
     except ImportError_ as e:
         job["state"], job["error"] = "error", str(e)
+        store.track("menu_import_failed", row.id, ok=False, error=str(e)[:160], source=job["source"],
+                    seconds=round(time.time() - job["started"], 1))
     except Exception:  # never leave the owner watching a spinner forever
         log.exception("business %s: menu import failed", row.slug)
         job["state"], job["error"] = "error", "Reading didn't work this time. Please try again."
+        store.track("menu_import_failed", row.id, ok=False, error="crashed", source=job["source"],
+                    seconds=round(time.time() - job["started"], 1))
     finally:
         job["finished"] = time.time()
         job.pop("task", None)
@@ -310,6 +321,7 @@ async def test_chat(request: Request, business_id: int) -> dict:
         agent = PhoneAgent(catalog, client=request.app.state.client, caller_phone="+15550000000")
         sid = secrets.token_urlsafe(12)
         session = sessions[sid] = {"business_id": row.id, "agent": agent, "last": now, "events": []}
+        store.track("test_chat_started", row.id)
         session["greeting"] = agent.greeting
         agent.on_tool = lambda name, args, result, is_error: session["events"].append(
             {"tool": name, "args": args, "error": is_error, "result": result[:300]})
@@ -350,10 +362,12 @@ def _buy(request: Request, row, area_code: str | None, user_id: int | None) -> d
         bought = numbers.buy(area_code, name, _voice_url(request))
     except NumberError as e:
         store.add_go_live_request(row.id, user_id, area_code, "failed", error=str(e))
+        store.track("go_live_failed", row.id, error=str(e)[:160])
         raise HTTPException(status_code=400, detail=str(e))
     store.update_business(row.id, phone_number=bought.phone_number, active=True)
     store.add_go_live_request(row.id, user_id, area_code, "done", phone_number=bought.phone_number)
     log.info("business %s is live on %s", row.slug, bought.phone_number)
+    store.track("went_live", row.id)
     return {"status": "live", "phone_number": bought.phone_number}
 
 
@@ -389,6 +403,7 @@ async def go_live(request: Request, business_id: int) -> dict:
     if not within:
         store.add_go_live_request(row.id, who.user["id"] if who.user else None, area_code, "pending")
         log.info("business %s: go-live request queued for approval", row.slug)
+        store.track("go_live_pending", row.id)
         return {"status": "pending"}
     return _buy(request, row, area_code, who.user["id"] if who.user else None)
 
@@ -545,6 +560,26 @@ async def pos_disconnect(request: Request, business_id: int) -> dict:
     _owner(who, row.id)
     request.app.state.store.delete_pos_connection(row.id)
     return {"connected": None}
+
+
+# ---- analytics ---------------------------------------------------------------------------
+
+
+@router.get("/api/manage/admin/analytics")
+async def operator_analytics(request: Request, days: int = 7, tz: int = 0) -> dict:
+    """Everything across all businesses (operator only). tz: the browser's offset in minutes."""
+    _operator(request)
+    return await asyncio.to_thread(analytics.report, request.app.state.store, max(1, min(days, 90)),
+                                   None, None, tz)
+
+
+@router.get("/api/manage/businesses/{business_id}/insights")
+async def business_insights(request: Request, business_id: int, days: int = 7, tz: int = 0) -> dict:
+    """One business's calls, orders and what callers struggled with (staff of that business)."""
+    who = _who(request)
+    row = _business(request, who, business_id)
+    return await asyncio.to_thread(analytics.report, request.app.state.store, max(1, min(days, 90)),
+                                   row.id, None, tz)
 
 
 # ---- operator: approve go-live requests ---------------------------------------------------

@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (Square businesses pay by Square payment link).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (analytics).
 
 ## 1. Goal
 
@@ -185,10 +185,11 @@ reach another:
 | Bad data | A catalog that can't be loaded takes only its own business offline. Catalogs are validated before they're saved. |
 | Capacity | `MAX_CALLS_PER_BUSINESS` (default 20) concurrent calls per business, so one busy business can't use up the server's connections or the shared Claude rate limit. |
 | Background work | POS jobs never sleep in a worker (retries wait on timers), and a business has at most 2 POS jobs running, so a slow or failing POS only delays its own orders. |
+| Analytics | Events and metrics are keyed by `business_id`; call reviews run one at a time per business with a daily cap per business, so one busy business can't delay or run up costs for another's reviews. |
 | Menu reading | Readings are async jobs (no worker thread held), one per business at a time, with a daily limit per business; a job id from another business answers 404. |
 | Errors | Lookups and agent start-up are wrapped per call; logs name the business. |
 
-Still shared, and the limits that come with it (section 17): one Anthropic API key and
+Still shared, and the limits that come with it (section 18): one Anthropic API key and
 rate limit, one Stripe account and one SMS sender number (phase 3), one SQLite file with
 one lock, and one machine.
 
@@ -709,7 +710,46 @@ A business sets itself up without us, like creating any online account.
 - The menu is read by one structured-output call, and always reviewed by the owner
   before it's published; nothing reaches callers without a publish.
 
-## 17. Open issues and next steps
+## 17. Analytics
+
+Three layers (`phone_agent/analytics.py`, `web_analytics.py`):
+
+1. **Measurements.** When a call ends its row gets an outcome (`order`, `no_order`,
+   `no_speech`) and metrics: duration, turns, interruptions, time to first word per reply,
+   time to first item, tool calls and errors, refusals by rule (days, notice, in person
+   only, sold out ...), items not found, order total or value left in the cart, who hung
+   up, a hashed caller id (repeat callers) and Claude tokens and cost. Everything else
+   worth counting is a row in `events` (`Store.track`, never raises): site visits (a
+   random first-party cookie), sign-ins, business created, menu reads (seconds, ok or
+   failed), test chats, publish and publish blocked, go-live, start over, POS connect,
+   orders, payment links paid or expired, failed texts and POS sends, calls turned away
+   (lines busy, business offline), agent errors.
+2. **AI review of each call.** After a call where the caller spoke, `CallReviewer` sends
+   the transcript to Claude Haiku 5.5 (structured output) for: outcome and why there was
+   no order, the caller's intent, friction moments, unanswered questions, requests we
+   couldn't meet (not on the menu, delivery ...), agent mistakes, mood at start and end,
+   and a one-line summary (`call_reviews`). One review at a time per business, three
+   overall, 300 per business per day; a failure is logged and counted, never retried.
+3. **Reports** (`analytics.report`): **Analytics** tab for the operator (all businesses:
+   owner setup funnel from site visit to first order, per-business table) and an
+   **Insights** tab for each business (its own calls only; unanswered questions have
+   "Add an answer"). Both show calls, conversion, sales, value left in carts, answer
+   speed, cost per order, calls per day and by hour, how calls ended, where callers
+   dropped off, why they didn't order, friction, unmet requests, rule refusals, top
+   unanswered questions and not-on-menu requests (grouped with counts), agent mistakes,
+   reliability (POS, links, texts, menu reads, errors) and speed and cost. The Calls tab
+   shows each call's outcome, reason and summary. Charts are single-series bars in the
+   brand color, values labeled, details on hover.
+
+**Outside tools, off unless configured:** PostHog (`POSTHOG_KEY`; loaded from
+`/web-analytics.js`, CSP extended only then): page views per tab, funnels and session
+replays, with all text and inputs masked on the business pages and no one identified by
+email. Sentry (`SENTRY_DSN`): every logged server error, without personal data.
+
+**Privacy:** events and reviews hold no phone numbers (hashed) and no transcripts; the
+review's quotes are short phrases. Analytics queries are scoped by `business_id`.
+
+## 18. Open issues and next steps
 
 - Scheduled pickups and item rules: opening hours are free text, so a pickup outside them
   is only prevented by the prompt; Clover gets a scheduled pickup only as words in the
@@ -781,7 +821,7 @@ A business sets itself up without us, like creating any online account.
 - Possible features: delivery, kitchen display, order status from the POS back to the
   dashboard ("ready").
 
-## 18. Change log
+## 19. Change log
 
 | Date | Change |
 |---|---|
@@ -815,3 +855,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Notes replaced by **About your business** and **Common questions** (`settings.about`, `settings.faq` of question/answer pairs with suggestions per template; the agent answers from them and says it doesn't know anything else; old `notes` no longer used). **Item ordering rules**, day based: `days`, `notice_days`, `in_person_only`, enforced in `order.py` via `schedule.py` against the pickup day in the business's time zone (`settings.timezone`, set from the owner's browser; `DEFAULT_TIMEZONE`). **Scheduled pickups**: `set_pickup_time` tool, pickup shown on orders, texts and the POS (Square SCHEDULED fulfillment). The agent gets today's date in a second, uncached system block. The menu reader drafts About, answers and item rules, flagged until the owner checks them. |
 | 2026-11-22 | Square businesses pay by **Square payment link**, required to confirm the order: Square creates the order with the link and shows it on the register once paid; we text the link, poll for payment (20 s, per-business gated timers, resumed after restart), confirm or cancel at the business's payment window, and text the customer. Money goes to the business's Square account. Chosen per call (`pos.payments_for`). Tested against the Square sandbox (link with pickup fulfillment and tax). |
 | 2026-11-22 | "Other notes" removed: `settings.notes` is no longer shown or given to the agent; About, Common questions and item rules replace it. Settings panels no longer print empty parts as "null". Business names come from the draft before the first publish (`Store.business_name`). POS order note says plain "Pay at pickup" when no payment link was sent. |
+| 2026-11-22 | **Analytics**: per-call outcome and metrics, an `events` log across setup, calls, orders, payments, POS and failures, an AI review of each call (Claude Haiku 5.5), an operator **Analytics** tab and a per-business **Insights** tab, call summaries in Calls. Optional PostHog (masked replays) and Sentry. Database schema version 3. |

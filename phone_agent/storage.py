@@ -12,6 +12,7 @@ WebSocket.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -186,7 +187,7 @@ class Store:
     # edit a step that has shipped; add a new one.
 
     def _migrate(self) -> None:
-        steps = [self._v2_self_serve]
+        steps = [self._v2_self_serve, self._v3_analytics]
         with self._lock:
             version = self._conn.execute("PRAGMA user_version").fetchone()[0] or 1
             for number, step in enumerate(steps, start=2):
@@ -194,6 +195,39 @@ class Store:
                     step(self._conn)
                     self._conn.execute(f"PRAGMA user_version = {number}")
                     self._conn.commit()
+
+    @staticmethod
+    def _v3_analytics(c: sqlite3.Connection) -> None:
+        """Analytics: an event log, measurements per call, and the AI review of each call."""
+        # One row per thing worth counting (signed in, menu read, order placed, POS send
+        # failed ...). props is small JSON, never transcripts; phone numbers are hashed.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at REAL NOT NULL,
+                kind TEXT NOT NULL,
+                business_id INTEGER,
+                user_id INTEGER,
+                call_id TEXT,
+                props TEXT NOT NULL DEFAULT '{}'
+            )"""
+        )
+        c.execute("CREATE INDEX IF NOT EXISTS events_kind_at ON events(kind, at)")
+        c.execute("CREATE INDEX IF NOT EXISTS events_business_at ON events(business_id, at)")
+        cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
+        for name, kind in (("outcome", "TEXT"), ("metrics", "TEXT")):
+            if name not in cols:
+                c.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")
+        c.execute("CREATE INDEX IF NOT EXISTS calls_business_started ON calls(business_id, started_at)")
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS call_reviews (
+                call_id TEXT PRIMARY KEY,
+                business_id INTEGER,
+                at REAL NOT NULL,
+                model TEXT,
+                review TEXT NOT NULL
+            )"""
+        )
 
     @staticmethod
     def _v2_self_serve(c: sqlite3.Connection) -> None:
@@ -745,11 +779,52 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.call_id, c.started_at, c.ended_at, c.caller_phone, c.order_number, c.business_id,"
-                " (SELECT COUNT(*) FROM call_events e WHERE e.call_id = c.call_id AND e.role = 'caller')"
-                f" FROM calls c {where} ORDER BY c.started_at DESC LIMIT ?", (*args, limit)
+                " (SELECT COUNT(*) FROM call_events e WHERE e.call_id = c.call_id AND e.role = 'caller'),"
+                " c.outcome, r.review FROM calls c LEFT JOIN call_reviews r ON r.call_id = c.call_id"
+                f" {where} ORDER BY c.started_at DESC LIMIT ?", (*args, limit)
             ).fetchall()
         return [{"call_id": r[0], "started_at": r[1], "ended_at": r[2], "caller_phone": r[3],
-                 "order_number": r[4], "business_id": r[5], "caller_turns": r[6]} for r in rows]
+                 "order_number": r[4], "business_id": r[5], "caller_turns": r[6], "outcome": r[7],
+                 "review": json.loads(r[8]) if r[8] else None} for r in rows]
+
+    # ---- analytics --------------------------------------------------------------------
+
+    def track(self, kind: str, business_id: int | None = None, *, user_id: int | None = None,
+              call_id: str | None = None, **props) -> None:
+        """Record one analytics event. Never raises: analytics must not break the app."""
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO events (at, kind, business_id, user_id, call_id, props) VALUES (?, ?, ?, ?, ?, ?)",
+                    (time.time(), kind, business_id, user_id, call_id,
+                     json.dumps({k: v for k, v in props.items() if v is not None}, default=str)[:4000]))
+                self._conn.commit()
+        except Exception:
+            logging.getLogger("phone_agent.storage").exception("couldn't record event %s", kind)
+
+    def set_call_metrics(self, call_id: str, outcome: str, metrics: dict) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE calls SET outcome = ?, metrics = ? WHERE call_id = ?",
+                               (outcome, json.dumps(metrics), call_id))
+            self._conn.commit()
+
+    def save_call_review(self, call_id: str, business_id: int | None, review: dict, model: str) -> None:
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO call_reviews (call_id, business_id, at, model, review)"
+                               " VALUES (?, ?, ?, ?, ?)", (call_id, business_id, time.time(), model, json.dumps(review)))
+            self._conn.commit()
+
+    def call_transcript_text(self, call_id: str) -> list[tuple[str, str]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT role, text FROM call_events WHERE call_id = ? ORDER BY id",
+                                      (call_id,)).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def read(self, sql: str, args: tuple = ()) -> list[tuple]:
+        """A read-only query, for the analytics reports (analytics.py)."""
+        assert sql.lstrip().upper().startswith(("SELECT", "WITH")), "read() is for SELECT queries"
+        with self._lock:
+            return self._conn.execute(sql, args).fetchall()
 
     # ---- go-live requests and usage limits ------------------------------------------------
 

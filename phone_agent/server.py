@@ -23,6 +23,7 @@ import html
 import json
 import logging
 import os
+import secrets
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -33,7 +34,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
-from . import brand
+from . import analytics, brand, web_analytics
 from .agent import PhoneAgent
 from .google_auth import router as google_router
 from .manage import router as manage_router
@@ -121,6 +122,8 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "pos"):
         app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env(), sms=sms_from_env())
                          if os.environ.get("POS_SECRET_KEY", "").strip() else None)
+    # The AI review of each finished call (analytics.py).
+    app.state.reviewer = analytics.CallReviewer(app.state.store, app.state.client)
     # Buying phone numbers when a business goes live; None without Twilio credentials.
     if not hasattr(app.state, "numbers"):
         app.state.numbers = TwilioNumbers.from_env()
@@ -131,6 +134,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+web_analytics.init_sentry()  # error alerts, when SENTRY_DSN is set
 app = FastAPI(title=brand.name(), lifespan=lifespan)
 app.include_router(manage_router)  # /manage: business staff edit catalogs and settings
 app.include_router(onboarding_router)  # self-serve: create a business, read a menu, go live, team ...
@@ -153,6 +157,12 @@ for _name, _type in ICON_TYPES.items():
     _icon_route(_name, _type)
 
 
+@app.get("/web-analytics.js", include_in_schema=False)
+async def web_analytics_js(page: str = "landing") -> Response:
+    return Response(web_analytics.loader_js("manage" if page == "manage" else "landing"),
+                    media_type="application/javascript", headers={"Cache-Control": "public, max-age=300"})
+
+
 @app.get("/site.webmanifest", include_in_schema=False)
 async def web_manifest() -> Response:
     """Lets phones add the manager to the home screen with the app icon and the brand name."""
@@ -166,10 +176,17 @@ async def web_manifest() -> Response:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def landing() -> HTMLResponse:
-    from .manage import PAGE_HEADERS
+async def landing(request: Request) -> HTMLResponse:
+    from .manage import page_headers
 
-    return HTMLResponse(brand.page("landing.html", MAX_CALLS=MAX_CALLS_PER_BUSINESS), headers=PAGE_HEADERS)
+    resp = HTMLResponse(brand.page("landing.html", MAX_CALLS=MAX_CALLS_PER_BUSINESS), headers=page_headers())
+    # A random first-party id so the setup funnel counts visitors, not page loads. No personal data.
+    visitor = request.cookies.get("rc_v") or secrets.token_urlsafe(12)
+    if "rc_v" not in request.cookies:
+        resp.set_cookie("rc_v", visitor, max_age=365 * 86400, httponly=True, samesite="lax", path="/",
+                        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https")
+    request.app.state.store.track("landing_view", visitor=visitor)
+    return resp
 
 
 def _public_base(request: Request) -> str:
@@ -383,10 +400,12 @@ async def pos_callback(request: Request, provider: str, code: str = "", state: s
                                        tokens, merchant_id)
     except PosError as e:
         log.warning("%s connect failed: %s", provider, e)
+        request.app.state.store.track("pos_connect_failed", None, provider=provider, error=str(e)[:160])
         return HTMLResponse(_page("Not connected", f"Something went wrong: {e}"), status_code=400)
     name = request.app.state.store.business_name(business_id) or row.slug
     log.info("business %s connected to %s (merchant %s, location %s)", row.slug, provider,
              merchant_id, conn.location_id)
+    request.app.state.store.track("pos_connected", business_id, provider=provider)
     extra = ("" if conn.location_id or provider != "square" else
              " One more step on our side: this account has several locations, and we'll pick yours.")
     return HTMLResponse(_page(f"{name} is connected",
@@ -405,6 +424,8 @@ class RelayCall:
         self._unrecorded: list[str] = []  # reply text sent but not yet in the transcript
         self.business_id: int | None = None  # set once the call is accepted (counted as active)
         self.slug: str | None = None
+        self.interruptions = 0
+        self.caller_phone: str | None = None
 
     def flush_spoken(self, suffix: str = "") -> None:
         text = "".join(self._unrecorded).strip()
@@ -424,8 +445,12 @@ class RelayCall:
     async def send(self, payload: dict) -> None:
         await self.ws.send_text(json.dumps(payload))
 
-    async def decline(self, text: str) -> None:
+    async def decline(self, text: str, reason: str = "not_taking_calls", business_id: int | None = None) -> None:
         """Say a short message and end the call (no agent is started)."""
+        try:
+            self.ws.app.state.store.track("call_declined", business_id, reason=reason)
+        except Exception:
+            log.exception("couldn't record declined call")
         await self.send({"type": "text", "last": True, "token": text})
         await asyncio.sleep(NOT_SET_UP_SECONDS)
         await self.send({"type": "end"})
@@ -456,6 +481,22 @@ class RelayCall:
                         self.store.end_call(self.call_id, s.order_number)
                     except Exception:
                         log.exception("couldn't record call end")
+                    self._record_analytics()
+
+    def _record_analytics(self) -> None:
+        """The call's outcome and measurements, an event, and (in the background) its AI review."""
+        try:
+            outcome, metrics = analytics.call_metrics(
+                self.agent, self.interruptions, "agent" if self.agent.end_requested else "caller",
+                self.caller_phone)
+            self.store.set_call_metrics(self.call_id, outcome, metrics)
+            self.store.track("call_ended", self.business_id, call_id=self.call_id, outcome=outcome,
+                             seconds=metrics["duration_s"], turns=metrics["turns"], value=metrics["order_total"])
+            reviewer = getattr(self.ws.app.state, "reviewer", None)
+            if reviewer and outcome != "no_speech":
+                reviewer.schedule(self.call_id, self.business_id, self.agent.catalog.settings.get("name", ""))
+        except Exception:
+            log.exception("call %s: couldn't record analytics", self.call_id)
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -470,7 +511,7 @@ class RelayCall:
                 return await self.decline(NOT_TAKING_CALLS)
             if _active_calls(self.ws.app, catalog.business_id) >= MAX_CALLS_PER_BUSINESS:
                 log.warning("business %s: too many calls; declining call %s", catalog.slug, msg.get("callSid"))
-                return await self.decline(LINES_BUSY)
+                return await self.decline(LINES_BUSY, "lines_busy", catalog.business_id)
             try:
                 # A Square-connected business takes Square payment links (and requires payment).
                 payments, catalog = payments_for(getattr(app_state, "pos", None), app_state.store, catalog,
@@ -487,11 +528,12 @@ class RelayCall:
             except Exception:
                 log.exception("business %s: couldn't start the agent for call %s", catalog.slug,
                               msg.get("callSid"))
-                return await self.decline(NOT_TAKING_CALLS)
+                return await self.decline(NOT_TAKING_CALLS, "agent_failed", catalog.business_id)
             self.business_id, self.slug = catalog.business_id, catalog.slug
             app_state.active_calls[self.business_id] = app_state.active_calls.get(self.business_id, 0) + 1
             self.agent.on_tool = self.record_tool
             self.call_id, self.store = msg.get("callSid"), app_state.store
+            self.caller_phone = msg.get("from")
             if self.call_id:
                 try:
                     session = self.agent.session
@@ -511,6 +553,7 @@ class RelayCall:
             self.record("caller", text)
             self.reply_task = asyncio.create_task(self.reply(text))
         elif kind == "interrupt":
+            self.interruptions += 1
             heard = msg.get("utteranceUntilInterrupt")
             self.record("event", "Caller interrupted" + (f'; they heard: "{heard}"' if heard else ""))
             await self.cancel_reply()
@@ -587,6 +630,8 @@ class RelayCall:
             raise
         except Exception:
             log.exception("call %s for %s: agent failed", self.call_id, self.slug)
+            if self.store:
+                self.store.track("agent_error", self.business_id, call_id=self.call_id)
             self.flush_spoken("[error] Sorry, something went wrong.")
             await self.send({"type": "text", "token": "Sorry, something went wrong.", "last": True})
             return

@@ -124,6 +124,9 @@ def _place_order(session: CallSession) -> dict:
             payment_status="unpaid" if payments else "not_requested",
         )
         session.order_number, session.order_id = saved.number, saved.id
+        session.store.track("order_placed", catalog.business_id, call_id=session.call_id, value=order.total,
+                            items=sum(l.quantity for l in order.lines), scheduled=bool(order.pickup_at),
+                            payment="link" if payments else "at_pickup")
         if session.pos is not None:
             try:
                 session.pos.order_placed(saved.id, catalog.business_id)  # in the background
@@ -141,6 +144,7 @@ def _place_order(session: CallSession) -> dict:
         link = payments.request_payment(order, session.order_number, order_id=session.order_id)
     except Exception:
         log.exception("payment link for order %s failed", session.order_number)
+        session.store.track("sms_failed", catalog.business_id, call_id=session.call_id, what="payment_link")
         result["payment"] = {
             "link_sent": False,
             "tell_caller": "The text with the payment link couldn't be sent. They can pay at pickup"

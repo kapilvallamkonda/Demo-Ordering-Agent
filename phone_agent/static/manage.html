@@ -9,6 +9,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
+<script src="/web-analytics.js?page=manage" async></script>
 <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <style>
@@ -196,6 +197,41 @@
   .daypick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .daypick .chip { min-width: 48px; justify-content: center; }
   .field.rules .switch { margin: 6px 0 10px; }
+  /* analytics */
+  :root { --chart: #b4441f; }
+  @media (prefers-color-scheme: dark) { :root { --chart: #d46a43; } }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .kpi-label { font-size: 13px; color: var(--muted); }
+  .kpi-value { font-size: 26px; font-weight: 750; letter-spacing: -0.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .agrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 14px; margin-top: 14px; }
+  .acard { margin-top: 14px; } .agrid .acard { margin-top: 0; }
+  .acard h2 { margin: 0 0 4px; font-size: 16px; }
+  .hbars { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .hbar { display: grid; grid-template-columns: minmax(110px, 38%) 1fr auto; gap: 10px; align-items: center; font-size: 14px; }
+  .hbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar-track { height: 10px; border-radius: 4px; background: transparent; }
+  .hbar-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--chart); }
+  .hbar-value { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; min-width: 3ch; text-align: right; }
+  .vchart { margin-top: 8px; }
+  .vbars { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid var(--line); }
+  .vbar { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 3px; }
+  .vbar:hover .vbar-fill { opacity: .75; }
+  .vbar-fill { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--chart); }
+  .vaxis { display: flex; gap: 2px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .vaxis span { flex: 1; text-align: center; white-space: nowrap; overflow: visible; }
+  .quotes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; }
+  .quotes li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .quotes .q { flex: 1 1 60%; }
+  .quotes .q .badge { margin-left: 8px; }
+  .atable { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+  .atable th, .atable td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); font-weight: normal; }
+  .atable td { text-align: right; font-variant-numeric: tabular-nums; }
+  .atable.wide td:first-child, .atable.wide th:first-child { text-align: left; }
+  .atable.wide th { color: var(--muted); font-size: 13px; text-align: right; }
+  .atable tr.bad td { color: var(--bad); font-weight: 650; }
+  .call-summary { display: block; margin-top: 4px; font-weight: normal; }
   .chip-incomplete { display: inline-block; margin-left: 10px; vertical-align: 2px; padding: 2px 9px; border-radius: 999px;
                      background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 650; }
   .missing-note { margin-bottom: 14px; }
@@ -582,8 +618,9 @@
   }
 
   let refreshTimer = null;
-  const TABS = () => [["home", "Home"], ["orders", "Orders"], ["calls", "Calls"], ["catalog", cap(W().catalog)],
-    ["settings", "Settings"], ["team", "Team"], ["history", "History"]].concat(S.me.operator ? [["operator", "Operator"]] : []);
+  const TABS = () => [["home", "Home"], ["orders", "Orders"], ["calls", "Calls"], ["insights", "Insights"], ["catalog", cap(W().catalog)],
+    ["settings", "Settings"], ["team", "Team"], ["history", "History"]]
+    .concat(S.me.operator ? [["analytics", "Analytics"], ["operator", "Operator"]] : []);
 
   function render() {
     clearInterval(refreshTimer);
@@ -603,13 +640,14 @@
       el("main", {},
         el("nav", { class: "tabs", role: "tablist" },
           TABS().map(([k, label]) => el("button", { role: "tab", "aria-selected": S.tab === k ? "true" : "false",
-            onclick: () => { S.tab = k; render(); } }, label))),
+            onclick: () => { S.tab = k; render(); trackPage(k); } }, label))),
         el("div", { class: "checks", id: "checks" }),
         el("div", { id: "view" })));
     renderHeader(); renderChecks();
     const view = document.getElementById("view");
     const views = { home: homeView, orders: ordersView, calls: callsView, catalog: catalogView, settings: settingsView,
-                    team: teamView, history: historyView, operator: operatorView };
+                    team: teamView, history: historyView, operator: operatorView,
+                    insights: () => analyticsView(false), analytics: () => analyticsView(true) };
     view.append(views[S.tab]());
     if (S.drawer) renderDrawer();
   }
@@ -1273,7 +1311,11 @@
             });
           } },
           el("summary", {}, el("strong", {}, fmtTime(c.started_at)), " ", el("span", { class: "sub" }, fmtPhone(c.caller_phone) || "Unknown caller"),
-            " ", c.order_number ? badge(["Order #" + c.order_number, "ok"]) : badge([c.ended_at ? "No order" : "Live", c.ended_at ? "" : "warn"])),
+            " ", c.order_number ? badge(["Order #" + c.order_number, "ok"]) : c.outcome === "order" ? badge(["Ordered", "ok"])
+              : badge([c.ended_at ? (c.outcome === "no_speech" ? "Hung up" : "No order") : "Live", c.ended_at ? "" : "warn"]),
+            c.review && c.review.no_order_reason && c.review.no_order_reason !== "none" ? [" ", badge([REASONS[c.review.no_order_reason] || c.review.no_order_reason, "warn"])] : null,
+            c.review ? el("div", { class: "sub call-summary" }, c.review.summary,
+              (c.review.friction || []).length ? el("span", { class: "muted" }, " · " + c.review.friction.map(f => FRICTION[f.kind] || f.kind).join(", ")) : null) : null),
           body);
       });
     });
@@ -1323,6 +1365,156 @@
         try { location.href = (await api("POST", `/businesses/${S.rid}/pos`, { provider: p })).url; } catch (e) { toast(e.message); }
       } }, "Connect " + cap(p)))) : el("p", { class: "sub" }, "Ask the owner to connect it.")];
     });
+  }
+
+
+  // PostHog (when configured): each tab counts as a page view, without names or ids in the URL.
+  function trackPage(tab) {
+    try { if (window.posthog && window.posthog.capture) window.posthog.capture("$pageview", { $current_url: location.origin + "/manage/" + tab }); } catch {}
+  }
+
+  // ---- analytics (operator: all businesses) and insights (one business) ----
+  const REASONS = { just_asking: "Just asking", price: "Price", item_unavailable: "Item unavailable", not_on_menu: "Not on the menu",
+    wanted_delivery: "Wanted delivery", wanted_reservation: "Wanted a reservation", wanted_a_person: "Wanted a person",
+    agent_confusion: "Agent confused them", too_slow: "Too slow", payment: "Payment", pickup_time: "Pickup time",
+    hung_up_unknown: "Hung up (unclear why)", other: "Other" };
+  const FRICTION = { misheard: "Misheard", repeated_themselves: "Had to repeat", confusing_answer: "Confusing answer",
+    too_long: "Answer too long", slow_reply: "Slow reply", refusal: "Told no", price_surprise: "Price surprise",
+    had_to_wait: "Had to wait", other: "Other" };
+  const UNMET = { not_on_menu: "Not on the menu", delivery: "Delivery", reservation: "Reservation",
+    speak_to_person: "Speak to a person", catering: "Catering", other: "Other" };
+  const REFUSALS = { days: "Wrong day for the item", notice: "Not enough notice", in_person_only: "In person only",
+    unavailable: "Sold out", missing_choice: "Missing a choice", pickup_time: "Pickup time", not_found: "Item not found" };
+  const DECLINED = { lines_busy: "All lines busy", not_taking_calls: "Business offline", agent_failed: "Agent failed to start" };
+  const num = v => v == null ? "–" : Number(v).toLocaleString();
+  const pct = v => v == null ? "–" : v + "%";
+  const secs = v => v == null ? "–" : v >= 60 ? `${Math.floor(v / 60)}m ${Math.round(v % 60)}s` : `${Math.round(v)}s`;
+  const ms = v => v == null ? "–" : (v / 1000).toFixed(1) + "s";
+  const usd = v => v == null ? "–" : "$" + (v < 1 ? v.toFixed(v < 0.1 ? 3 : 2) : v.toFixed(2));
+
+  function kpi(label, value, sub) {
+    return el("div", { class: "kpi" }, el("div", { class: "kpi-label" }, label), el("div", { class: "kpi-value" }, value),
+      sub ? el("div", { class: "kpi-sub" }, sub) : null);
+  }
+  // Horizontal bars: one series, labeled with its value (and share), hover for detail.
+  function hbars(items, { labels = {}, total = null, empty = "Nothing yet." } = {}) {
+    items = items.filter(([, n]) => n > 0);
+    if (!items.length) return el("p", { class: "muted" }, empty);
+    const max = Math.max(...items.map(([, n]) => n));
+    return el("div", { class: "hbars", role: "table" }, items.map(([k, n]) => {
+      const label = labels[k] || k, share = total ? ` (${Math.round(100 * n / total)}%)` : "";
+      return el("div", { class: "hbar", role: "row", title: `${label}: ${n}${share}` },
+        el("span", { class: "hbar-label", role: "cell" }, label),
+        el("span", { class: "hbar-track", "aria-hidden": "true" }, el("span", { class: "hbar-fill", style: `width:${Math.max(2, 100 * n / max)}%` })),
+        el("span", { class: "hbar-value", role: "cell" }, num(n) + share));
+    }));
+  }
+  // Vertical bars over time (calls per day / hour), value on hover, a few labels on the axis.
+  function vbars(points, { label, title, every = 1 }) {
+    const max = Math.max(1, ...points.map(p => p.v));
+    return el("div", { class: "vchart" },
+      el("div", { class: "vbars", role: "img", "aria-label": title },
+        points.map(p => el("div", { class: "vbar", title: p.tip },
+          el("span", { class: "vbar-fill", style: `height:${p.v ? Math.max(3, 100 * p.v / max) : 0}%` })))),
+      el("div", { class: "vaxis" }, points.map((p, i) => el("span", {}, i % every === 0 ? label(p) : ""))));
+  }
+  function card(title, sub, ...kids) {
+    return el("section", { class: "panel acard" }, el("h2", {}, title), sub ? el("p", { class: "sub" }, sub) : null, ...kids);
+  }
+  function quoteList(items, { add = false } = {}) {
+    if (!items.length) return el("p", { class: "muted" }, "Nothing yet.");
+    return el("ul", { class: "quotes" }, items.map(q => el("li", {}, el("span", { class: "q" }, "“" + q.text + "”",
+        q.count > 1 ? el("span", { class: "badge" }, `${q.count} calls`) : null),
+      el("span", { class: "sub" }, (S.me.operator && q.businesses ? q.businesses.join(", ") + " · " : "") + "last " + fmtTime(q.at)),
+      add ? el("button", { class: "linkish", type: "button", onclick: () => addFaqFromInsight(q.text) }, "Add an answer") : null)));
+  }
+  function addFaqFromInsight(question) {
+    const r = S.catalog.settings;
+    r.faq = Array.isArray(r.faq) ? r.faq : [];
+    if (!r.faq.some(x => (x.q || "").trim().toLowerCase() === question.trim().toLowerCase())) r.faq.push({ q: question, a: "" });
+    S.tab = "settings"; changed(true);
+    setTimeout(() => { const a = [...document.querySelectorAll(".faq .faq-a")].pop(); if (a) { a.scrollIntoView({ block: "center" }); a.focus(); } });
+  }
+
+  function analyticsView(all) {
+    S.adays = S.adays || 7;
+    const box = el("div", { class: "analytics" }, loading());
+    const tz = new Date().getTimezoneOffset();
+    const load = () => later(box, async () => {
+      const r = await api("GET", all ? `/admin/analytics?days=${S.adays}&tz=${tz}` : `/businesses/${S.rid}/insights?days=${S.adays}&tz=${tz}`);
+      return renderAnalytics(r, all);
+    });
+    const range = el("div", { class: "row wrap toolbar" }, [[1, "Today"], [7, "7 days"], [30, "30 days"], [90, "90 days"]].map(([d, l]) =>
+      el("button", { class: "chip", "aria-pressed": S.adays === d ? "true" : "false", onclick: () => { S.adays = d; render(); } }, l)),
+      el("span", { class: "sub", style: "margin-left:auto" }, all ? "All businesses · updates every minute" : "Updates every minute"));
+    load();
+    refreshTimer = setInterval(load, 60000);
+    return el("div", {}, range, box);
+  }
+
+  function renderAnalytics(r, all) {
+    const c = r.calls, m = r.money, sp = r.speed, pr = r.problems, rv = r.reviews;
+    const out = [];
+    out.push(el("div", { class: "kpis" },
+      kpi("Calls", num(c.total), c.declined_total ? `${c.declined_total} turned away` : null),
+      kpi("Conversion", pct(c.conversion_pct), `${num(c.orders)} orders from ${num(c.talked)} conversations`),
+      kpi("Sales", usd(m.revenue), m.avg_order != null ? `${usd(m.avg_order)} average order` : null),
+      kpi("Left in carts", usd(m.left_in_carts), `${num(c.drop_off.with_items_in_cart)} calls left with items`),
+      kpi("Answer speed", ms(sp.first_word_p50_ms), sp.first_word_p95_ms != null ? `slowest 5%: ${ms(sp.first_word_p95_ms)}` : "time to first word"),
+      kpi("Cost per order", usd(r.cost.per_order), r.cost.per_call != null ? `${usd(r.cost.per_call)} per call` : null)));
+    if (all && r.setup_funnel) {
+      const steps = r.setup_funnel.steps, first = steps[0].count || 1;
+      out.push(card("Owner setup funnel", `Where businesses drop off between visiting the site and their first order. ${r.setup_funnel.new_accounts} new accounts.`,
+        el("div", { class: "hbars" }, steps.map((s, i) => {
+          const prev = i ? steps[i - 1].count : null;
+          const drop = prev ? Math.round(100 * (prev - s.count) / prev) : null;
+          return el("div", { class: "hbar", title: `${s.step}: ${s.count}` + (drop ? `; ${drop}% dropped from the step before` : "") },
+            el("span", { class: "hbar-label" }, s.step),
+            el("span", { class: "hbar-track", "aria-hidden": "true" }, el("span", { class: "hbar-fill", style: `width:${Math.max(s.count ? 2 : 0, 100 * s.count / first)}%` })),
+            el("span", { class: "hbar-value" }, num(s.count) + (drop ? ` (−${drop}%)` : "")));
+        }))));
+    }
+    const days = c.by_day;
+    out.push(el("div", { class: "agrid" },
+      card("Calls per day", null, days.length ? vbars(days.map(d => ({ v: d.calls, day: d.day, tip: `${d.day}: ${d.calls} calls, ${d.orders} orders` })),
+        { label: p => p.day.slice(5), title: "Calls per day", every: Math.ceil(days.length / 8) }) : el("p", { class: "muted" }, "No calls yet.")),
+      card("Calls by hour", "When the phone rings (your local time).", vbars(c.by_hour.map((v, h) => ({ v, h, tip: `${h}:00 – ${h}:59: ${v} calls` })),
+        { label: p => p.h % 6 === 0 ? (p.h === 0 ? "12a" : p.h === 12 ? "12p" : p.h < 12 ? p.h + "a" : (p.h - 12) + "p") : "", title: "Calls by hour" }))));
+    out.push(el("div", { class: "agrid" },
+      card("How calls ended", null, hbars([["Placed an order", c.orders], ["Talked, no order", c.no_order], ["Hung up before talking", c.no_speech],
+        ...Object.entries(c.declined).map(([k, n]) => [DECLINED[k] || k, n])], { total: c.total, empty: "No calls yet." })),
+      card("Where callers dropped off", "Conversations that ended without an order.", hbars([
+        ["Before adding anything", c.drop_off.before_adding_anything], ["With items in the cart", c.drop_off.with_items_in_cart]],
+        { total: c.no_order, empty: "No dropped calls." }),
+        el("p", { class: "sub" }, `Average call ${secs(c.avg_duration_s)} · ${c.avg_turns ?? "–"} turns · first item after ${secs(c.avg_first_item_s)} · ${c.interruptions_per_call ?? "–"} interruptions per call · ${num(c.repeat_callers)} repeat callers`))));
+    out.push(el("div", { class: "agrid" },
+      card("Why callers didn't order", `From the AI review of ${num(rv.reviewed)} calls.`, hbars(rv.no_order_reasons, { labels: REASONS, empty: "No reviewed calls without an order." })),
+      card("Friction", "Moments callers struggled.", hbars(rv.friction, { labels: FRICTION, empty: "No friction found." }))));
+    out.push(el("div", { class: "agrid" },
+      card("What callers wanted that we couldn't do", null, hbars(rv.unmet_requests, { labels: UNMET, empty: "Nothing yet." })),
+      card("Told no by a rule", `Plus ${num(pr.items_not_found)} items the agent couldn't find on the ${all ? "menu" : W().catalog}.`,
+        hbars(Object.entries(pr.refusals).sort((a, b) => b[1] - a[1]), { labels: REFUSALS, empty: "No refusals." }))));
+    out.push(el("div", { class: "agrid" },
+      card("Questions the agent couldn't answer", all ? "Across businesses, newest first." : "Add answers so the agent can help next time.", quoteList(rv.unanswered_questions, { add: !all })),
+      card(`Asked for, not on the ${all ? "menu" : W().catalog}`, null, quoteList(rv.not_on_menu))));
+    out.push(card("Agent mistakes", "Concrete errors the review found. Each one is worth a look.", quoteList(rv.agent_mistakes)));
+    out.push(el("div", { class: "agrid" },
+      card("Reliability", null, el("table", { class: "atable" }, el("tbody", {},
+        [["Orders sent to the POS", pr.pos_sent], ["POS sends that failed", pr.pos_failed], ["Payment links sent", pr.links_sent],
+         ["… paid", pr.links_paid], ["… expired unpaid", pr.links_expired], ["Texts that failed", pr.texts_failed],
+         ["Menu readings", pr.menu_reads], ["… failed", pr.menu_reads_failed], ["Agent errors (Claude API)", pr.agent_api_errors],
+         ["Tool errors on calls", pr.tool_errors]].map(([k, v]) => el("tr", { class: v && /failed|expired|errors/.test(k) ? "bad" : "" }, el("th", {}, k), el("td", {}, num(v))))))),
+      card("Speed and cost", null, el("table", { class: "atable" }, el("tbody", {},
+        [["Time to first word, typical", ms(sp.first_word_p50_ms)], ["Time to first word, slowest 5%", ms(sp.first_word_p95_ms)],
+         ["Replies measured", num(sp.turns_measured)], ["Menu reading, average", secs(sp.menu_read_avg_s)],
+         ["Claude cost, calls", usd(r.cost.agent)], ["Claude cost, call reviews", usd(r.cost.reviews)],
+         ["Cost per call", usd(r.cost.per_call)], ["Cost per order", usd(r.cost.per_order)]].map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v))))))));
+    if (all && r.businesses) out.push(card("By business", null, r.businesses.length ? el("table", { class: "atable wide" },
+      el("thead", {}, el("tr", {}, ["Business", "Calls", "Conversations", "Orders", "Conversion", "Sales", "Unanswered"].map(h => el("th", {}, h)))),
+      el("tbody", {}, r.businesses.map(b => el("tr", {}, el("td", {}, b.name), el("td", {}, num(b.calls)), el("td", {}, num(b.talked)),
+        el("td", {}, num(b.orders)), el("td", {}, pct(b.conversion_pct)), el("td", {}, usd(b.revenue)), el("td", {}, num(b.unanswered))))))
+      : el("p", { class: "muted" }, "No activity yet.")));
+    return out;
   }
 
   // ---- operator ----

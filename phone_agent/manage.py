@@ -37,6 +37,22 @@ COOKIE = "oa_session"
 MAX_BODY = 2_000_000
 limiter = LoginLimiter()
 
+def page_headers() -> dict:
+    """PAGE_HEADERS, with PostHog's hosts allowed when it's configured (web_analytics.py)."""
+    from .web_analytics import csp_extra
+
+    extra = csp_extra()
+    if not extra:
+        return PAGE_HEADERS
+    csp = PAGE_HEADERS["Content-Security-Policy"]
+    for directive, sources in extra.items():
+        if f"{directive} " in csp:
+            csp = csp.replace(f"{directive} ", f"{directive} {' '.join(sources)} ", 1)
+        else:
+            csp += f"; {directive} 'self' {' '.join(sources)}"
+    return {**PAGE_HEADERS, "Content-Security-Policy": csp}
+
+
 PAGE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Frame-Options": "DENY",
@@ -49,7 +65,7 @@ PAGE_HEADERS = {
 
 @router.get("/manage", response_class=HTMLResponse)
 async def manage_page() -> HTMLResponse:
-    return HTMLResponse(brand.page("manage.html"), headers=PAGE_HEADERS)
+    return HTMLResponse(brand.page("manage.html"), headers=page_headers())
 
 
 # ---- who is asking -----------------------------------------------------------------------
@@ -156,6 +172,7 @@ def _client_ip(request: Request) -> str:
 
 def _signed_in(request: Request, user: dict) -> JSONResponse:
     token = _accounts(request).start_session(user["id"])
+    request.app.state.store.track("signin", user_id=user["id"], user=user["id"], method="password")
     resp = JSONResponse({"ok": True, "email": user["email"]})
     resp.set_cookie(COOKIE, token, max_age=14 * 86400, httponly=True, secure=_secure(request),
                     samesite="lax", path="/")
@@ -320,8 +337,12 @@ async def publish(request: Request, business_id: int) -> JSONResponse:
             "detail": "a newer catalog was published since this draft was started", "code": "live_changed"})
     result = check_catalog(draft["catalog"])
     if result["errors"]:
+        store.track("publish_blocked", row.id, errors=len(result["errors"]), first=result["errors"][0][:120])
         return JSONResponse(status_code=422, content={"detail": "fix the errors first", "check": result})
+    first_publish = row.catalog_id is None
     catalog_id = store.publish_draft(row.id, draft["catalog"], who.label)
+    store.track("published", row.id, first=first_publish, items=len(draft["catalog"].get("items", [])),
+                blockers=len(result["blockers"]))
     log.info("%s published catalog version %s for %s", who.label, catalog_id, row.slug)
     return JSONResponse({"catalog_id": catalog_id, **_editor_state(request, store.business(row.id))})
 
