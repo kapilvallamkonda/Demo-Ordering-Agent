@@ -547,3 +547,13 @@ def test_clover_connect_without_order_permission_says_what_to_fix():
     conn = pos_mod.Connection(1, "clover", "sandbox", "MERCH1", None, {"access_token": "tok"}, {})
     with pytest.raises(PosError, match="Orders \\(read and write\\)"):
         prov.setup(conn)
+
+
+def test_pos_note_says_plain_pay_at_pickup_without_a_link():
+    store, directory, rid = setup_business()
+    catalog = directory.get(rid)
+    base = {"id": 1, "number": 5, "customer_name": "Ana", "items": [{"item_id": "tiramisu", "name": "Tiramisu",
+            "quantity": 1, "unit_price": 8.0}], "subtotal": 8.0, "tax": 0.64, "total": 8.64, "status": "confirmed"}
+    note = pos_mod.build_pos_order({**base, "payment_status": "not_requested"}, catalog, "clover").note
+    assert note.endswith("Pay at pickup.") and "link" not in note
+    assert "payment link also texted" in pos_mod.build_pos_order({**base, "payment_status": "unpaid"}, catalog, "clover").note

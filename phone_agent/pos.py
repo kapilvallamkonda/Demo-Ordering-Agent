@@ -125,14 +125,16 @@ class PosOrder:
     paid_online: bool
     pay_first: bool
     business_name: str
+    link_sent: bool = True  # a payment link was texted (False: plain pay at pickup)
     pickup_at: str | None = None  # ISO time with offset, for a scheduled pickup
     pickup_words: str | None = None
 
     @property
     def note(self) -> str:
         pay = ("PAID online by payment link" if self.paid_online
-               else "Payment link sent; must be paid before cooking" if self.pay_first
-               else "Pay at pickup (payment link also texted)")
+               else "Payment link sent; must be paid before cooking" if self.pay_first and self.link_sent
+               else "Pay at pickup (payment link also texted)" if self.link_sent
+               else "Pay at pickup")
         when = f" PICKUP {self.pickup_words.upper()}." if self.pickup_at and self.pickup_words else ""
         return f"Phone order #{self.number} for {self.customer_name}.{when} {pay}."
 
@@ -164,6 +166,7 @@ def build_pos_order(rec: dict, catalog: Catalog, provider: str) -> PosOrder:
         pickup_minutes=int(r.get("pickup_minutes") or 20), paid_online=rec["payment_status"] == "paid",
         pay_first=rec["status"] == "awaiting_payment" or catalog.payment_required,
         business_name=r.get("name", ""),
+        link_sent=rec.get("payment_status", "not_requested") != "not_requested",
         pickup_at=rec.get("pickup_at"), pickup_words=rec.get("pickup"),
     )
 
