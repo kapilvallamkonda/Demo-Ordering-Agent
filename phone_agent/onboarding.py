@@ -358,8 +358,7 @@ def _buy(request: Request, row, area_code: str | None, user_id: int | None) -> d
 
 
 def _business_name(request: Request, row) -> str:
-    catalog = request.app.state.businesses.get(row.id)
-    return (catalog.settings.get("name") if catalog else None) or row.slug
+    return request.app.state.store.business_name(row.id) or row.slug
 
 
 @router.post("/api/manage/businesses/{business_id}/go-live")

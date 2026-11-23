@@ -289,6 +289,19 @@ class Store:
     def business(self, business_id: int) -> BusinessRow | None:
         return self._business("id", business_id)
 
+    def business_name(self, business_id: int) -> str | None:
+        """The name the business goes by: its published catalog's, else its draft's (a business
+        still setting up), else its slug. None if there's no such business."""
+        row = self.business(business_id)
+        if row is None:
+            return None
+        for payload in ((self.catalog_payload(row.catalog_id) if row.catalog_id else None),
+                        (self.draft(business_id) or {}).get("catalog")):
+            name = str(((payload or {}).get("settings") or {}).get("name") or "").strip()
+            if name:
+                return name
+        return row.slug
+
     def business_by_slug(self, slug: str) -> BusinessRow | None:
         return self._business("slug", slug)
 

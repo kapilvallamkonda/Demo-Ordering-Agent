@@ -502,3 +502,14 @@ def test_start_over_before_publishing_only(app):
     fill_and_publish(c, b["id"])
     r = c.post(f"/api/manage/businesses/{b['id']}/start-over", json={"revision": None}, headers=W)
     assert r.status_code == 400 and "published" in r.json()["detail"]
+
+
+def test_business_name_comes_from_the_draft_before_publishing(app):
+    c, store, *_ = app
+    sign_in(c, store)
+    b = new_business(c, "Momos")
+    ed = c.get(f"/api/manage/businesses/{b['id']}/editor").json()
+    cat = ed["catalog"]
+    cat["settings"]["name"] = "Mama Bro's"  # renamed while setting up; the slug stays "momos"
+    c.put(f"/api/manage/businesses/{b['id']}/draft", json={"catalog": cat, "revision": ed["draft"]["revision"]}, headers=W)
+    assert store.business(b["id"]).slug == "momos" and store.business_name(b["id"]) == "Mama Bro's"

@@ -384,8 +384,7 @@ async def pos_callback(request: Request, provider: str, code: str = "", state: s
     except PosError as e:
         log.warning("%s connect failed: %s", provider, e)
         return HTMLResponse(_page("Not connected", f"Something went wrong: {e}"), status_code=400)
-    catalog = request.app.state.businesses.get(business_id)
-    name = catalog.settings.get("name", row.slug) if catalog else row.slug
+    name = request.app.state.store.business_name(business_id) or row.slug
     log.info("business %s connected to %s (merchant %s, location %s)", row.slug, provider,
              merchant_id, conn.location_id)
     extra = ("" if conn.location_id or provider != "square" else
