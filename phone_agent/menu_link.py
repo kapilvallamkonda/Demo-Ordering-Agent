@@ -9,7 +9,7 @@ hand so each hop gets the same check. Downloads are capped in size and time.
 
 Known gap: the address is checked when we resolve it, and the HTTP client resolves it
 again when it connects, so a DNS server that answers differently the second time
-("rebinding") could slip past. Acceptable for the pilot; see docs/DESIGN.md section 17.
+("rebinding") could slip past. Acceptable for the pilot; see docs/DESIGN.md section 18.
 """
 
 from __future__ import annotations
