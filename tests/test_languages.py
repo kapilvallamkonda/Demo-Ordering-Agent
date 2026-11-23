@@ -68,7 +68,7 @@ def test_voice_declares_telugu_only_for_businesses_that_offer_it(app):
     twiml = c.post("/voice", data={"CallSid": "CA1", "From": "+15551112222", "To": BELLA_PHONE}).text
     assert 'dtmfDetection="true"' in twiml and "For Telugu, press 2." in twiml
     assert '<Language code="te-IN" ttsProvider="Google" voice="te-IN-Chirp3-HD-Kore"' in twiml
-    assert 'transcriptionProvider="Google" speechModel="chirp_3"' in twiml
+    assert 'transcriptionProvider="Google" speechModel="long"' in twiml
     plain = c.post("/voice", data={"CallSid": "CA2", "From": "+15551112222", "To": "+15550008888"}).text
     assert "Language" not in plain and "dtmfDetection" not in plain and "<ConversationRelay " in plain
 

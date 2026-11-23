@@ -721,8 +721,9 @@ Telugu setup).
 
 - **Call setup:** for such a business `/voice` adds a `<Language>` element per language to
   `<ConversationRelay>` (Telugu: Google voice `te-IN-Chirp3-HD-Kore`, Google speech
-  recognition with `chirp_3`, Google's multilingual model, suited to Telugu mixed with
-  English), turns on `dtmfDetection`, and the greeting ends with "For Telugu, press 2".
+  recognition with the `long` model: Twilio uses Google's global endpoint, where te-IN
+  has only `long` and `short`; `chirp_3` is EU-only for Telugu and Twilio rejected it on the
+  first real call with error 64101), turns on `dtmfDetection`, and the greeting ends with "For Telugu, press 2".
   Businesses without languages get exactly the old TwiML.
 - **Switching:** pressing the key, or the agent's `switch_language` tool (offered only to
   these businesses) sets the call's language; before the agent's next words go out,
@@ -902,3 +903,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-22 | PostHog on the server (from the PostHog wizard, reworked): setup events, Claude calls as AI events without content, ID-only identification, no exception capture. The wizard's Claude wrapper was replaced because it broke every call once PostHog was on. |
 | 2026-11-23 | Languages besides English, Telugu first: a per-business setting; greeting offers "press 2"; switching by keypad or the agent's `switch_language` tool changes ConversationRelay's voice and listening mid-call (`languages.py`). |
 | 2026-11-23 | Telugu on by default for businesses that haven't chosen (`DEFAULT_LANGUAGES`, empty to turn it off everywhere). |
+| 2026-11-23 | Telugu recognition model `chirp_3` → `long`: the first real call failed with Twilio 64101 (te-IN/chirp_3 isn't on Google's global endpoint). Default turned off on the server until a real call succeeds. |
