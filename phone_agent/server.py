@@ -76,8 +76,18 @@ VOICE_ENV_TO_ATTR = {
     "VOICE_LANGUAGE": "language",  # e.g. en-US (speech and listening)
     "STT_PROVIDER": "transcriptionProvider",  # speech-to-text engine, e.g. Google, Deepgram
     "STT_MODEL": "speechModel",  # speech-to-text model for that provider
+    # Background noise (a TV, a kitchen): Twilio has no noise filter, but by default any sound
+    # cuts the agent off, even the greeting. So noise can't interrupt the greeting (the keypad
+    # still can: "press 2"), it takes clearer speech to interrupt the agent, and "uh-huh"
+    # doesn't count as interrupting.
+    "GREETING_INTERRUPTIBLE": "welcomeGreetingInterruptible",  # none, dtmf, speech, any
+    "INTERRUPT_SENSITIVITY": "interruptSensitivity",  # high (Twilio's default), medium, low
+    "IGNORE_BACKCHANNEL": "ignoreBackchannel",  # true, false
 }
 VOICE_DEFAULTS = {
+    "GREETING_INTERRUPTIBLE": "dtmf",
+    "INTERRUPT_SENSITIVITY": "low",
+    "IGNORE_BACKCHANNEL": "true",
     "TTS_PROVIDER": "ElevenLabs",
     "TTS_VOICE": "mCQMfsqGDT6IDkEKR20a-v4_turbo",  # Twilio's en-IN ElevenLabs voice, v4
     "TTS_LANGUAGE": languages.ENGLISH_SPEECH,

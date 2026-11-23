@@ -140,14 +140,18 @@ def test_voice_settings_from_env(app_client, monkeypatch):
     c, _ = app_client
     r = c.post("/voice", data={"To": BELLA_PHONE})
     for attr in ['ttsProvider="ElevenLabs"', 'voice="mCQMfsqGDT6IDkEKR20a-v4_turbo"',
-                 'ttsLanguage="en-IN"']:  # Indian English by default
+                 'ttsLanguage="en-IN"',  # Indian English by default
+                 'welcomeGreetingInterruptible="dtmf"', 'interruptSensitivity="low"',
+                 'ignoreBackchannel="true"']:  # background noise doesn't cut the agent off
         assert attr in r.text
     assert "transcriptionLanguage" not in r.text and " language=" not in r.text  # listening: Twilio's
 
-    for name in ("TTS_PROVIDER", "TTS_VOICE", "TTS_LANGUAGE"):
+    for name in ("TTS_PROVIDER", "TTS_VOICE", "TTS_LANGUAGE", "GREETING_INTERRUPTIBLE",
+                 "INTERRUPT_SENSITIVITY", "IGNORE_BACKCHANNEL"):
         monkeypatch.setenv(name, "none")
     r = c.post("/voice", data={"To": BELLA_PHONE})
     assert "ttsProvider" not in r.text and "voice=" not in r.text and "ttsLanguage" not in r.text
+    assert "Interruptible" not in r.text and "interruptSensitivity" not in r.text
     assert languages.english_switch_message()["ttsLanguage"] == "en-US"
     monkeypatch.delenv("TTS_LANGUAGE")
     assert languages.english_switch_message() == {

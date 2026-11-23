@@ -188,6 +188,9 @@ They include a full phone order over the WebSocket.
 | `VOICE_LANGUAGE` | Twilio default | Speech and listening language (`language`), e.g. `en-US`. Listening stays English (US) unless set. |
 | `STT_PROVIDER` | Twilio default | Speech-to-text engine (`transcriptionProvider`), e.g. Google, Deepgram. |
 | `STT_MODEL` | Twilio default | Speech-to-text model (`speechModel`). |
+| `GREETING_INTERRUPTIBLE` | `dtmf` | What can cut off the greeting (`welcomeGreetingInterruptible`): only the keypad, so background noise can't. |
+| `INTERRUPT_SENSITIVITY` | `low` | How easily the caller's sound cuts the agent off (`interruptSensitivity`: high, medium, low). Low keeps TV or kitchen noise from interrupting. |
+| `IGNORE_BACKCHANNEL` | `true` | "Uh-huh", "okay" while the agent talks don't interrupt it (`ignoreBackchannel`). |
 | `RELAY_EXTRA_ATTRS` | unset | JSON object of any other `<ConversationRelay>` attributes. |
 | `TWILIO_AUTH_TOKEN` | unset | Enables Twilio signature validation; also used to send texts. |
 | `TWILIO_ACCOUNT_SID` | unset | Twilio account, for sending payment-link texts. |
