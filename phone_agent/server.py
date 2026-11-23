@@ -34,7 +34,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
-from . import analytics, brand, web_analytics
+from . import analytics, brand, languages, web_analytics
 from .agent import PhoneAgent
 from .google_auth import router as google_router
 from .manage import router as manage_router
@@ -252,11 +252,13 @@ async def voice(request: Request) -> Response:
     if token:
         ws_url += f"&token={token}"
     attrs = {"url": ws_url, "welcomeGreeting": greeting, **relay_voice_attrs()}
+    offered = languages.for_business(catalog.settings)
+    if offered:
+        attrs["dtmfDetection"] = "true"  # "press 2 for Telugu"
     rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
-    twiml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        f"<Response><Connect><ConversationRelay {rendered} /></Connect></Response>"
-    )
+    nouns = "".join(lang.noun() for lang in offered)
+    relay = f"<ConversationRelay {rendered}>{nouns}</ConversationRelay>" if nouns else f"<ConversationRelay {rendered} />"
+    twiml = '<?xml version="1.0" encoding="UTF-8"?>' f"<Response><Connect>{relay}</Connect></Response>"
     return Response(content=twiml, media_type="application/xml")
 
 
@@ -436,6 +438,7 @@ class RelayCall:
         self.slug: str | None = None
         self.interruptions = 0
         self.caller_phone: str | None = None
+        self.active_language = languages.ENGLISH  # what ConversationRelay speaks and listens in
 
     def flush_spoken(self, suffix: str = "") -> None:
         text = "".join(self._unrecorded).strip()
@@ -574,9 +577,36 @@ class RelayCall:
             if self.agent:
                 self.agent.note_interrupted(heard)
         elif kind == "dtmf":
-            log.info("dtmf digit %s ignored", msg.get("digit"))
+            await self.pressed(str(msg.get("digit", "")))
         elif kind == "error":
             log.error("relay error: %s", msg.get("description"))
+
+    async def pressed(self, digit: str) -> None:
+        """A keypad press: the key for one of the business's languages switches the call to it."""
+        if self.agent is None:
+            return
+        lang = languages.by_key(languages.for_business(self.agent.catalog.settings), digit)
+        if lang is None:
+            log.info("dtmf digit %s ignored", digit)
+            return
+        if self.agent.session.language == lang.code:
+            return
+        self.record("event", f"Caller pressed {digit} for {lang.label}")
+        await self.cancel_reply()
+        self.agent.session.language = lang.code
+        self.reply_task = asyncio.create_task(self.reply(lang.confirm))
+
+    async def sync_language(self) -> None:
+        """Before the agent's next words: if the call's language changed (keypad or the
+        switch_language tool), switch ConversationRelay's voice and listening to it."""
+        if self.agent is None or self.agent.session.language == self.active_language:
+            return
+        code = self.agent.session.language
+        lang = languages.available().get(code)
+        await self.send(lang.switch_message() if lang else languages.english_switch_message())
+        self.active_language = code
+        self.record("event", f"Switched the call to {lang.label if lang else 'English'}")
+        log.info("call %s switched to %s", self.call_id, code)
 
     def record_tool(self, name: str, args: dict, result: str, is_error: bool) -> None:
         self.flush_spoken()  # keep the transcript in the order things happened
@@ -635,6 +665,7 @@ class RelayCall:
         self._unrecorded = []
         try:
             async for chunk in self.agent.respond(text):
+                await self.sync_language()
                 spoken.append(chunk)
                 self._unrecorded.append(chunk)
                 await self.send({"type": "text", "token": chunk, "last": False})

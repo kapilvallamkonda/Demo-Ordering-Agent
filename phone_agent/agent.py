@@ -78,7 +78,8 @@ class PhoneAgent:
         self._ai_session_id = f"call-{raw_session_id}"
         self.catalog = catalog
         self.greeting = build_greeting(catalog)
-        self.tools = tools_for(catalog.template.modules)  # what this kind of business can do
+        # what this kind of business can do, plus switch_language if it offers other languages
+        self.tools = tools_for(catalog.template.modules, catalog.settings.get("languages"))
         self.session = start_session(CallSession(
             catalog=catalog, store=store, call_id=call_id, caller_phone=caller_phone,
             payments=payments, pos=pos))

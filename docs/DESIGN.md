@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (analytics).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (Telugu for callers).
 
 ## 1. Goal
 
@@ -710,6 +710,30 @@ A business sets itself up without us, like creating any online account.
 - The menu is read by one structured-output call, and always reviewed by the owner
   before it's published; nothing reaches callers without a publish.
 
+## 16b. Languages besides English (Telugu first)
+
+A business can offer callers another language (Settings → Other languages,
+`settings.languages`; `phone_agent/languages.py`). Telugu (`te-IN`) is the first.
+
+- **Call setup:** for such a business `/voice` adds a `<Language>` element per language to
+  `<ConversationRelay>` (Telugu: Google voice `te-IN-Chirp3-HD-Kore`, Google speech
+  recognition with `chirp_3`, Google's multilingual model, suited to Telugu mixed with
+  English), turns on `dtmfDetection`, and the greeting ends with "For Telugu, press 2".
+  Businesses without languages get exactly the old TwiML.
+- **Switching:** pressing the key, or the agent's `switch_language` tool (offered only to
+  these businesses) sets the call's language; before the agent's next words go out,
+  `RelayCall.sync_language` sends ConversationRelay a `language` message so its voice and
+  listening both change. The agent replies in the language's script, keeping dish names
+  and prices as on the menu; `switch_language` with `en-US` switches back.
+- **No automatic detection:** Twilio only detects languages with Deepgram plus
+  ElevenLabs, which don't cover Telugu, so the caller (or the agent, when asked) switches.
+- **Elsewhere:** transcripts hold what was said; the AI call review writes in English;
+  call metrics record the language; texts with the payment link stay in English.
+- **Risk:** an invalid voice/model combination stops the call from connecting (Twilio
+  error 64101), so the Telugu voice and model can be changed by env (`TELUGU_VOICE`,
+  `TELUGU_SPEECH_MODEL`, `TELUGU_TTS_PROVIDER`, `TELUGU_STT_PROVIDER`) and the
+  combination must be confirmed with a real call before a business relies on it.
+
 ## 17. Analytics
 
 Three layers (`phone_agent/analytics.py`, `web_analytics.py`):
@@ -872,3 +896,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-22 | Sentry set up for the server (`ringcart-server`): errors including logged ones, tracing (10% in production), logs; strict privacy settings. Verified with a test error from the running app. |
 
 | 2026-11-22 | PostHog on the server (from the PostHog wizard, reworked): setup events, Claude calls as AI events without content, ID-only identification, no exception capture. The wizard's Claude wrapper was replaced because it broke every call once PostHog was on. |
+| 2026-11-23 | Languages besides English, Telugu first: a per-business setting; greeting offers "press 2"; switching by keypad or the agent's `switch_language` tool changes ConversationRelay's voice and listening mid-call (`languages.py`). |

@@ -86,6 +86,7 @@ def call_metrics(agent, interruptions: int, ended_by: str, caller_phone: str | N
         "order_total": float(order.total) if ordered and order is not None else None,
         "cart_left": round(st["max_cart"], 2) if not ordered and st["max_cart"] else None,
         "ended_by": ended_by,
+        "language": session.language,
         "caller": hash_phone(caller_phone),
         "tokens": {k: st[k] for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
         "cost": agent_cost(st),
@@ -148,7 +149,8 @@ them (short). Only ones that went unanswered.
 - agent_mistakes: concrete errors by the assistant (wrong item or price, missed a required \
 choice, made up information, rude or confusing). Empty if none.
 - sentiment at the start and the end, and a one-line summary (under 20 words) an owner can scan.
-Be factual and brief; don't invent anything that isn't in the transcript."""
+Be factual and brief; don't invent anything that isn't in the transcript. Write the review in \
+English even if the call was in another language (quote callers' questions translated to English)."""
 
 
 def transcript_for_review(lines: list[tuple[str, str]], max_chars: int = 40000) -> str:

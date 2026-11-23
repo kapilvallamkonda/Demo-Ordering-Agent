@@ -17,6 +17,7 @@ Field types:
   string_list     list of short strings, max_items / max_length each
   select          one of `options` ([value, label] pairs)
   timezone        an IANA time zone name; `options` are the usual ones
+  languages       list of language codes callers can switch to (languages.py), shown as checkboxes
   faq             list of {"q": question, "a": answer}, max_items; optional "from_menu": true
                   marks one the menu reader drafted, until the owner edits or confirms it
 
@@ -43,6 +44,9 @@ SETTINGS: list[dict] = [
      "options": [list(t) for t in TIMEZONES],
      "help": "Used for pickup days and which days items are available. Set from your browser when "
              "you signed up."},
+    {"path": "languages", "group": "Basics", "type": "languages", "label": "Other languages",
+     "help": "Callers hear \"For Telugu, press 2\" after the greeting and can switch by pressing the "
+             "key or asking. English is always on."},
     {"path": "pickup_minutes", "group": "Orders", "type": "integer", "label": "Typical pickup time (minutes)",
      "min": 5, "max": 180, "required": True, "help": "How long until an order is usually ready."},
     {"path": "tax_rate", "group": "Orders", "type": "percent", "label": "Sales tax", "min": 0, "max": 0.15,
@@ -65,16 +69,25 @@ SETTINGS: list[dict] = [
 BY_PATH = {f["path"]: f for f in SETTINGS}
 
 
+def _with_options(fields: list[dict]) -> list[dict]:
+    from .languages import available
+
+    for f in fields:
+        if f["type"] == "languages":
+            f["options"] = [[lang.code, f"{lang.label} ({lang.native})"] for lang in available().values()]
+    return fields
+
+
 def settings_for(template=None) -> list[dict]:
     """The settings form for a kind of business (templates.Template, or None for the base)."""
     if template is None:
-        return [dict(f) for f in SETTINGS]
+        return _with_options([dict(f) for f in SETTINGS])
     fields = [{**f, **template.setting_overrides.get(f["path"], {})} for f in SETTINGS]
     for f in fields:
         if f["path"] == "greeting":  # show this template's default greeting
             f["help"] = ("The first thing callers hear. Leave blank for: "
                          f"\"{template.greeting.format(name='<name>')}\"")
-    return fields + [dict(f) for f in template.extra_settings]
+    return _with_options(fields + [dict(f) for f in template.extra_settings])
 
 
 def get_path(block: dict, path: str) -> Any:
@@ -121,6 +134,11 @@ def validate_settings(business: Any, template=None) -> list[str]:
                 value in [o[0] for o in f.get("options", [])]
             if not ok:
                 errors.append(f"{label}: choose one of the options")
+        elif t == "languages":
+            from .languages import available
+
+            if not isinstance(value, list) or any(v not in available() for v in value):
+                errors.append(f"{label}: choose from {', '.join(lang.label for lang in available().values())}")
         elif t == "faq":
             if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
                 errors.append(f"{label} must be a list of questions and answers")

@@ -1080,6 +1080,13 @@
             opts.map(([k, label]) => el("option", { value: k, selected: k === v }, f.type === "timezone" ? `${label} (${k})` : label)));
         }
         else if (f.type === "faq") input = faqEditor(r, f, id);
+        else if (f.type === "languages") input = el("div", { id, class: "row wrap" }, (f.options || []).map(([code, label]) =>
+          el("label", { class: "switch", style: "color:inherit;margin-right:16px" },
+            el("input", { type: "checkbox", checked: (v || []).includes(code), onchange: e => {
+              const cur = new Set(getPath(r, f.path) || []);
+              e.target.checked ? cur.add(code) : cur.delete(code);
+              set(f, [...cur], true);
+            } }), el("span", {}, label))));
         else if (f.type === "string_list") input = el("textarea", { id, rows: Math.max(4, (v || []).length + 1),
           oninput: e => set(f, e.target.value.split("\n").map(s => s.trim()).filter(Boolean)) }, (v || []).join("\n"));
         const unconfirmed = (r.placeholders || []).includes(f.path);

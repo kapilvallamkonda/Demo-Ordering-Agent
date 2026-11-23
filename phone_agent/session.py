@@ -73,6 +73,7 @@ class CallSession:
     payments: "PaymentService | None" = None
     pos: "PosHub | None" = None
     end_requested: bool = False
+    language: str = "en-US"  # the call's language; switch_language changes it (languages.py)
     log: list[dict] = field(default_factory=list)
     # orders module state
     order: "Order | None" = None

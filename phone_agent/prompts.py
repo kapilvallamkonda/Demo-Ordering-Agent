@@ -5,8 +5,16 @@ each of the business's modules' sections (modules/: how to take an order, the pa
 rule ...), and the business's catalog. See templates.py.
 """
 
+from . import languages as langs
 from .catalog import Catalog
 from .modules import modules_for
+
+_LANGUAGES = """\
+Languages: callers can also be served in {names}. The greeting told them how to switch \
+({keys}). If the caller speaks one of these languages or asks for it, call switch_language \
+first, then reply only in that language, written in its own script. Keep dish and product \
+names exactly as they appear in the {catalog} (in English), and say prices and the order \
+number clearly. If the caller wants English again, call switch_language with en-US."""
 
 _HEADER = """\
 {role} You are speaking with a caller on \
@@ -26,12 +34,18 @@ def build_system_prompt(catalog: Catalog, payment_links: bool = False) -> str:
     name = catalog.settings.get("name", f"the {t.words['business']}")
     parts = [_HEADER.format(role=t.role.format(name=name), catalog=t.words["catalog"])]
     parts += [m.prompt(catalog, payment_links) for m in modules_for(t.modules) if m.prompt]
+    offered = langs.for_business(catalog.settings)
+    if offered:
+        parts.append(_LANGUAGES.format(
+            names=", ".join(f"{lang.label} ({lang.code})" for lang in offered),
+            keys=", ".join(f"press {lang.key} for {lang.label}" for lang in offered),
+            catalog=t.words["catalog"]))
     parts.append(catalog.to_prompt_text())
     return "\n\n".join(parts) + "\n"
 
 
 def build_greeting(catalog: Catalog) -> str:
     custom = str(catalog.settings.get("greeting") or "").strip()
-    if custom:
-        return custom
-    return catalog.template.greeting.format(name=catalog.settings.get("name", "us"))
+    greeting = custom or catalog.template.greeting.format(name=catalog.settings.get("name", "us"))
+    offer = langs.greeting_offer(langs.for_business(catalog.settings))
+    return f"{greeting} {offer}" if offer else greeting
