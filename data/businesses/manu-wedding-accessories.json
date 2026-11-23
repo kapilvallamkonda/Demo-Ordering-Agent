@@ -1,0 +1,444 @@
+{
+  "template": "events",
+  "settings": {
+    "name": "Manu Wedding Accessories USA",
+    "timezone": "America/Chicago",
+    "order_types": [
+      "pickup"
+    ],
+    "pickup_minutes": 60,
+    "max_advance_days": 180,
+    "tax_rate": 0.0825,
+    "payment": {
+      "required_before_cooking": false,
+      "pay_within_minutes": 120
+    },
+    "placeholders": [
+      "tax_rate",
+      "pickup_minutes"
+    ],
+    "about": "Traditional Telugu and South Indian wedding supplies from Dallas: fresh wedding garlands made in Dallas or imported from India, ceremony items, pooja flowers, wedding packages, wedding rentals in Texas, and mehendi.",
+    "faq": [
+      {
+        "q": "Do you ship?",
+        "a": "Yes, garlands and many items ship across the USA when you order on our website. Phone orders here are for pickup.",
+        "from_menu": true
+      },
+      {
+        "q": "Do you rent wedding items?",
+        "a": "Yes, wedding and event rentals in Dallas-Fort Worth, Austin and Houston; rentals are Texas only. I can take down a request and the team will get back to you.",
+        "from_menu": true
+      },
+      {
+        "q": "Do you do mehendi?",
+        "a": "Yes, bridal mehendi services, products and classes. I can take a request for the team to contact you.",
+        "from_menu": true
+      },
+      {
+        "q": "Where are you?",
+        "a": "We're in Dallas, and also serve Austin and Houston.",
+        "from_menu": true
+      }
+    ],
+    "guides": [
+      {
+        "title": "What's needed for a Telugu wedding",
+        "from_menu": true,
+        "text": "By ceremony, families usually need: Mangala Snanam (haldi): haldi jewelry and haldi jalleda. Kanyadanam: a Kanyadanam set and a decorated coconut. Jeelakarra Bellam and the main ceremony: the couple's garland pair, basingalu, a sanapeeta, Ariveni pots, the Addu Thera curtain. Talambralu: Navaratna talambralu with a pair of talambrala basins. Also common: kobbari kudakalu, a camphor garland, pooja flowers and a pooja kit. Our wedding packages (Silver, Gold, Platinum, Diamond) cover much of this in one order."
+      },
+      {
+        "title": "Ordering wedding garlands",
+        "from_menu": true,
+        "text": "Garlands are sold as a pair for the bride and groom, in standard or long. Dallas-made fresh garlands need about 5 days' notice; garlands imported from India need about 3 weeks. Custom flowers or colours are quoted by the team: take a request."
+      }
+    ]
+  },
+  "items": [
+    {
+      "id": "roses_carnations_baby_s_breath_garland_pair",
+      "name": "Roses, Carnations & Baby's Breath Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 149.0,
+      "description": "Fresh garland pair for the bride and groom, made in Dallas. Made to order. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 5
+    },
+    {
+      "id": "pink_roses_baby_s_breath_garland_pair",
+      "name": "Pink Roses & Baby's Breath Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 159.0,
+      "description": "Fresh pink rose garland pair, made in Dallas. Made to order. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 5
+    },
+    {
+      "id": "peach_roses_baby_s_breath_garland_pair",
+      "name": "Peach Roses & Baby's Breath Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 159.0,
+      "description": "Fresh peach rose garland pair, made in Dallas. Made to order. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 5
+    },
+    {
+      "id": "red_rose_garland_pair",
+      "name": "Red Rose Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 139.0,
+      "description": "Fresh red rose garland pair, made in Dallas. Made to order. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 5
+    },
+    {
+      "id": "imported_jasmine_rose_garland_pair",
+      "name": "Imported Jasmine & Rose Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 199.0,
+      "description": "Traditional garland pair made in India. Imported from India. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 21
+    },
+    {
+      "id": "tamil_design_garland_pair",
+      "name": "Tamil Design Garland Pair",
+      "category": "Wedding Garlands",
+      "price": 179.0,
+      "description": "Garland pair in traditional Tamil style. Made to order. Order early.",
+      "placeholder_price": true,
+      "options": {
+        "size": {
+          "choices": {
+            "standard": 0.0,
+            "long": 30.0
+          },
+          "required": true
+        }
+      },
+      "notice_days": 7
+    },
+    {
+      "id": "camphor_garland",
+      "name": "Camphor Garland",
+      "category": "Wedding Garlands",
+      "price": 35.0,
+      "description": "Camphor (karpuram) garland for ceremonies.",
+      "placeholder_price": true
+    },
+    {
+      "id": "decorated_wedding_coconut",
+      "name": "Decorated Wedding Coconut",
+      "category": "Traditional Wedding Items",
+      "price": 25.0,
+      "description": "Coconut decorated for the ceremony. Customizable.",
+      "placeholder_price": true,
+      "options": {
+        "colour": {
+          "choices": {
+            "red and gold": 0.0,
+            "green and gold": 0.0,
+            "pink and gold": 0.0
+          },
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "kobbari_kudakalu_chippalu",
+      "name": "Kobbari Kudakalu / Chippalu",
+      "category": "Traditional Wedding Items",
+      "price": 30.0,
+      "description": "Decorated coconut halves for the ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "kanyadanam_set",
+      "name": "Kanyadanam Set",
+      "category": "Traditional Wedding Items",
+      "price": 75.0,
+      "description": "Items for the Kanyadanam ceremony. Part of a set.",
+      "placeholder_price": true
+    },
+    {
+      "id": "navaratna_talambralu",
+      "name": "Navaratna Talambralu",
+      "category": "Traditional Wedding Items",
+      "price": 35.0,
+      "description": "Nine-colour rice for the Talambralu ceremony. Bestseller.",
+      "placeholder_price": true
+    },
+    {
+      "id": "talambrala_basins_pair",
+      "name": "Talambrala Basins (pair)",
+      "category": "Traditional Wedding Items",
+      "price": 45.0,
+      "description": "Pair of basins for the Talambralu ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "basingalu_pair",
+      "name": "Basingalu (pair)",
+      "category": "Traditional Wedding Items",
+      "price": 50.0,
+      "description": "Traditional forehead ornaments for the bride and groom.",
+      "placeholder_price": true
+    },
+    {
+      "id": "sanapeeta",
+      "name": "Sanapeeta",
+      "category": "Traditional Wedding Items",
+      "price": 40.0,
+      "description": "Decorated wooden seat (peeta) for the ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "ariveni_kunda_wedding_pots",
+      "name": "Ariveni Kunda / Wedding Pots",
+      "category": "Traditional Wedding Items",
+      "price": 85.0,
+      "description": "Set of decorated wedding pots (Ariveni). Part of a set.",
+      "placeholder_price": true
+    },
+    {
+      "id": "addu_thera",
+      "name": "Addu Thera",
+      "category": "Traditional Wedding Items",
+      "price": 45.0,
+      "description": "Decorated ceremony curtain (Addu Thera).",
+      "placeholder_price": true
+    },
+    {
+      "id": "garika_muntha",
+      "name": "Garika Muntha",
+      "category": "Traditional Wedding Items",
+      "price": 20.0,
+      "description": "Garika (durva grass) pot for the ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "polu_muntha",
+      "name": "Polu Muntha",
+      "category": "Traditional Wedding Items",
+      "price": 25.0,
+      "description": "Polu muntha for the ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "haldi_jewelry_mangala_snanam",
+      "name": "Haldi Jewelry (Mangala Snanam)",
+      "category": "Traditional Wedding Items",
+      "price": 40.0,
+      "description": "Flower and haldi jewelry for the Mangala Snanam. Made to order.",
+      "placeholder_price": true,
+      "notice_days": 3
+    },
+    {
+      "id": "haldi_jalleda_mangala_snanam",
+      "name": "Haldi Jalleda (Mangala Snanam)",
+      "category": "Traditional Wedding Items",
+      "price": 30.0,
+      "description": "Haldi jalleda for the Mangala Snanam.",
+      "placeholder_price": true
+    },
+    {
+      "id": "ungarala_bindey",
+      "name": "Ungarala Bindey",
+      "category": "Traditional Wedding Items",
+      "price": 30.0,
+      "description": "Decorated bindey for the ring ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "german_silver_pooja_set",
+      "name": "German Silver Pooja Set",
+      "category": "Traditional Wedding Items",
+      "price": 60.0,
+      "description": "German silver items for the ceremony.",
+      "placeholder_price": true
+    },
+    {
+      "id": "pooja_items_kit",
+      "name": "Pooja Items Kit",
+      "category": "Traditional Wedding Items",
+      "price": 35.0,
+      "description": "Pooja essentials for the wedding ceremonies.",
+      "placeholder_price": true
+    },
+    {
+      "id": "pooja_loose_flowers_1_lb",
+      "name": "Pooja Loose Flowers (1 lb)",
+      "category": "Flowers",
+      "price": 18.0,
+      "description": "Fresh loose flowers for pooja. Seasonal.",
+      "placeholder_price": true,
+      "extras": {
+        "extra pound": 15.0
+      }
+    },
+    {
+      "id": "jasmine_flower_string_10_feet",
+      "name": "Jasmine Flower String (10 feet)",
+      "category": "Flowers",
+      "price": 25.0,
+      "description": "Fresh jasmine flower string. Seasonal.",
+      "placeholder_price": true
+    },
+    {
+      "id": "fresh_veni",
+      "name": "Fresh Veni",
+      "category": "Flowers",
+      "price": 15.0,
+      "description": "Fresh flower veni for the hair.",
+      "placeholder_price": true
+    },
+    {
+      "id": "flower_bunch",
+      "name": "Flower Bunch",
+      "category": "Flowers",
+      "price": 20.0,
+      "description": "Bunch of fresh flowers. Seasonal.",
+      "placeholder_price": true
+    },
+    {
+      "id": "rose_petals_1_lb",
+      "name": "Rose Petals (1 lb)",
+      "category": "Flowers",
+      "price": 20.0,
+      "description": "Fresh rose petals.",
+      "placeholder_price": true
+    },
+    {
+      "id": "lotus_flowers_5",
+      "name": "Lotus Flowers (5)",
+      "category": "Flowers",
+      "price": 30.0,
+      "description": "Five lotus flowers. Seasonal. Order early.",
+      "placeholder_price": true,
+      "notice_days": 3
+    },
+    {
+      "id": "bridal_bouquet",
+      "name": "Bridal Bouquet",
+      "category": "Flowers",
+      "price": 75.0,
+      "description": "Fresh bridal bouquet. Made to order.",
+      "placeholder_price": true,
+      "notice_days": 3
+    },
+    {
+      "id": "fresh_flower_hand_gajra_pair",
+      "name": "Fresh Flower Hand Gajra (pair)",
+      "category": "Flowers",
+      "price": 15.0,
+      "description": "Pair of fresh flower hand gajras.",
+      "placeholder_price": true
+    },
+    {
+      "id": "corsage_or_boutonniere",
+      "name": "Corsage or Boutonniere",
+      "category": "Flowers",
+      "price": 12.0,
+      "description": "Fresh flower corsage or boutonniere.",
+      "placeholder_price": true,
+      "options": {
+        "type": {
+          "choices": {
+            "corsage": 0.0,
+            "boutonniere": 0.0
+          },
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "pellipoola_jada_set",
+      "name": "Pellipoola Jada Set",
+      "category": "Flowers",
+      "price": 95.0,
+      "description": "Bridal flower jada (hair braid) set. Made to order. Order early.",
+      "placeholder_price": true,
+      "notice_days": 5
+    },
+    {
+      "id": "silver_wedding_package",
+      "name": "Silver Wedding Package",
+      "category": "Wedding Packages",
+      "price": 399.0,
+      "description": "Silver package of wedding garlands and ceremony essentials in one order; the team confirms exactly what's included. Part of a set. Order early.",
+      "placeholder_price": true,
+      "notice_days": 14
+    },
+    {
+      "id": "gold_wedding_package",
+      "name": "Gold Wedding Package",
+      "category": "Wedding Packages",
+      "price": 599.0,
+      "description": "Gold package of wedding garlands and ceremony essentials in one order; the team confirms exactly what's included. Part of a set. Order early.",
+      "placeholder_price": true,
+      "notice_days": 14
+    },
+    {
+      "id": "platinum_wedding_package",
+      "name": "Platinum Wedding Package",
+      "category": "Wedding Packages",
+      "price": 899.0,
+      "description": "Platinum package of wedding garlands and ceremony essentials in one order; the team confirms exactly what's included. Part of a set. Order early.",
+      "placeholder_price": true,
+      "notice_days": 14
+    },
+    {
+      "id": "diamond_wedding_package",
+      "name": "Diamond Wedding Package",
+      "category": "Wedding Packages",
+      "price": 999.0,
+      "description": "Diamond package of wedding garlands and ceremony essentials in one order; the team confirms exactly what's included. Part of a set. Order early.",
+      "placeholder_price": true,
+      "notice_days": 14
+    }
+  ]
+}
