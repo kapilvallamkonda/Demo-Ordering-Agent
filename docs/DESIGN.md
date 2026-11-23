@@ -1012,3 +1012,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | English voice defaults to Indian English (ElevenLabs `mCQMfsqGDT6IDkEKR20a` v4, `ttsLanguage` en-IN) for every business; switching back from Telugu returns to it. Listening unchanged. |
 | 2026-11-23 | Background noise: greeting interruptible only by keypad, low interrupt sensitivity, backchannels ignored (`GREETING_INTERRUPTIBLE`, `INTERRUPT_SENSITIVITY`, `IGNORE_BACKCHANNEL`). |
 | 2026-11-23 | Hindi, Tamil and Kannada added alongside Telugu, all four on by default; the greeting asks which language the caller would like instead of "press 2"; unsupported languages get a polite no and the call stays in English; `wait_for_caller` keeps the agent silent on side talk and TV speech. |
+| 2026-11-23 | Prices are said only when the caller asks and in the total at the final read-back, not as each item is added. |
