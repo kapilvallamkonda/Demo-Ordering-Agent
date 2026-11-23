@@ -200,7 +200,7 @@ They include a full phone order over the WebSocket.
 | `ANALYTICS_SALT` | `POS_SECRET_KEY` | Secret used to hash caller numbers for repeat-caller counts. |
 | `PRICE_AGENT_INPUT`, `PRICE_AGENT_OUTPUT`, `PRICE_AGENT_CACHE_READ`, `PRICE_AGENT_CACHE_WRITE`, `PRICE_REVIEW_INPUT`, `PRICE_REVIEW_OUTPUT` | Opus 5.5 / Haiku 5.5 list prices | Dollars per million tokens, for the cost figures in Analytics. |
 | `POSTHOG_KEY`, `POSTHOG_HOST` | unset, `https://us.i.posthog.com` | PostHog in the browser: page views, funnels, session replays (text masked on business pages). |
-| `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` | unset, `production`, `0` | Sentry error alerts from the server. |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_RELEASE` | unset, `production`, `0.1` in production and `1.0` elsewhere, the Fly image | Sentry for the server: errors (including logged ones), tracing and logs, with no personal data or call content. |
 | `DEFAULT_TIMEZONE` | `America/Chicago` | Time zone for businesses that haven't set one (new businesses take it from the owner's browser). Pickup days and item day rules use the business's time zone. |
 | `BRAND_NAME` | `Ringcart` | Product name shown on the website, sign-in and dashboards (`phone_agent/brand.py`). |
 | `DATABASE_PATH` | `data/phone_agent.db` | SQLite file: businesses, catalogs, orders, transcripts, accounts. |

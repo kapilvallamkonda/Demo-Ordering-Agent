@@ -744,7 +744,13 @@ Three layers (`phone_agent/analytics.py`, `web_analytics.py`):
 **Outside tools, off unless configured:** PostHog (`POSTHOG_KEY`; loaded from
 `/web-analytics.js`, CSP extended only then): page views per tab, funnels and session
 replays, with all text and inputs masked on the business pages and no one identified by
-email. Sentry (`SENTRY_DSN`): every logged server error, without personal data.
+email. Sentry (`SENTRY_DSN`, project `ringcart-server` in the `ringcart` organization):
+every uncaught exception and every ERROR log record becomes an issue (the app catches
+and logs most failures, so the logging integration is what makes them visible), requests
+and Claude calls are traced (all of them outside production, 10% in production;
+`SENTRY_TRACES_SAMPLE_RATE` overrides), and INFO logs go to Sentry Logs. Release is the
+Fly image. No personal data, cookies, request bodies, local variables, or Claude prompts
+and replies are sent.
 
 **Privacy:** events and reviews hold no phone numbers (hashed) and no transcripts; the
 review's quotes are short phrases. Analytics queries are scoped by `business_id`.
@@ -856,3 +862,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-22 | Square businesses pay by **Square payment link**, required to confirm the order: Square creates the order with the link and shows it on the register once paid; we text the link, poll for payment (20 s, per-business gated timers, resumed after restart), confirm or cancel at the business's payment window, and text the customer. Money goes to the business's Square account. Chosen per call (`pos.payments_for`). Tested against the Square sandbox (link with pickup fulfillment and tax). |
 | 2026-11-22 | "Other notes" removed: `settings.notes` is no longer shown or given to the agent; About, Common questions and item rules replace it. Settings panels no longer print empty parts as "null". Business names come from the draft before the first publish (`Store.business_name`). POS order note says plain "Pay at pickup" when no payment link was sent. |
 | 2026-11-22 | **Analytics**: per-call outcome and metrics, an `events` log across setup, calls, orders, payments, POS and failures, an AI review of each call (Claude Haiku 5.5), an operator **Analytics** tab and a per-business **Insights** tab, call summaries in Calls. Optional PostHog (masked replays) and Sentry. Database schema version 3. |
+| 2026-11-22 | Sentry set up for the server (`ringcart-server`): errors including logged ones, tracing (10% in production), logs; strict privacy settings. Verified with a test error from the running app. |
