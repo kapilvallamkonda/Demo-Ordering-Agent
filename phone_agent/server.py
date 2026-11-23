@@ -64,15 +64,29 @@ CALL_TOKEN_SECONDS = 600  # a /voice answer's WebSocket URL must be used within 
 NOT_TAKING_CALLS = "Sorry, this number isn't taking orders right now. Goodbye."
 LINES_BUSY = "Sorry, all our lines are busy right now. Please call back in a few minutes. Goodbye."
 
-# Voice settings: env var -> <ConversationRelay> attribute. Unset ones are left off,
-# so Twilio's defaults apply.
+# Voice settings: env var -> <ConversationRelay> attribute. English speech defaults to
+# Indian English (callers are mostly Indian for now, and an en-US voice anglicizes dish
+# names like Punugulu): an ElevenLabs Indian English voice on v4, speaking en-IN, while
+# listening stays on Twilio's default (en-US). "none" leaves an attribute off, so
+# Twilio's default applies.
 VOICE_ENV_TO_ATTR = {
     "TTS_PROVIDER": "ttsProvider",  # text-to-speech engine, e.g. ElevenLabs, Google, Amazon
     "TTS_VOICE": "voice",  # a voice ID/name valid for that provider
-    "VOICE_LANGUAGE": "language",  # e.g. en-US
+    "TTS_LANGUAGE": "ttsLanguage",  # the voice's language (overrides VOICE_LANGUAGE for speech)
+    "VOICE_LANGUAGE": "language",  # e.g. en-US (speech and listening)
     "STT_PROVIDER": "transcriptionProvider",  # speech-to-text engine, e.g. Google, Deepgram
     "STT_MODEL": "speechModel",  # speech-to-text model for that provider
 }
+VOICE_DEFAULTS = {
+    "TTS_PROVIDER": "ElevenLabs",
+    "TTS_VOICE": "mCQMfsqGDT6IDkEKR20a-v4_turbo",  # Twilio's en-IN ElevenLabs voice, v4
+    "TTS_LANGUAGE": languages.ENGLISH_SPEECH,
+}
+
+
+def _voice_env(name: str) -> str:
+    value = os.environ.get(name, "").strip() or VOICE_DEFAULTS.get(name, "")
+    return "" if value.lower() == "none" else value
 
 
 def relay_voice_attrs() -> dict[str, str]:
@@ -81,8 +95,7 @@ def relay_voice_attrs() -> dict[str, str]:
     RELAY_EXTRA_ATTRS takes a JSON object of any other ConversationRelay attributes,
     e.g. '{"interruptible": "speech"}', so new Twilio options need no code change.
     """
-    attrs = {attr: os.environ[env].strip() for env, attr in VOICE_ENV_TO_ATTR.items()
-             if os.environ.get(env, "").strip()}
+    attrs = {attr: _voice_env(env) for env, attr in VOICE_ENV_TO_ATTR.items() if _voice_env(env)}
     extra = os.environ.get("RELAY_EXTRA_ATTRS", "").strip()
     if extra:
         try:

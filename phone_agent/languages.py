@@ -21,7 +21,15 @@ import os
 from dataclasses import dataclass
 from xml.sax.saxutils import quoteattr
 
-ENGLISH = "en-US"
+ENGLISH = "en-US"  # the call's language code for English (session.language, switch_language)
+ENGLISH_SPEECH = "en-IN"  # the English voice speaks Indian English by default
+
+
+def english_speech() -> str:
+    """The English voice's language: Indian English by default (TTS_LANGUAGE)."""
+    value = os.environ.get("TTS_LANGUAGE", "").strip()
+    return ENGLISH if value.lower() == "none" else (value or ENGLISH_SPEECH)
+
 
 
 @dataclass(frozen=True)
@@ -120,4 +128,5 @@ def by_key(languages: list[Language], digit: str) -> Language | None:
 
 
 def english_switch_message() -> dict:
-    return {"type": "language", "ttsLanguage": ENGLISH, "transcriptionLanguage": ENGLISH}
+    """Back to English: the English voice (Indian English by default), English listening."""
+    return {"type": "language", "ttsLanguage": english_speech(), "transcriptionLanguage": ENGLISH}

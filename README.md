@@ -182,9 +182,10 @@ They include a full phone order over the WebSocket.
 | `AGENT_MODEL` | `claude-opus-5-5` | Claude model. |
 | `AGENT_EFFORT` | `low` | Thinking effort. `low` is fastest; try `medium` if complex orders go wrong. |
 | `AGENT_FAST_MODE` | `false` | Opus 5.5 fast mode: up to ~2.5× faster output at premium pricing. |
-| `TTS_PROVIDER` | Twilio default | Text-to-speech engine (`ttsProvider`), e.g. ElevenLabs, Google, Amazon. |
-| `TTS_VOICE` | Twilio default | Voice for that provider (`voice`). |
-| `VOICE_LANGUAGE` | Twilio default | Spoken language (`language`), e.g. `en-US`. |
+| `TTS_PROVIDER` | `ElevenLabs` | Text-to-speech engine (`ttsProvider`), e.g. ElevenLabs, Google, Amazon. |
+| `TTS_VOICE` | `mCQMfsqGDT6IDkEKR20a-v4_turbo` | Voice for that provider (`voice`): Indian English, ElevenLabs v4. |
+| `TTS_LANGUAGE` | `en-IN` | Language the English voice speaks (`ttsLanguage`). Indian English says Indian dish names correctly. |
+| `VOICE_LANGUAGE` | Twilio default | Speech and listening language (`language`), e.g. `en-US`. Listening stays English (US) unless set. |
 | `STT_PROVIDER` | Twilio default | Speech-to-text engine (`transcriptionProvider`), e.g. Google, Deepgram. |
 | `STT_MODEL` | Twilio default | Speech-to-text model (`speechModel`). |
 | `RELAY_EXTRA_ATTRS` | unset | JSON object of any other `<ConversationRelay>` attributes. |
@@ -230,7 +231,7 @@ They include a full phone order over the WebSocket.
 | `POS_ALLOW_TOKENS` | unset | Enables every provider without app credentials, for `pos connect-token` with a sandbox token. |
 
 Voice settings are read on every incoming call, so changing them only needs a server
-restart, no code change. Speech costs are billed through your Twilio account. Valid provider
+restart, no code change. `none` turns a default off (Twilio's own default applies). Speech costs are billed through your Twilio account. Valid provider
 names and voice IDs are listed in Twilio's ConversationRelay docs.
 
 Server-side refusal fallbacks are on (`fallbacks: "default"`): if a safety classifier

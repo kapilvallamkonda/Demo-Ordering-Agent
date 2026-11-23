@@ -70,7 +70,7 @@ def test_voice_declares_telugu_only_for_businesses_that_offer_it(app):
     assert '<Language code="te-IN" ttsProvider="ElevenLabs" voice="UgBBYS2sOqTuMpoF3BR0-v4_turbo"' in twiml
     assert 'transcriptionProvider="Google" speechModel="long"' in twiml
     plain = c.post("/voice", data={"CallSid": "CA2", "From": "+15551112222", "To": "+15550008888"}).text
-    assert "Language" not in plain and "dtmfDetection" not in plain and "<ConversationRelay " in plain
+    assert "<Language" not in plain and "dtmfDetection" not in plain and "<ConversationRelay " in plain
 
 
 def read_until_last(ws, sent):
@@ -101,7 +101,7 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     first_telugu = next(i for i, k in enumerate(kinds) if k[0] == "text" and "నమస్కారం" in (k[1] or ""))
     assert first_switch < first_telugu  # voice and listening switch before the Telugu words
     assert sent[first_switch]["transcriptionLanguage"] == "multi"  # Deepgram multilingual, in the switch
-    assert ("language", "en-US") in kinds  # the agent switched back on request
+    assert ("language", "en-IN") in kinds  # back to English (Indian English voice) on request
     assert "already switched to Telugu" in json.dumps(fake.requests[0]["messages"])
     # Listening switched at the keypress, before any agent text (the caller may speak first).
     assert sent[0]["type"] == "language" and sent[0]["transcriptionProvider"] == "Deepgram"

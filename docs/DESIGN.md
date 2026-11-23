@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (event & wedding supplies template, guides, custom requests, Shopify).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (Indian English voice by default; event & wedding supplies template, guides, custom requests, Shopify).
 
 ## 1. Goal
 
@@ -136,6 +136,7 @@ is how to find out why a call didn't produce an order.
 |---|---|
 | **Messages API, loop hosted in our server** (not Managed Agents) | Phone calls need the lowest latency: streaming tokens go straight to speech. The tools are local functions, so there's no need for a hosted sandbox. |
 | **Twilio ConversationRelay** for speech | Twilio handles speech-to-text, text-to-speech and interruption detection. We only deal with text. The speech provider and voice are configuration, not code. |
+| **Indian English voice by default** | Early callers are mostly Indian, and an American voice anglicizes dish names (Punugulu, Mirchi Bajji). English speech is an ElevenLabs Indian English voice on v4 speaking `en-IN` (`TTS_VOICE`, `TTS_LANGUAGE`); listening stays English (US). One setting for every business for now; per business later if needed. |
 | **Catalog in the system prompt**, not a lookup tool | Catalog questions need no tool round-trip, which saves latency. The prompt is identical across calls, so it's cached. |
 | **All prices and rules in code** (`order.py`) | The model can't invent items, skip required options, or miscompute totals. Tool errors are returned to the model so it can ask the caller. |
 | **Confirm before placing** | `place_order` requires `caller_confirmed: true` and the prompt requires a read-back first. |
@@ -987,3 +988,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Correction: Deepgram `te` was rejected (64107) and the call stayed on English recognition; Telugu listening is Deepgram `nova-3` `multi`, verified with no relay errors. |
 | 2026-11-23 | Planned next: event and wedding supplies template, Guides, Inquiries module, Shopify (draft orders with a texted checkout link). |
 | 2026-11-23 | Built: event & wedding supplies template; guides (`read_guide`) and custom requests (`record_inquiry`, Requests tab, `notify_phone` text) for every template; `settings.max_advance_days`; notice up to 120 days; the year in the agent's date line; Shopify (OAuth, product import, draft orders paid at Shopify checkout); owner-run POS catalog import. |
+| 2026-11-23 | English voice defaults to Indian English (ElevenLabs `mCQMfsqGDT6IDkEKR20a` v4, `ttsLanguage` en-IN) for every business; switching back from Telugu returns to it. Listening unchanged. |

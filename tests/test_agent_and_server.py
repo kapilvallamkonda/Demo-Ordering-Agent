@@ -4,7 +4,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from phone_agent import server
+from phone_agent import languages, server
 from phone_agent.agent import PhoneAgent
 from phone_agent.catalog import load_catalog
 from phone_agent.storage import Store
@@ -139,7 +139,19 @@ def test_full_phone_order_over_websocket(app_client, monkeypatch):
 def test_voice_settings_from_env(app_client, monkeypatch):
     c, _ = app_client
     r = c.post("/voice", data={"To": BELLA_PHONE})
-    assert "ttsProvider" not in r.text and "voice=" not in r.text  # Twilio defaults
+    for attr in ['ttsProvider="ElevenLabs"', 'voice="mCQMfsqGDT6IDkEKR20a-v4_turbo"',
+                 'ttsLanguage="en-IN"']:  # Indian English by default
+        assert attr in r.text
+    assert "transcriptionLanguage" not in r.text and " language=" not in r.text  # listening: Twilio's
+
+    for name in ("TTS_PROVIDER", "TTS_VOICE", "TTS_LANGUAGE"):
+        monkeypatch.setenv(name, "none")
+    r = c.post("/voice", data={"To": BELLA_PHONE})
+    assert "ttsProvider" not in r.text and "voice=" not in r.text and "ttsLanguage" not in r.text
+    assert languages.english_switch_message()["ttsLanguage"] == "en-US"
+    monkeypatch.delenv("TTS_LANGUAGE")
+    assert languages.english_switch_message() == {
+        "type": "language", "ttsLanguage": "en-IN", "transcriptionLanguage": "en-US"}
 
     monkeypatch.setenv("TTS_PROVIDER", "ElevenLabs")
     monkeypatch.setenv("TTS_VOICE", "abc123")
