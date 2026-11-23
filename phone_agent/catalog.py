@@ -46,7 +46,7 @@ class CatalogItem:
 
 @dataclass(frozen=True)
 class Catalog:
-    settings: dict  # the "settings" block: name, tax, pickup time, payment rule, notes ...
+    settings: dict  # the "settings" block: name, tax, pickup time, payment rule, about, faq ...
     items: dict[str, CatalogItem]
     business_id: int | None = None  # set when the catalog belongs to a business in the database
     slug: str | None = None
@@ -104,10 +104,6 @@ class Catalog:
             lines.append("Answers to common questions (use these; for anything else not covered here, "
                          "say you don't know rather than guess):")
             lines.extend(f"- Q: {f['q']} A: {f['a']}" for f in faq)
-        notes = r.get("notes") or []
-        if notes:
-            lines.append("Other notes:")
-            lines.extend(f"- {n}" for n in notes)
         lines += [
             "",
             f"{words['catalog'].upper()} (item_id | name | base price | description)",

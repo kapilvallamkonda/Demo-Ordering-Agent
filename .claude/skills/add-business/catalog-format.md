@@ -56,7 +56,7 @@ Top-level key: the kind of business, `"restaurant"` (default when missing) or
 | `timezone` | The business's time zone (`America/Chicago`). Pickup days and item day rules use it. Default `DEFAULT_TIMEZONE`. |
 | `about` | One or two plain sentences on what the business is and sells; the agent uses it to describe the business. |
 | `faq` | Common questions callers ask that aren't about one item, with the owner's answer: `[{"q": "Do you deliver?", "a": "No, pickup only."}]`. The agent answers from these and says it doesn't know anything else. Unanswered ones are skipped. `"from_menu": true` marks an answer drafted from the menu until the owner checks it (the checker blocks on these). Never tell the agent to send callers to "call the business": they already are. |
-| `notes` | Old free-form lines, still added to the prompt as "Other notes". Don't add new ones: use `about`, `faq` or item rules. |
+| `notes` | No longer used (ignored). Put that information in `about`, `faq` or item rules. |
 
 ## Items
 

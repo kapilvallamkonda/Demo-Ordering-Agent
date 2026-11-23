@@ -20,8 +20,7 @@ Field types:
   faq             list of {"q": question, "a": answer}, max_items; optional "from_menu": true
                   marks one the menu reader drafted, until the owner edits or confirms it
 
-A field with "hide_when_empty" is only shown in the form when it has a value (old fields
-kept so nothing is lost).
+A field with "hide_when_empty" is only shown in the form when it has a value.
 """
 
 from __future__ import annotations
@@ -61,10 +60,6 @@ SETTINGS: list[dict] = [
      "max_items": 40, "max_length": 600,
      "help": "What callers ask that isn't about one item, and what you tell them. The agent uses "
              "these answers; for anything else it says it doesn't know."},
-    {"path": "notes", "group": "What your agent knows", "type": "string_list", "hide_when_empty": True,
-     "label": "Other notes", "max_items": 30, "max_length": 400,
-     "help": "Notes from before Common questions existed. Move them into a question or About, "
-             "then delete them here."},
 ]
 
 BY_PATH = {f["path"]: f for f in SETTINGS}

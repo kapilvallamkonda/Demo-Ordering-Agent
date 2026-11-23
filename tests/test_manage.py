@@ -130,7 +130,7 @@ def test_edit_draft_then_publish_reaches_the_next_call(app):
     sign_in(c, store, bella)
     ed = editor(c, bella)
     assert ed["draft"] is None and ed["check"]["errors"] == []
-    assert {f["path"] for f in ed["schema"]} >= {"name", "tax_rate", "notes", "greeting"}
+    assert {f["path"] for f in ed["schema"]} >= {"name", "tax_rate", "about", "faq", "greeting"}
     catalog = ed["catalog"]
     catalog["settings"]["greeting"] = "Ciao! Bella Cucina here. What would you like?"
     tiramisu = next(i for i in catalog["items"] if i["id"] == "tiramisu")

@@ -1107,7 +1107,7 @@
   const isOwner = () => (S.me.businesses.find(b => b.id === S.rid) || {}).role === "owner" || S.me.operator;
   const loading = () => el("p", { class: "muted" }, "Loading…");
   function later(box, load) {  // fill `box` once `load()` resolves; show its error otherwise
-    load().then(kids => box.replaceChildren(...[].concat(kids))).catch(e => box.replaceChildren(el("p", { class: "err" }, e.message)));
+    load().then(kids => box.replaceChildren(...[].concat(kids).filter(k => k != null && k !== false))).catch(e => box.replaceChildren(el("p", { class: "err" }, e.message)));
     return box;
   }
   const PAY = { paid: ["Paid", "ok"], unpaid: ["Unpaid", "warn"], expired: ["Link expired", "bad"], not_requested: ["Pay at pickup", ""] };
