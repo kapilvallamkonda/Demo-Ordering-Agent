@@ -35,15 +35,25 @@ class Language:
     transcription_provider: str
     speech_model: str
     confirm: str  # what the agent hears when the caller presses the key
+    stt_code: str = ""  # recognition's code when it differs (Deepgram names Telugu "te")
+
+    @property
+    def listen_code(self) -> str:
+        return self.stt_code or self.code
 
     def noun(self) -> str:
-        """The <Language> element declaring it to ConversationRelay."""
-        attrs = {"code": self.code, "ttsProvider": self.tts_provider, "voice": self.voice,
-                 "transcriptionProvider": self.transcription_provider, "speechModel": self.speech_model}
-        return "<Language " + " ".join(f"{k}={quoteattr(v)}" for k, v in attrs.items() if v) + " />"
+        """The <Language> element(s) declaring it to ConversationRelay: one for both voice
+        and recognition, or, when recognition uses another code, one for each."""
+        def el(attrs):
+            return "<Language " + " ".join(f"{k}={quoteattr(v)}" for k, v in attrs.items() if v) + " />"
+        tts = {"ttsProvider": self.tts_provider, "voice": self.voice}
+        stt = {"transcriptionProvider": self.transcription_provider, "speechModel": self.speech_model}
+        if self.listen_code == self.code:
+            return el({"code": self.code, **tts, **stt})
+        return el({"code": self.code, **tts}) + el({"code": self.listen_code, **stt})
 
     def switch_message(self) -> dict:
-        return {"type": "language", "ttsLanguage": self.code, "transcriptionLanguage": self.code}
+        return {"type": "language", "ttsLanguage": self.code, "transcriptionLanguage": self.listen_code}
 
 
 def _telugu() -> Language:
@@ -55,6 +65,7 @@ def _telugu() -> Language:
         # Twilio uses Google's global endpoint, where te-IN has only `long` and `short`
         # (chirp_3 is EU-only for Telugu; Twilio rejected it with error 64101).
         speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
+        stt_code=os.environ.get("TELUGU_STT_CODE", ""),
         confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
                 "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
     )

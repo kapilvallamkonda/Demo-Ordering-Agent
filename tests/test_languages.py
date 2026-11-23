@@ -122,3 +122,15 @@ def test_telugu_is_the_default_until_the_business_chooses(monkeypatch):
     raw["settings"].pop("languages")
     assert "Telugu" not in build_greeting(parse_catalog(raw))
 
+
+def test_recognition_can_use_its_own_language_code(monkeypatch):
+    """Deepgram names Telugu "te"; the voice keeps te-IN. Two <Language> elements, and the
+    switch sends each part its own code."""
+    from phone_agent import languages
+    monkeypatch.setenv("TELUGU_STT_PROVIDER", "Deepgram")
+    monkeypatch.setenv("TELUGU_SPEECH_MODEL", "nova-3-general")
+    monkeypatch.setenv("TELUGU_STT_CODE", "te")
+    lang = languages.available()["te-IN"]
+    assert lang.noun().count("<Language") == 2 and 'code="te" transcriptionProvider="Deepgram"' in lang.noun()
+    assert lang.switch_message() == {"type": "language", "ttsLanguage": "te-IN", "transcriptionLanguage": "te"}
+
