@@ -280,7 +280,10 @@ async def voice(request: Request) -> Response:
     attrs = {"url": ws_url, "welcomeGreeting": greeting, **relay_voice_attrs()}
     offered = languages.for_business(catalog.settings)
     if offered:
-        attrs["dtmfDetection"] = "true"  # "press 2 for Telugu"
+        attrs["dtmfDetection"] = "true"  # the keys still switch, though the greeting asks
+        # English recognition hears "Tamil" as "Tomo" and "Kannada" as "Kanata" without hints.
+        names = ",".join(["English"] + [lang.label for lang in offered])
+        attrs["hints"] = f"{attrs['hints']},{names}" if attrs.get("hints") else names
     rendered = " ".join(f"{name}={quoteattr(value)}" for name, value in attrs.items())
     nouns = "".join(lang.noun() for lang in offered)
     relay = f"<ConversationRelay {rendered}>{nouns}</ConversationRelay>" if nouns else f"<ConversationRelay {rendered} />"

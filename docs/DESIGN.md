@@ -788,6 +788,8 @@ if Twilio rejects a language's setup).
   (a custom greeting gets the question appended). The agent asks the opening question once
   English is chosen, or just carries on if the caller starts ordering. No IVR-style "press 2";
   the keys (2 Telugu, 3 Hindi, 4 Tamil, 5 Kannada) still work but aren't announced.
+  The language names are sent as recognition `hints`: without them English recognition
+  heard "Tamil" as "Tomo" and "Kannada" as "Kanata" on test calls.
 - **Other languages:** a caller asking for one that isn't offered (Gujarati, Spanish) hears,
   in English, that the agent doesn't speak it yet, and the call continues in English;
   `switch_language` refuses codes the business doesn't offer.

@@ -74,6 +74,7 @@ def test_voice_declares_telugu_only_for_businesses_that_offer_it(app):
     seed_business(store, slug="plain", phone="+15550008888")
     twiml = c.post("/voice", data={"CallSid": "CA1", "From": "+15551112222", "To": BELLA_PHONE}).text
     assert 'dtmfDetection="true"' in twiml and "or in Telugu?" in twiml
+    assert 'hints="English,Telugu"' in twiml  # so English recognition hears the language names
     assert '<Language code="te-IN" ttsProvider="ElevenLabs" voice="UgBBYS2sOqTuMpoF3BR0-v4_turbo"' in twiml
     assert 'transcriptionProvider="Google" speechModel="long"' in twiml
     plain = c.post("/voice", data={"CallSid": "CA2", "From": "+15551112222", "To": "+15550008888"}).text
