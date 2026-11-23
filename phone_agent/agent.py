@@ -321,6 +321,9 @@ class PhoneAgent:
                 return  # interrupted: the tools ran; the next turn tells the caller
             if self.session.end_requested:
                 return  # the goodbye has been said; no need for another model turn
+            if self.session.waiting:
+                self.session.waiting = False
+                return  # side talk or a TV: stay silent until the caller speaks to us
 
         log.warning("hit MAX_TOOL_ROUNDS for one turn")
         yield ERROR_LINE

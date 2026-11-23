@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (background-noise settings; Indian English voice by default; event & wedding supplies template, guides, custom requests, Shopify).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (Hindi, Tamil, Kannada; greeting asks the language; side talk; background-noise settings; Indian English voice by default; event & wedding supplies template, guides, custom requests, Shopify).
 
 ## 1. Goal
 
@@ -774,42 +774,60 @@ A business sets itself up without us, like creating any online account.
 - The menu is read by one structured-output call, and always reviewed by the owner
   before it's published; nothing reaches callers without a publish.
 
-## 16b. Languages besides English (Telugu first)
+## 16b. Languages besides English (Telugu, Hindi, Tamil, Kannada)
 
-A business can offer callers another language (Settings → Other languages,
-`settings.languages`; `phone_agent/languages.py`). Telugu (`te-IN`) is the first, and for
-now it's on by default: a business that hasn't chosen offers `DEFAULT_LANGUAGES`
-(`te-IN`); unticking saves `[]`, which is respected. Setting `DEFAULT_LANGUAGES` empty
-turns the default off for every business at once (the kill switch if Twilio rejects the
-Telugu setup).
+A business can offer callers other languages (Settings → Other languages,
+`settings.languages`; `phone_agent/languages.py`): Telugu (`te-IN`), Hindi (`hi-IN`), Tamil
+(`ta-IN`) and Kannada (`kn-IN`). All four are on by default: a business that hasn't chosen
+offers `DEFAULT_LANGUAGES`; unticking saves `[]`, which is respected. Setting
+`DEFAULT_LANGUAGES` empty turns the default off for every business at once (the kill switch
+if Twilio rejects a language's setup).
 
-- **Call setup:** for such a business `/voice` adds a `<Language>` element per language to
-  `<ConversationRelay>` (Telugu: ElevenLabs voice with the `v4_turbo` model, the one
-  real-time ElevenLabs model with Telugu; Google `long` recognition is declared because
-  Twilio accepts it there), turns on `dtmfDetection`, and the greeting ends with "For Telugu, press 2".
-  Businesses without languages get exactly the old TwiML.
-- **Switching:** pressing the key, or the agent's `switch_language` tool (offered only to
-  these businesses) sets the call's language; before the agent's next words go out,
+- **Greeting asks, conversationally:** "Thanks for calling X! Would you like to continue in
+  English, or in Telugu, Hindi, Tamil or Kannada?" replaces the template's opening question
+  (a custom greeting gets the question appended). The agent asks the opening question once
+  English is chosen, or just carries on if the caller starts ordering. No IVR-style "press 2";
+  the keys (2 Telugu, 3 Hindi, 4 Tamil, 5 Kannada) still work but aren't announced.
+- **Other languages:** a caller asking for one that isn't offered (Gujarati, Spanish) hears,
+  in English, that the agent doesn't speak it yet, and the call continues in English;
+  `switch_language` refuses codes the business doesn't offer.
+- **Call setup:** `/voice` adds a `<Language>` element per language to `<ConversationRelay>`
+  (an ElevenLabs voice on `v4_turbo`, the real-time ElevenLabs model with Indian languages;
+  Telugu keeps the voice it was approved with, the others use the Indian English voice;
+  Google `long` recognition is declared because Twilio accepts it there) and turns on
+  `dtmfDetection`. Businesses without languages get exactly the old TwiML.
+- **Switching:** the agent's `switch_language` tool (offered only to these businesses), or a
+  key, sets the call's language; before the agent's next words go out,
   `RelayCall.sync_language` sends ConversationRelay a `language` message so its voice and
   listening both change. The agent replies in the language's script, keeping dish names
   and prices as on the menu; `switch_language` with `en-US` switches back.
 - **No automatic detection:** Twilio only detects languages with Deepgram plus
-  ElevenLabs, which don't cover Telugu, so the caller (or the agent, when asked) switches.
+  ElevenLabs, so the caller (or the agent, when asked) switches.
 - **Elsewhere:** transcripts hold what was said; the AI call review writes in English;
   call metrics record the language; texts with the payment link stay in English.
-- **Listening in Telugu is Deepgram `nova-3` in multilingual mode (`multi`, which covers
-  Telugu and Telugu mixed with English), set in the switch message** (`TELUGU_SWITCH_STT`,
-  "provider:model:code"). Found by automated test calls that press 2 and speak a Telugu
-  order, checking Twilio's alerts and the relay's error messages each time: Google `long`
-  delivered nothing or garbled text after up to a minute; Google `chirp_3` isn't offered
-  for te-IN on Google's global endpoint (64101); Deepgram in the call setup failed (64114
-  with te-IN, 64101 with te); Deepgram `te` in the switch message is rejected (64107, the
-  call silently stays on English recognition); Deepgram `multi` works: the order came back
-  in Telugu script about 1.5 s after the caller stopped.
+- **Listening is Deepgram `nova-3` in multilingual mode (`multi`), set in the switch
+  message** (`<LANG>_SWITCH_STT`, "provider:model:code"). Found for Telugu by automated test
+  calls that press 2 and speak an order, checking Twilio's alerts and the relay's error
+  messages each time: Google `long` delivered nothing or garbled text after up to a minute;
+  Google `chirp_3` isn't offered for te-IN on Google's global endpoint (64101); Deepgram in
+  the call setup failed (64114 with te-IN, 64101 with te); Deepgram `te` in the switch
+  message is rejected (64107, the call silently stays on English recognition); Deepgram
+  `multi` works: the order came back in Telugu script about 1.5 s after the caller stopped.
+  Hindi, Tamil and Kannada use the same setup, checked the same way.
 - **Risk:** an invalid voice/model combination stops the call from connecting (Twilio
-  error 64101), so the Telugu voice and model can be changed by env (`TELUGU_VOICE`,
-  `TELUGU_SPEECH_MODEL`, `TELUGU_TTS_PROVIDER`, `TELUGU_STT_PROVIDER`) and the
+  error 64101), so each language's voice and models can be changed by env
+  (`<LANG>_VOICE`, `_SPEECH_MODEL`, `_TTS_PROVIDER`, `_STT_PROVIDER`, `_SWITCH_STT`) and a
   combination must be confirmed with a real call before a business relies on it.
+
+## 16c. Side talk
+
+Callers talk to people in the room ("what do you want on your pizza?"), and TVs talk too;
+speech recognition turns both into words. The agent has a `wait_for_caller` tool (every
+business): when what it heard clearly isn't addressed to it, it calls the tool and says
+nothing; the turn ends without another model call and the caller's next words continue the
+conversation. When unsure, it replies as usual. With the background-noise settings
+(`welcomeGreetingInterruptible=dtmf`, low `interruptSensitivity`) this keeps noise from
+taking over a call.
 
 ## 17. Analytics
 
@@ -991,3 +1009,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Built: event & wedding supplies template; guides (`read_guide`) and custom requests (`record_inquiry`, Requests tab, `notify_phone` text) for every template; `settings.max_advance_days`; notice up to 120 days; the year in the agent's date line; Shopify (OAuth, product import, draft orders paid at Shopify checkout); owner-run POS catalog import. |
 | 2026-11-23 | English voice defaults to Indian English (ElevenLabs `mCQMfsqGDT6IDkEKR20a` v4, `ttsLanguage` en-IN) for every business; switching back from Telugu returns to it. Listening unchanged. |
 | 2026-11-23 | Background noise: greeting interruptible only by keypad, low interrupt sensitivity, backchannels ignored (`GREETING_INTERRUPTIBLE`, `INTERRUPT_SENSITIVITY`, `IGNORE_BACKCHANNEL`). |
+| 2026-11-23 | Hindi, Tamil and Kannada added alongside Telugu, all four on by default; the greeting asks which language the caller would like instead of "press 2"; unsupported languages get a polite no and the call stays in English; `wait_for_caller` keeps the agent silent on side talk and TV speech. |

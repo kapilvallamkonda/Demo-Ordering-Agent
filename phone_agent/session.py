@@ -74,6 +74,7 @@ class CallSession:
     pos: "PosHub | None" = None
     sms: "SmsSender | None" = None  # texts staff (inquiry alerts); None in tests and the terminal chat
     end_requested: bool = False
+    waiting: bool = False  # wait_for_caller this turn: say nothing (side talk, TV)
     language: str = "en-US"  # the call's language; switch_language changes it (languages.py)
     log: list[dict] = field(default_factory=list)
     # orders module state

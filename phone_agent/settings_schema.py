@@ -47,8 +47,8 @@ SETTINGS: list[dict] = [
      "help": "Used for pickup days and which days items are available. Set from your browser when "
              "you signed up."},
     {"path": "languages", "group": "Basics", "type": "languages", "label": "Other languages",
-     "help": "Callers hear \"For Telugu, press 2\" after the greeting and can switch by pressing the "
-             "key or asking. English is always on."},
+     "help": "The greeting asks callers whether they'd like English or one of these, and they "
+             "can switch any time by asking. English is always on."},
     {"path": "pickup_minutes", "group": "Orders", "type": "integer", "label": "Typical pickup time (minutes)",
      "min": 5, "max": 180, "required": True, "help": "How long until an order is usually ready."},
     {"path": "max_advance_days", "group": "Orders", "type": "integer",

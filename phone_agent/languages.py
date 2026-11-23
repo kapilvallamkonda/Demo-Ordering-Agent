@@ -1,11 +1,12 @@
 """Languages a business's callers can switch to (besides English).
 
 A business picks languages in Settings (settings.languages, e.g. ["te-IN"]; [] for none).
-Until it chooses, it offers DEFAULT_LANGUAGES (Telugu for now). For such a
+Until it chooses, it offers DEFAULT_LANGUAGES (Telugu, Hindi, Tamil and Kannada). For such a
 business, /voice declares each language to ConversationRelay (its voice and speech
-recognition), turns on keypad detection, and the greeting ends with "For Telugu, press 2".
-The caller switches by pressing the key or by asking; the agent's switch_language tool
-does the same. Before the agent's next words, the server sends ConversationRelay a
+recognition) and the greeting asks "Would you like to continue in English, or in Telugu,
+Hindi, Tamil or Kannada?". The caller switches by answering or asking (the agent's
+switch_language tool); the keypad keys (2 Telugu, 3 Hindi, 4 Tamil, 5 Kannada) still work
+but aren't announced. Before the agent's next words, the server sends ConversationRelay a
 "language" message so both its voice and its listening change (server.RelayCall).
 
 There's no automatic detection: Twilio only detects languages with Deepgram and
@@ -72,37 +73,56 @@ class Language:
         return {"type": "language", "ttsLanguage": self.code, "transcriptionLanguage": self.listen_code}
 
 
-def _telugu() -> Language:
+def _indian(code: str, label: str, native: str, key: str, env: str, voice: str) -> Language:
+    """An Indian language, set up the way Telugu was proven on real calls: an ElevenLabs
+    v4_turbo voice (the real-time ElevenLabs model for Indian languages), Google `long`
+    recognition declared (Twilio accepts it in the call setup), and Deepgram nova-3
+    multilingual listening set in the switch message. Every part can be overridden by env
+    (<ENV>_VOICE, <ENV>_TTS_PROVIDER, <ENV>_STT_PROVIDER, <ENV>_SPEECH_MODEL, <ENV>_STT_CODE,
+    <ENV>_SWITCH_STT) without a code change."""
+    e = lambda name, default: os.environ.get(f"{env}_{name}", default)
     return Language(
-        code="te-IN", label="Telugu", native="తెలుగు", key="2",
-        tts_provider=os.environ.get("TELUGU_TTS_PROVIDER", "ElevenLabs"),
-        voice=os.environ.get("TELUGU_VOICE", "UgBBYS2sOqTuMpoF3BR0-v4_turbo"),  # v4_turbo: Telugu, real time
-        transcription_provider=os.environ.get("TELUGU_STT_PROVIDER", "Google"),
-        # Twilio uses Google's global endpoint, where te-IN has only `long` and `short`
+        code=code, label=label, native=native, key=key,
+        tts_provider=e("TTS_PROVIDER", "ElevenLabs"),
+        voice=e("VOICE", voice),
+        transcription_provider=e("STT_PROVIDER", "Google"),
+        # Twilio uses Google's global endpoint, where Indian languages have `long` and `short`
         # (chirp_3 is EU-only for Telugu; Twilio rejected it with error 64101).
-        speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
-        stt_code=os.environ.get("TELUGU_STT_CODE", ""),
-        # Listening in Telugu: Google (declared above, accepted by Twilio) never delivered usable
-        # text on real calls. Deepgram nova-3 in multilingual mode ("multi", which covers Telugu
-        # and Telugu mixed with English), set in the switch message, does: fast and in Telugu
-        # script. Twilio rejects Deepgram with "te" (64107) or "te-IN" (64114), and in the call
-        # setup (64101). "none" uses the declared Google recognition.
-        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "Deepgram:nova-3-general:multi").strip().replace("none", ""),
-        confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
-                "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
+        speech_model=e("SPEECH_MODEL", "long"),
+        stt_code=e("STT_CODE", ""),
+        # Listening: Google (declared above, accepted by Twilio) never delivered usable text
+        # on real Telugu calls. Deepgram nova-3 in multilingual mode ("multi"), set in the
+        # switch message, does, fast and in the language's own script. Twilio rejects Deepgram
+        # with "te" (64107) or "te-IN" (64114), and in the call setup (64101). "none" uses the
+        # declared Google recognition.
+        switch_stt=e("SWITCH_STT", "Deepgram:nova-3-general:multi").strip().replace("none", ""),
+        confirm=f"(The caller pressed {key}. The call is already switched to {label}, so don't call "
+                f"switch_language. Greet them in one short {label} sentence and ask what they'd like.)",
     )
 
 
+# The Indian English voice (server.VOICE_DEFAULTS) on v4_turbo, for Hindi, Tamil and Kannada.
+# Telugu keeps the voice it was tested and approved with.
+_INDIAN_VOICE = "mCQMfsqGDT6IDkEKR20a-v4_turbo"
+
+
 def available() -> dict[str, Language]:
-    """Languages businesses can offer, by code (read per call so env overrides apply)."""
-    lang = _telugu()
-    return {lang.code: lang}
+    """Languages businesses can offer, by code, in the order the greeting names them (read
+    per call so env overrides apply). Keypad keys still switch, though the greeting asks
+    instead of offering keys."""
+    langs = [
+        _indian("te-IN", "Telugu", "తెలుగు", "2", "TELUGU", "UgBBYS2sOqTuMpoF3BR0-v4_turbo"),
+        _indian("hi-IN", "Hindi", "हिन्दी", "3", "HINDI", _INDIAN_VOICE),
+        _indian("ta-IN", "Tamil", "தமிழ்", "4", "TAMIL", _INDIAN_VOICE),
+        _indian("kn-IN", "Kannada", "ಕನ್ನಡ", "5", "KANNADA", _INDIAN_VOICE),
+    ]
+    return {lang.code: lang for lang in langs}
 
 
 def default_codes() -> list[str]:
     """Languages a business offers until it chooses in Settings: DEFAULT_LANGUAGES
-    (comma-separated, default "te-IN"; empty turns the default off for everyone)."""
-    raw = os.environ.get("DEFAULT_LANGUAGES", "te-IN")
+    (comma-separated, default all of them; empty turns the default off for everyone)."""
+    raw = os.environ.get("DEFAULT_LANGUAGES", ",".join(available()))
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
@@ -118,9 +138,15 @@ def for_business(settings: dict) -> list[Language]:
     return [langs[c] for c in codes_for(settings) if c in langs]
 
 
-def greeting_offer(languages: list[Language]) -> str:
-    """Said after the greeting, in English so every caller understands the keypad offer."""
-    return " ".join(f"For {lang.label}, press {lang.key}." for lang in languages)
+def names(languages: list[Language]) -> str:
+    """"Telugu, Hindi, Tamil or Kannada"."""
+    labels = [lang.label for lang in languages]
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
+
+
+def greeting_question(languages: list[Language]) -> str:
+    """Asked as part of the greeting, in English, instead of an IVR-style keypad offer."""
+    return f"Would you like to continue in English, or in {names(languages)}?"
 
 
 def by_key(languages: list[Language], digit: str) -> Language | None:

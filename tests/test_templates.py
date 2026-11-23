@@ -67,8 +67,8 @@ def test_coming_soon_template_cant_be_used():
 
 def test_tools_come_from_the_modules():
     names = [t["name"] for t in tools_for(("orders",))]
-    assert names[0] == "add_item" and "place_order" in names and names[-1] == "end_call"
-    assert [t["name"] for t in tools_for(())] == ["end_call"]
+    assert names[0] == "add_item" and "place_order" in names and names[-2:] == ["end_call", "wait_for_caller"]
+    assert [t["name"] for t in tools_for(())] == ["end_call", "wait_for_caller"]
 
 
 def test_settings_labels_follow_the_template():

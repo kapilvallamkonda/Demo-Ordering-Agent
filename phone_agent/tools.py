@@ -1,4 +1,4 @@
-"""Running tools on a call: the tools every call has (end_call), the tool list for a
+"""Running tools on a call: the tools every call has (end_call, wait_for_caller), the tool list for a
 business (its template's modules), and the dispatcher.
 
 The dispatcher never raises for bad input: errors go back to the model as the tool's
@@ -22,6 +22,15 @@ COMMON_TOOLS: list[dict] = [
     tool(
         "end_call",
         "Hang up after you have said goodbye. Use when the caller is done or asks to end the call.",
+        {},
+        [],
+    ),
+    tool(
+        "wait_for_caller",
+        "Stay silent instead of replying, when what you heard wasn't meant for you: the caller "
+        "talking to someone else in the room, a TV or radio, or background noise turned into "
+        "words. Write nothing before or after it. Don't use it when the caller might be "
+        "talking to you.",
         {},
         [],
     ),
@@ -62,6 +71,9 @@ def run_tool(session: CallSession, name: str, args: Any) -> tuple[str, bool]:
         if name == "end_call":
             session.end_requested = True
             result = {"ok": True}
+        elif name == "wait_for_caller":
+            session.waiting = True
+            result = {"ok": True, "note": "Say nothing; the caller's next words come to you as usual."}
         elif name == "switch_language":
             from .languages import ENGLISH, for_business
 

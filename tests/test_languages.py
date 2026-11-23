@@ -1,4 +1,5 @@
-"""Languages besides English (Telugu): the setting, the call setup, and switching mid-call."""
+"""Languages besides English (Telugu, Hindi, Tamil, Kannada): the setting, the call setup,
+the greeting's question, and switching mid-call."""
 
 import json
 
@@ -45,8 +46,12 @@ def test_setting_accepts_only_offered_languages():
 def test_greeting_prompt_and_tools_follow_the_setting():
     plain = parse_catalog(json.loads(FIXTURE_CATALOG.read_text()))
     telugu = parse_catalog(telugu_catalog())
-    assert "press 2" not in build_greeting(plain)
-    assert build_greeting(telugu).endswith("For Telugu, press 2.")
+    assert build_greeting(plain) == "Thanks for calling Bella Cucina! What can I get started for you today?"
+    # Asked as a question in place of the opening question, which the agent asks after.
+    assert build_greeting(telugu) == ("Thanks for calling Bella Cucina! "
+                                      "Would you like to continue in English, or in Telugu?")
+    assert "What can I get started for you today?" in build_system_prompt(telugu)
+    assert "don't speak it yet" in build_system_prompt(telugu)
     assert "Telugu (te-IN)" in build_system_prompt(telugu) and "Telugu" not in build_system_prompt(plain)
     names = lambda tools: {t["name"] for t in tools}
     assert "switch_language" not in names(tools_for(plain.template.modules, plain.settings.get("languages")))
@@ -55,8 +60,10 @@ def test_greeting_prompt_and_tools_follow_the_setting():
 
 def test_switch_language_tool_only_switches_to_offered_languages():
     session = CallSession(catalog=parse_catalog(telugu_catalog()))
-    text, err = run_tool(session, "switch_language", {"language": "hi-IN"})
+    text, err = run_tool(session, "switch_language", {"language": "hi-IN"})  # not offered here
     assert err and "te-IN" in text and session.language == "en-US"
+    text, err = run_tool(session, "switch_language", {"language": "gu-IN"})  # not supported at all
+    assert err and session.language == "en-US"
     _, err = run_tool(session, "switch_language", {"language": "te-IN"})
     assert not err and session.language == "te-IN"
 
@@ -66,7 +73,7 @@ def test_voice_declares_telugu_only_for_businesses_that_offer_it(app):
     seed_business(store, catalog=telugu_catalog())
     seed_business(store, slug="plain", phone="+15550008888")
     twiml = c.post("/voice", data={"CallSid": "CA1", "From": "+15551112222", "To": BELLA_PHONE}).text
-    assert 'dtmfDetection="true"' in twiml and "For Telugu, press 2." in twiml
+    assert 'dtmfDetection="true"' in twiml and "or in Telugu?" in twiml
     assert '<Language code="te-IN" ttsProvider="ElevenLabs" voice="UgBBYS2sOqTuMpoF3BR0-v4_turbo"' in twiml
     assert 'transcriptionProvider="Google" speechModel="long"' in twiml
     plain = c.post("/voice", data={"CallSid": "CA2", "From": "+15551112222", "To": "+15550008888"}).text
@@ -108,11 +115,28 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     assert any(t["name"] == "switch_language" for t in fake.requests[0]["tools"])
 
 
+def test_four_indian_languages_by_default(monkeypatch):
+    monkeypatch.delenv("DEFAULT_LANGUAGES")  # production's default
+    raw = json.loads(FIXTURE_CATALOG.read_text())
+    cat = parse_catalog(raw)
+    assert build_greeting(cat).endswith(
+        "Would you like to continue in English, or in Telugu, Hindi, Tamil or Kannada?")
+    from phone_agent import languages
+    langs = languages.for_business(cat.settings)
+    assert [(l.code, l.key) for l in langs] == [("te-IN", "2"), ("hi-IN", "3"), ("ta-IN", "4"), ("kn-IN", "5")]
+    for lang in langs:  # every one set up like Telugu, which is proven on real calls
+        assert "-v4_turbo" in lang.voice and 'speechModel="long"' in lang.noun()
+        assert lang.switch_message()["transcriptionLanguage"] == "multi"
+    session = CallSession(catalog=cat)
+    _, err = run_tool(session, "switch_language", {"language": "ta-IN"})
+    assert not err and session.language == "ta-IN"
+
+
 def test_telugu_is_the_default_until_the_business_chooses(monkeypatch):
     monkeypatch.setenv("DEFAULT_LANGUAGES", "te-IN")
     raw = json.loads(FIXTURE_CATALOG.read_text())
     assert "languages" not in raw["settings"]
-    assert build_greeting(parse_catalog(raw)).endswith("For Telugu, press 2.")  # not chosen: default
+    assert build_greeting(parse_catalog(raw)).endswith("or in Telugu?")  # not chosen: default
     raw["settings"]["languages"] = []
     assert "Telugu" not in build_greeting(parse_catalog(raw))  # chose none: respected
     from phone_agent.settings_schema import settings_for
@@ -146,3 +170,27 @@ def test_recognition_can_be_set_in_the_switch_message_only(monkeypatch):
     assert lang.switch_message() == {"type": "language", "ttsLanguage": "te-IN", "transcriptionLanguage": "te",
                                      "transcriptionProvider": "Deepgram", "speechModel": "nova-3-general"}
 
+
+
+def test_side_talk_gets_silence_not_a_reply(app):
+    """The caller talking to someone in the room: the agent calls wait_for_caller and says
+    nothing, then answers the caller's next words normally."""
+    c, store, fake = app
+    bid = seed_business(store, catalog=telugu_catalog())
+    fake.script = [
+        message(tool_block("wait_for_caller", {}, id="w1"), stop_reason="tool_use"),
+        message(text_block("Sure, one cheese pizza.")),
+    ]
+    sent = []
+    with c.websocket_connect(f"/ws?business={bid}") as ws:
+        ws.send_text(json.dumps({"type": "setup", "callSid": "CA7", "from": "+15550001111", "to": BELLA_PHONE}))
+        ws.send_text(json.dumps({"type": "prompt", "voicePrompt": "Sarah, what do you want on yours?", "last": True}))
+        read_until_last(ws, sent)
+        ws.send_text(json.dumps({"type": "prompt", "voicePrompt": "One cheese pizza please", "last": True}))
+        read_until_last(ws, sent)
+    tokens = [m["token"] for m in sent if m["type"] == "text"]
+    assert tokens == ["", "Sure, one cheese pizza.", ""]  # nothing said to the side talk
+    agent_requests = [r for r in fake.requests if r.get("tools")]  # not the call review
+    assert len(agent_requests) == 2  # no extra model turn after wait_for_caller
+    last_user = agent_requests[1]["messages"][-1]["content"]
+    assert last_user[0]["type"] == "tool_result" and last_user[-1]["text"] == "One cheese pizza please"
