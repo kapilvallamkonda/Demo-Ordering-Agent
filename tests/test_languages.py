@@ -134,3 +134,12 @@ def test_recognition_can_use_its_own_language_code(monkeypatch):
     assert lang.noun().count("<Language") == 2 and 'code="te" transcriptionProvider="Deepgram"' in lang.noun()
     assert lang.switch_message() == {"type": "language", "ttsLanguage": "te-IN", "transcriptionLanguage": "te"}
 
+
+def test_recognition_can_be_set_in_the_switch_message_only(monkeypatch):
+    from phone_agent import languages
+    monkeypatch.setenv("TELUGU_SWITCH_STT", "Deepgram:nova-3-general:te")
+    lang = languages.available()["te-IN"]
+    assert 'transcriptionProvider="Google"' in lang.noun()  # the call setup Twilio accepts is unchanged
+    assert lang.switch_message() == {"type": "language", "ttsLanguage": "te-IN", "transcriptionLanguage": "te",
+                                     "transcriptionProvider": "Deepgram", "speechModel": "nova-3-general"}
+

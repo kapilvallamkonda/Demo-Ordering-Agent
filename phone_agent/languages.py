@@ -36,6 +36,9 @@ class Language:
     speech_model: str
     confirm: str  # what the agent hears when the caller presses the key
     stt_code: str = ""  # recognition's code when it differs (Deepgram names Telugu "te")
+    # Recognition set only in the switch message, not in the call setup:
+    # "provider:model:code", e.g. "Deepgram:nova-3-general:te" (TELUGU_SWITCH_STT).
+    switch_stt: str = ""
 
     @property
     def listen_code(self) -> str:
@@ -53,6 +56,11 @@ class Language:
         return el({"code": self.code, **tts}) + el({"code": self.listen_code, **stt})
 
     def switch_message(self) -> dict:
+        if self.switch_stt.count(":") == 2:
+            provider, model, code = self.switch_stt.split(":")
+            # A language the session wasn't set up with: give the recognition part in full.
+            return {"type": "language", "ttsLanguage": self.code, "transcriptionLanguage": code,
+                    "transcriptionProvider": provider, "speechModel": model}
         return {"type": "language", "ttsLanguage": self.code, "transcriptionLanguage": self.listen_code}
 
 
@@ -66,6 +74,7 @@ def _telugu() -> Language:
         # (chirp_3 is EU-only for Telugu; Twilio rejected it with error 64101).
         speech_model=os.environ.get("TELUGU_SPEECH_MODEL", "long"),
         stt_code=os.environ.get("TELUGU_STT_CODE", ""),
+        switch_stt=os.environ.get("TELUGU_SWITCH_STT", "").strip(),
         confirm="(The caller pressed 2. The call is already switched to Telugu, so don't call "
                 "switch_language. Greet them in one short Telugu sentence and ask what they'd like.)",
     )
