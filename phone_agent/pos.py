@@ -47,6 +47,8 @@ RETRY_DELAYS = (5, 30, 120, 600)  # seconds between attempts after the first one
 PER_BUSINESS_JOBS = 2  # POS jobs one business can have running at once
 BUSY_RECHECK = 2.0  # seconds before a job that had to wait for its business's slot tries again
 RESUME_HOURS = 6  # on startup, resend orders from this many hours back that never made it
+LINK_POLL_SECONDS = 20  # how often a waiting POS payment link is checked
+LINK_GRACE_SECONDS = 3600  # give up on a link we can't reach this long after it should have expired
 STATE_MAX_AGE = 3600  # a connect link works for an hour
 REFRESH_MARGIN = 3 * 24 * 3600  # refresh an access token this long before it expires
 
@@ -291,8 +293,9 @@ class PosHub:
 
     def __init__(self, store: Store, directory, providers: dict[str, Provider],
                  retry_delays: tuple[float, ...] = RETRY_DELAYS, workers: int = 4,
-                 run_inline: bool = False, per_business: int = PER_BUSINESS_JOBS):
+                 run_inline: bool = False, per_business: int = PER_BUSINESS_JOBS, sms=None):
         self.store = store
+        self.sms = sms  # texts the customer when a POS payment link is paid or expires (payments.SmsSender)
         self.directory = directory  # businesses.BusinessDirectory
         self.providers = providers
         self.retry_delays = retry_delays
@@ -364,11 +367,97 @@ class PosHub:
         self._run(self._payment_attempt, order_id, 0)
 
     def resume(self) -> int:
-        """Resend orders from the last few hours that never reached their POS."""
+        """Resend orders from the last few hours that never reached their POS, and go back to
+        watching payment links that were waiting when the server stopped."""
         ids = self.store.orders_to_send(time.time() - RESUME_HOURS * 3600)
         for oid in ids:
             self._run(self._send_attempt, oid, 0)
-        return len(ids)
+        waiting = self.store.orders_awaiting_link(time.time() - 25 * 3600)  # links last up to 24 hours
+        for oid in waiting:
+            self._run(self._watch_attempt, oid, 0)
+        return len(ids) + len(waiting)
+
+    # pay by a POS payment link (Square): see SquarePayments
+
+    def create_payment_link(self, order_id: int):
+        """Create the POS payment link for a saved order; the POS creates the order with it."""
+        from .payments import PaymentLink
+
+        rec = self.store.order_for_pos(order_id)
+        if rec is None:
+            raise PosError("order not found", retry=False)
+        conn = self.connection(rec["business_id"])
+        if conn is None:
+            raise PosError("business has no POS connected", retry=False)
+        prov = self.provider(conn.provider)
+        if not hasattr(prov, "payment_link"):
+            raise PosError(f"{conn.provider} payment links aren't supported", retry=False)
+        catalog = self.directory.catalog_version(rec["business_id"], rec["catalog_id"])
+        link_id, url, pos_order_id = prov.payment_link(conn, build_pos_order(rec, catalog, conn.provider))
+        self.store.set_payment_link(order_id, link_id, url)
+        self.store.set_pos_status(order_id, "held", pos_order_id=pos_order_id, attempted=True)
+        log.info("order #%s: %s payment link %s", rec["number"], conn.provider, link_id)
+        return PaymentLink(link_id, url)
+
+    def watch_payment(self, order_id: int) -> None:
+        """Check the link every LINK_POLL_SECONDS until it's paid or expires (tests call
+        check_payment instead)."""
+        if not self.run_inline:
+            self._run(self._watch_attempt, order_id, 0, delay=LINK_POLL_SECONDS)
+
+    def _watch_attempt(self, order_id: int, attempt: int) -> None:
+        if self.check_payment(order_id) == "waiting" and not self.run_inline:
+            self._run(self._watch_attempt, order_id, attempt + 1, delay=LINK_POLL_SECONDS)
+
+    def check_payment(self, order_id: int, now: float | None = None) -> str:
+        """One look at a waiting payment link. Returns "paid", "expired", "waiting" or "done"
+        (nothing to watch). Paid: the order is confirmed (it's on the POS already) and the
+        customer gets a text. Past the business's payment window: the link is cancelled (the
+        POS drops its draft order), the order is cancelled and the customer is told."""
+        from .payments import expired_text, paid_text
+
+        now = now or time.time()
+        with self._lock(order_id):
+            rec = self.store.order_for_pos(order_id)
+            if rec is None or rec["status"] != "awaiting_payment" or not rec["payment_id"] or not rec["pos_order_id"]:
+                return "done"
+            catalog = self.directory.catalog_version(rec["business_id"], rec["catalog_id"])
+            deadline = rec["created_at"] + catalog.pay_within_minutes * 60
+            try:
+                conn = self.connection(rec["business_id"])
+                if conn is None:
+                    raise PosError("business has no POS connected", retry=False)
+                prov = self.provider(conn.provider)
+                paid = prov.link_paid(conn, rec["pos_order_id"])
+                if paid is False and now > deadline:
+                    prov.cancel_link(conn, rec["payment_id"])
+                    paid = prov.link_paid(conn, rec["pos_order_id"])  # paid in the last seconds?
+            except PosError as e:
+                if now < deadline + LINK_GRACE_SECONDS:
+                    log.warning("order id %s: checking the payment link failed: %s", order_id, e)
+                    return "waiting"
+                paid = None  # can't reach the POS long after expiry: give up on it
+            if paid:
+                changed = self.store.mark_paid(rec["payment_id"])
+                self.store.set_pos_status(order_id, "sent", pos_order_id=rec["pos_order_id"])
+                self.store.set_pos_paid(order_id)
+                log.info("order #%s paid by payment link; it's on the POS", rec["number"])
+                self._text(rec, changed and paid_text(catalog, rec["number"], changed.get("pickup")))
+                return "paid"
+            if paid is None or now > deadline:
+                changed = self.store.mark_expired(rec["payment_id"])
+                self.store.set_pos_status(order_id, "cancelled", error="not paid in time; the payment link was cancelled")
+                log.info("order #%s: payment link expired unpaid; order cancelled", rec["number"])
+                self._text(rec, changed and expired_text(catalog, rec["number"]))
+                return "expired"
+            return "waiting"
+
+    def _text(self, rec: dict, body: str | None) -> None:
+        if body and self.sms and rec.get("customer_phone"):
+            try:
+                self.sms.send(rec["customer_phone"], body)
+            except Exception:
+                log.exception("couldn't text payment update for order #%s", rec["number"])
 
     def retry(self, order_id: int) -> None:
         self.store.set_pos_status(order_id, "pending")
@@ -487,6 +576,46 @@ class PosHub:
                     return "retry"
         # Not on the POS yet: sending it records the payment too.
         return "retry" if self.send(order_id) == "retry" else "done"
+
+
+class SquarePayments:
+    """How a business connected to Square takes payment: a Square payment link, texted to
+    the caller. The money goes straight to the business's Square account, and the order
+    shows on its Square register once paid. Square only shows orders from other apps once
+    they're paid, so for these businesses paying is required to confirm the order
+    (always_required). Same interface as payments.PaymentService."""
+
+    always_required = True
+
+    def __init__(self, hub: PosHub, sms):
+        self.hub = hub
+        self.sms = sms
+
+    def request_payment(self, order, order_number: int, order_id: int | None = None):
+        from .payments import order_text
+
+        if order_id is None:
+            raise PosError("the order must be saved before its payment link is made", retry=False)
+        link = self.hub.create_payment_link(order_id)
+        self.hub.watch_payment(order_id)  # before texting, so an unsent link still expires
+        self.sms.send(order.customer_phone, order_text(order, order_number, link.url))
+        return link
+
+
+def payments_for(hub: PosHub | None, store: Store, catalog: Catalog, default):
+    """The payment service for a call to this business, and its catalog as the agent should
+    see it: Square-connected businesses take Square payment links and always require
+    payment; everyone else uses the server-wide service (or none: pay at pickup)."""
+    import dataclasses
+
+    if hub is None or hub.sms is None or catalog.business_id is None or "square" not in hub.providers:
+        return default, catalog
+    row = store.pos_connection(catalog.business_id)
+    if row is None or row["provider"] != "square":
+        return default, catalog
+    settings = dict(catalog.settings)
+    settings["payment"] = {**(settings.get("payment") or {}), "required_before_cooking": True}
+    return SquarePayments(hub, hub.sms), dataclasses.replace(catalog, settings=settings)
 
 
 # ---- catalog import ----------------------------------------------------------------------

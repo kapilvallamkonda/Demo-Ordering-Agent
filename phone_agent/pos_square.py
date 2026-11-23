@@ -1,6 +1,8 @@
 """Square: send orders with the Orders API, import the catalog from the Catalog API.
 
-Orders are created as pickup orders (a PICKUP fulfillment: ASAP with the prep time from
+With Square connected, callers pay by a Square payment link (payment_link below, driven by
+pos.SquarePayments): Square creates the order, and it appears on the register once paid.
+Otherwise orders are created as pickup orders (a PICKUP fulfillment: ASAP with the prep time from
 the catalog settings, or SCHEDULED at the pickup time the caller chose). Square only shows an API order in Square POS and the Seller
 Dashboard once it is paid, so:
   - When the payment link is paid, we record an EXTERNAL payment (source "Stripe payment
@@ -134,6 +136,45 @@ class SquareProvider:
             "order": self.order_body(conn, order),
         })
         return resp["order"]["id"]
+
+    # ---- Square payment links (pay by text, money straight to the business's Square)
+
+    def payment_link(self, conn: Connection, order: PosOrder) -> tuple[str, str, str]:
+        """Create a Square payment link for the order. Square creates the order itself (as a
+        draft, unseen by staff); once the customer pays on Square's page it opens and shows in
+        the Order Manager like any paid online order. Returns (link id, url, Square order id)."""
+        if not conn.location_id:
+            raise PosError("this Square account has several locations; choose one first", retry=False)
+        body: dict = {"idempotency_key": f"phone-link-{conn.business_id}-{order.order_id}",
+                      "order": self.order_body(conn, order),
+                      "checkout_options": {"ask_for_shipping_address": False}}
+        if order.customer_phone:
+            body["pre_populated_data"] = {"buyer_phone_number": order.customer_phone}
+        try:
+            link = self._call(conn, "POST", "/v2/online-checkout/payment-links", body)["payment_link"]
+        except PosError as e:
+            if body.get("pre_populated_data") and "PHONE" in str(e).upper():  # odd number: skip prefilling it
+                body.pop("pre_populated_data")
+                link = self._call(conn, "POST", "/v2/online-checkout/payment-links", body)["payment_link"]
+            else:
+                raise
+        return link["id"], link["url"], link["order_id"]
+
+    def link_paid(self, conn: Connection, pos_order_id: str) -> bool | None:
+        """True once the link's order is paid, False while it's waiting, None if it was cancelled."""
+        o = self._call(conn, "GET", f"/v2/orders/{pos_order_id}")["order"]
+        if o.get("state") == "CANCELED":
+            return None
+        due = (o.get("net_amount_due_money") or {}).get("amount")
+        return o.get("state") != "DRAFT" and bool(o.get("tenders")) and not due
+
+    def cancel_link(self, conn: Connection, link_id: str) -> None:
+        """Delete the link (Square cancels its draft order) so it can't be paid any more."""
+        try:
+            self._call(conn, "DELETE", f"/v2/online-checkout/payment-links/{link_id}")
+        except PosError as e:
+            if "NOT_FOUND" not in str(e).upper():
+                raise
 
     def mark_paid(self, conn: Connection, order: PosOrder, pos_order_id: str, payment_ref: str) -> None:
         sq_order = self._call(conn, "GET", f"/v2/orders/{pos_order_id}")["order"]

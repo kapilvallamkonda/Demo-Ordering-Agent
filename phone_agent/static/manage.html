@@ -1020,6 +1020,10 @@
             value: v == null ? "" : String(round2(v * 100 * 1000) / 1000),
             oninput: e => { const n = parseFloat(e.target.value); set(f, isFinite(n) ? Math.round(n * 1000) / 100000 : undefined); } }),
           el("span", { class: "muted" }, "%"));
+        else if (f.type === "boolean" && f.path === "payment.required_before_cooking" && S.ed.pos_provider === "square")
+          input = el("div", {}, el("label", { class: "switch", style: "color:inherit" },
+              el("input", { id, type: "checkbox", checked: true, disabled: true }), el("span", {}, "Always on with Square")),
+            el("span", { class: "help" }, "Callers get a Square payment link by text. The money goes to your Square account, and the order shows on your Square register as soon as it's paid. Square only shows orders from other apps once they're paid."));
         else if (f.type === "boolean") input = el("label", { class: "switch", style: "color:inherit" },
           el("input", { id, type: "checkbox", checked: !!v, onchange: e => set(f, e.target.checked, true) }), el("span", {}, v ? "On" : "Off"));
         else if (f.type === "select" || f.type === "timezone") {
@@ -1309,6 +1313,7 @@
       const pos = await api("GET", `/businesses/${S.rid}/pos`);
       const head = [el("h2", {}, "Point of sale"), el("p", { class: "sub" }, "Send phone orders straight to your Square or Clover register.")];
       if (pos.connected) return [...head, el("p", {}, badge(["Connected", "ok"]), " ", cap(pos.connected.provider)),
+        pos.connected.provider === "square" ? el("p", { class: "sub" }, "Callers pay by a Square payment link we text them. Once they pay, the order appears on your Square register with the pickup time, and the money is in your Square account. Unpaid orders are cancelled when the link expires.") : null,
         isOwner() ? el("button", { class: "btn small danger", onclick: async () => {
           if (!await ask({ title: "Disconnect your POS?", body: "New orders will only show here.", ok: "Disconnect", danger: true })) return;
           await api("DELETE", `/businesses/${S.rid}/pos`); render();

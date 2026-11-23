@@ -311,3 +311,23 @@ def test_import_jobs_are_per_business(tmp_path, monkeypatch):
         assert c.get(f"/api/manage/businesses/{a['id']}/import/{job}").status_code == 404  # not their business
     finally:
         next(gen, None)
+
+
+def test_a_square_outage_only_delays_that_business_payment_check(monkeypatch):
+    """Watching payment links shares the POS job pool: an unreachable Square for one
+    business makes its check wait and retry, never raise into the pool or cancel early."""
+    from cryptography.fernet import Fernet
+
+    from .test_pos import square_link_setup
+
+    monkeypatch.setenv("POS_SECRET_KEY", Fernet.generate_key().decode())
+    order_state = {"order": {"id": "SQ-LINK-ORDER", "state": "DRAFT", "net_amount_due_money": {"amount": 1}}}
+    store, hub, api, texts, session, _ = square_link_setup(order_state)
+    api.routes[("GET", "/v2/orders/SQ-LINK-ORDER")] = (503, {"errors": [{"code": "SERVICE_UNAVAILABLE"}]})
+    created = store.order_for_pos(session.order_id)["created_at"]
+    assert hub.check_payment(session.order_id, now=created + 60) == "waiting"
+    assert hub.check_payment(session.order_id, now=created + 31 * 60) == "waiting"  # past the window, still trying
+    assert store.order_for_pos(session.order_id)["status"] == "awaiting_payment"
+    # Long after, it gives up locally so the order doesn't hang forever.
+    assert hub.check_payment(session.order_id, now=created + 31 * 60 + 3601) == "expired"
+    assert store.order_for_pos(session.order_id)["status"] == "cancelled"

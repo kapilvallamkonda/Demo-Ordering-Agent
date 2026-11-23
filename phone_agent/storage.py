@@ -675,6 +675,15 @@ class Store:
             self._conn.execute("UPDATE orders SET pos_paid = 1 WHERE id = ?", (order_id,))
             self._conn.commit()
 
+    def orders_awaiting_link(self, since: float) -> list[int]:
+        """Orders waiting for a POS payment link (Square) to be paid, for watching after a restart."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM orders WHERE status = 'awaiting_payment' AND pos_status = 'held'"
+                " AND payment_id IS NOT NULL AND pos_order_id IS NOT NULL AND created_at >= ? ORDER BY id",
+                (since,)).fetchall()
+        return [r[0] for r in rows]
+
     def orders_to_send(self, since: float, business_id: int | None = None,
                        statuses: tuple[str, ...] = ("pending", "failed")) -> list[int]:
         """Ids of orders not yet on their POS, oldest first (for retrying after a restart)."""

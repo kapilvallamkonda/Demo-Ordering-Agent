@@ -104,12 +104,20 @@ class PaymentService:
     links: LinkProvider
     sms: SmsSender
 
-    def request_payment(self, order: Order, order_number: int) -> PaymentLink:
+    def request_payment(self, order: Order, order_number: int, order_id: int | None = None) -> PaymentLink:
         """Create the link and text it with the order details. Raises on failure."""
         catalog = order.catalog
         link = self.links.create(order, order_number, catalog.pay_within_minutes)
         self.sms.send(order.customer_phone, order_text(order, order_number, link.url))
         return link
+
+
+def sms_from_env() -> TwilioSms | None:
+    """The shared texting number (TWILIO_SMS_FROM), or None if it isn't configured."""
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    sender = os.environ.get("TWILIO_SMS_FROM", "").strip()
+    return TwilioSms(sid, token, sender) if sid and token and sender else None
 
 
 def payment_service_from_env(base_url: str) -> PaymentService | None:

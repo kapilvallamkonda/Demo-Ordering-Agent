@@ -40,8 +40,8 @@ from .manage import router as manage_router
 from .numbers import TwilioNumbers
 from .onboarding import router as onboarding_router
 from .catalog import Catalog
-from .payments import handle_stripe_event, payment_service_from_env
-from .pos import PosError, PosHub, check_state, providers_from_env
+from .payments import handle_stripe_event, payment_service_from_env, sms_from_env
+from .pos import PosError, PosHub, check_state, payments_for, providers_from_env
 from .businesses import BusinessDirectory
 from .storage import Store
 
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
     log.info("payment links %s", "on" if app.state.payments else "off (pay at pickup)")
     # Point-of-sale integrations; None unless POS_SECRET_KEY is set (it encrypts the tokens).
     if not hasattr(app.state, "pos"):
-        app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env())
+        app.state.pos = (PosHub(app.state.store, app.state.businesses, providers_from_env(), sms=sms_from_env())
                          if os.environ.get("POS_SECRET_KEY", "").strip() else None)
     # Buying phone numbers when a business goes live; None without Twilio credentials.
     if not hasattr(app.state, "numbers"):
@@ -473,13 +473,16 @@ class RelayCall:
                 log.warning("business %s: too many calls; declining call %s", catalog.slug, msg.get("callSid"))
                 return await self.decline(LINES_BUSY)
             try:
+                # A Square-connected business takes Square payment links (and requires payment).
+                payments, catalog = payments_for(getattr(app_state, "pos", None), app_state.store, catalog,
+                                                 app_state.payments)
                 self.agent = PhoneAgent(
                     catalog,
                     client=app_state.client,
                     store=app_state.store,
                     call_id=msg.get("callSid"),
                     caller_phone=msg.get("from"),
-                    payments=app_state.payments,
+                    payments=payments,
                     pos=getattr(app_state, "pos", None),
                 )
             except Exception:

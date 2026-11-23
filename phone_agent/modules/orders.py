@@ -138,7 +138,7 @@ def _place_order(session: CallSession) -> dict:
         result["payment"] = "pay at pickup"
         return result
     try:
-        link = payments.request_payment(order, session.order_number)
+        link = payments.request_payment(order, session.order_number, order_id=session.order_id)
     except Exception:
         log.exception("payment link for order %s failed", session.order_number)
         result["payment"] = {

@@ -429,7 +429,7 @@ def test_pay_first_order_reaches_the_pos_only_once_paid():
     catalog = replace(catalog, settings={**catalog.settings, "payment": {"required_before_cooking": True}})
 
     class Links:
-        def request_payment(self, order, number):
+        def request_payment(self, order, number, order_id=None):
             from phone_agent.payments import PaymentLink
             return PaymentLink("cs_9", "https://pay/9")
 
@@ -447,3 +447,95 @@ def test_pay_first_order_reaches_the_pos_only_once_paid():
     rec = store.order_for_pos(session.order_id)
     assert rec["pos_status"] == "sent" and rec["pos_paid"]
     assert "PAID ONLINE" in api.bodies("POST", "/orders/CL-ORDER-1")[-1]["note"]
+
+
+# ---- Square payment links (pay by text, required) ------------------------------------------
+
+
+def square_link_api(order_state):
+    """A Square that makes payment links; order_state["order"] is what GET /v2/orders returns."""
+    return FakeApi({
+        ("GET", "/v2/locations"): (200, {"locations": [{"id": "LOC1", "name": "Main", "status": "ACTIVE",
+                                                       "currency": "USD"}]}),
+        ("POST", "/v2/online-checkout/payment-links"): (200, {"payment_link": {
+            "id": "LINK1", "url": "https://square.link/u/abc", "order_id": "SQ-LINK-ORDER"}}),
+        ("GET", "/v2/orders/SQ-LINK-ORDER"): lambda _: (200, {"order": order_state["order"]}),
+        ("DELETE", "/v2/online-checkout/payment-links/LINK1"): lambda _: (
+            order_state.update(order={"id": "SQ-LINK-ORDER", "state": "CANCELED"}) or
+            (200, {"id": "LINK1", "cancelled_order_id": "SQ-LINK-ORDER"})),
+    })
+
+
+class Texts:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, to, body):
+        self.sent.append((to, body))
+
+
+def square_link_setup(order_state):
+    store, directory, rid = setup_business()
+    api = square_link_api(order_state)
+    texts = Texts()
+    hub = PosHub(store, directory, {"square": SquareProvider("app", "secret", "sandbox", http=api.client())},
+                 retry_delays=(0,), run_inline=True, sms=texts)
+    hub.save_connection(rid, "square", "sandbox", {"access_token": "tok"}, "MERCH1")
+    payments, catalog = pos_mod.payments_for(hub, store, directory.get(rid), default=None)
+    session = CallSession(order=Order(catalog=catalog), store=store, call_id="CA7", pos=hub, payments=payments)
+    session.order.customer_phone = "+15025550123"
+    run_tool(session, "add_item", {"item_id": "tiramisu"})
+    run_tool(session, "set_customer_name", {"name": "Ana"})
+    text, err = run_tool(session, "place_order", {"caller_confirmed": True})
+    assert not err, text
+    return store, hub, api, texts, session, json.loads(text)
+
+
+def test_square_business_pays_by_square_link_to_confirm():
+    order_state = {"order": {"id": "SQ-LINK-ORDER", "state": "DRAFT", "net_amount_due_money": {"amount": 1062}}}
+    store, hub, api, texts, session, result = square_link_setup(order_state)
+    # Paying is required, whatever the business's own setting says.
+    assert session.catalog.payment_required and result["payment"]["required_before_cooking"] is True
+    link_body = api.bodies("POST", "/v2/online-checkout/payment-links")[0]
+    assert link_body["order"]["location_id"] == "LOC1" and link_body["order"]["fulfillments"][0]["type"] == "PICKUP"
+    assert link_body["pre_populated_data"] == {"buyer_phone_number": "+15025550123"}
+    assert not api.bodies("POST", "/v2/orders")  # no second order: the link's order is the one
+    rec = store.order_for_pos(session.order_id)
+    assert rec["status"] == "awaiting_payment" and rec["pos_status"] == "held"
+    assert rec["pos_order_id"] == "SQ-LINK-ORDER" and rec["payment_id"] == "LINK1"
+    assert texts.sent[0][0] == "+15025550123" and "https://square.link/u/abc" in texts.sent[0][1]
+    # Not paid yet: keep waiting. Then the customer pays on Square's page.
+    assert hub.check_payment(session.order_id) == "waiting"
+    order_state["order"] = {"id": "SQ-LINK-ORDER", "state": "OPEN", "tenders": [{"id": "T1"}],
+                            "net_amount_due_money": {"amount": 0}}
+    assert hub.check_payment(session.order_id) == "paid"
+    rec = store.order_for_pos(session.order_id)
+    assert rec["status"] == "confirmed" and rec["payment_status"] == "paid"
+    assert rec["pos_status"] == "sent" and rec["pos_paid"]
+    assert "payment received" in texts.sent[-1][1]
+    assert hub.check_payment(session.order_id) == "done"  # nothing more to watch
+    assert hub.resume() == 0
+
+
+def test_unpaid_square_link_is_cancelled_after_the_window():
+    order_state = {"order": {"id": "SQ-LINK-ORDER", "state": "DRAFT", "net_amount_due_money": {"amount": 1062}}}
+    store, hub, api, texts, session, _ = square_link_setup(order_state)
+    assert hub.resume() == 1  # after a restart the link is watched again
+    created = store.order_for_pos(session.order_id)["created_at"]
+    assert hub.check_payment(session.order_id, now=created + 29 * 60) == "waiting"
+    assert hub.check_payment(session.order_id, now=created + 31 * 60) == "expired"
+    assert api.bodies("DELETE", "/v2/online-checkout/payment-links/LINK1") == [None]
+    rec = store.order_for_pos(session.order_id)
+    assert rec["status"] == "cancelled" and rec["pos_status"] == "cancelled"
+    assert texts.sent[-1][1] != texts.sent[0][1]  # told it was cancelled
+
+
+def test_payments_for_leaves_other_businesses_alone():
+    store, directory, rid = setup_business()
+    default = object()
+    hub = PosHub(store, directory, {"square": SquareProvider("app", "secret", "sandbox")}, run_inline=True,
+                 sms=Texts())
+    catalog = directory.get(rid)
+    assert pos_mod.payments_for(hub, store, catalog, default) == (default, catalog)  # not connected
+    hub.sms = None
+    assert pos_mod.payments_for(hub, store, catalog, default) == (default, catalog)  # can't text

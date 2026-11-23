@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (item ordering rules, scheduled pickup, About and Common questions).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-22 (Square businesses pay by Square payment link).
 
 ## 1. Goal
 
@@ -499,10 +499,32 @@ POS price changes.
 | | Square | Clover |
 |---|---|---|
 | Order | Orders API, PICKUP fulfillment (ASAP, prep time from the catalog), ticket name `Phone #N Name`, order-level sales tax at the catalog's rate. | v3 order, state open, title `Phone #N Name`, pickup order type, total; one line per unit (bulk), then modifiers. |
-| Shows on the POS | **Only once paid** (a Square rule). | Immediately. |
-| Payment link paid | EXTERNAL payment (source "Stripe payment link") for Square's order total; the order then appears. | Order note becomes "PAID ONLINE". |
+| Shows on the POS | **Only once paid** (a Square rule), so callers pay by a Square payment link (above). | Immediately. |
+| Payment link paid | The Square link's own order opens; nothing to record. (Older path, with a Stripe link: an EXTERNAL payment for Square's order total.) | Order note becomes "PAID ONLINE". |
 | Retries | Idempotency keys from our order id. | Partial order deleted, then recreated. |
 | Catalog import | Catalog: variations become a required `size`/`type` option, single-select modifier lists become options, multi-select become extras; variable-price items skipped. | Items with modifier groups (max 1 is an option, otherwise extras); hidden and variable-price items skipped. |
+
+**Square businesses pay by Square payment link (required).** Square only shows orders
+from other apps once they're paid, so for a business connected to Square every phone
+order is paid by a **Square payment link** (`payments_for` in `pos.py`, chosen per call):
+- `place_order` saves the order, then `SquarePayments` asks Square for a payment link
+  (Checkout API) built from the order: lines, sales tax, PICKUP fulfillment with the
+  pickup time, the caller's number prefilled. Square creates the order itself as a draft,
+  invisible to staff; we don't create a second one.
+- The link is texted from the shared number. The money goes straight to the business's
+  Square account; we never handle it.
+- `PosHub` checks the order every 20 seconds (`check_payment`, on the same per-business
+  gated timers as sending). Paid (Square opens it with a tender): our order is confirmed,
+  marked on the POS and paid, and the customer gets a text; it's now on the register like
+  any paid online order. Past the business's payment window: the link is deleted (Square
+  cancels its draft), the order is cancelled and the customer is told. Square being
+  unreachable only delays the check; an hour past the window we give up locally.
+- Waiting links are watched again after a restart (`orders_awaiting_link`).
+- The business's "wait for payment" setting is forced on for these calls (shown as
+  "Always on with Square" in Settings). Needs the texting number (`TWILIO_SMS_FROM`);
+  without it a Square business falls back to the server-wide payment setting.
+- Open question, to settle with businesses: pay at pickup for Square owners (the order
+  would be in Ringcart only, staff key it in), or a $0 / external-payment workaround.
 
 **Importing a catalog.** `pos import-catalog SLUG > data/businesses/SLUG.json` writes a catalog
 file using the business's current settings block (or `--base`), then it goes through
@@ -516,8 +538,12 @@ no vegetarian/spice tags; add them in review.
   Toast needs the partner program (application drafted in
   `docs/toast-partner-application.md`); Lightspeed and others later, or through a
   middleware such as Deliverect or Otter.
-- The POS doesn't replace our dashboard: unpaid Square orders and failed sends are only
-  visible there.
+- The POS doesn't replace our dashboard: failed sends, and orders waiting for payment,
+  are only visible there.
+- Square businesses take payment through Square, not our Stripe account (2026-11-22):
+  the money never passes through us, and it's the only way their orders show on Square.
+  Payment links are checked by polling, not Square webhooks, so nothing needs setting up
+  per app; webhooks would cut the 20-second delay.
 
 ## 14. Catalog manager (business web interface)
 
@@ -787,3 +813,4 @@ A business sets itself up without us, like creating any online account.
 | 2026-11-22 | Start over: before its first publish, an owner can reset a business to how it was when created (catalog and all details cleared; name and type kept). |
 | 2026-11-22 | New logo: lowercase "ringcart" wordmark on the landing page and sign-in, and an "r" app icon (favicon, Apple touch icon, Android icons, web app manifest; the manager's header uses it too). |
 | 2026-11-22 | Notes replaced by **About your business** and **Common questions** (`settings.about`, `settings.faq` of question/answer pairs with suggestions per template; the agent answers from them and says it doesn't know anything else; old `notes` kept as "Other notes"). **Item ordering rules**, day based: `days`, `notice_days`, `in_person_only`, enforced in `order.py` via `schedule.py` against the pickup day in the business's time zone (`settings.timezone`, set from the owner's browser; `DEFAULT_TIMEZONE`). **Scheduled pickups**: `set_pickup_time` tool, pickup shown on orders, texts and the POS (Square SCHEDULED fulfillment). The agent gets today's date in a second, uncached system block. The menu reader drafts About, answers and item rules, flagged until the owner checks them. |
+| 2026-11-22 | Square businesses pay by **Square payment link**, required to confirm the order: Square creates the order with the link and shows it on the register once paid; we text the link, poll for payment (20 s, per-business gated timers, resumed after restart), confirm or cancel at the business's payment window, and text the customer. Money goes to the business's Square account. Chosen per call (`pos.payments_for`). Tested against the Square sandbox (link with pickup fulfillment and tax). |
