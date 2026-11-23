@@ -1,6 +1,6 @@
 # High-Level Design: Ringcart (Phone Agent) for Businesses
 
-Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (Telugu for callers).
+Status: demo, hosted on Fly.io since 2026-11-18; no phone order saved yet. Last updated: 2026-11-23 (plan: consultative selling and Shopify).
 
 ## 1. Goal
 
@@ -801,6 +801,31 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 
 ## 18. Open issues and next steps
 
+- **Next: consultative selling and Shopify** (planned for event and wedding suppliers such
+  as a Telugu wedding accessories shop on Shopify; all of it generic, usable by any
+  template). In order:
+  1. *Event and wedding supplies template* (`templates.py`): its wording ("items", "your
+     event"), agent rules for consultative selling (ask the event date and ceremonies,
+     suggest complete sets from the catalog, confirm quantities and dates), and a
+     per-business limit on how far ahead pickups can be scheduled (30 days today).
+  2. *Guides*: longer owner-editable write-ups per business (ceremony checklists, garland
+     sizes, how far ahead to order), looked up by the agent through a tool rather than
+     always in the prompt; the menu reader can draft them from the business's own pages.
+  3. *Inquiries module* (`phone_agent/modules/`): for work the catalog can't price, the
+     agent records event date, ceremony, quantities, colours, budget and contact as an
+     inquiry instead of an order; staff see it in `/manage` and are alerted.
+  4. *Shopify* (`pos_shopify.py`, alongside Square and Clover): the owner installs our app
+     (OAuth; scopes `read_products` and `write_draft_orders`), we import the catalog with
+     variant prices through the Admin GraphQL API (2026-10), and an order becomes a
+     **draft order** (`draftOrderCreate`: variant line items plus custom items with their
+     own price, note), whose `invoiceUrl` checkout link is texted to the caller like
+     Square's payment link. Paid when the draft's `order` is set (`completedAt`); unpaid
+     drafts stay in Shopify for staff. Still to confirm in the docs: how local pickup is
+     represented on a draft order (only `shippingLine` is documented), the
+     `DraftOrderStatus` values, and whether to poll or use webhooks.
+  Not in this round: shipping and delivery, rentals (dates, deposits, returns; close to
+  bookings), several pickup locations per business.
+
 - Scheduled pickups and item rules: opening hours are free text, so a pickup outside them
   is only prevented by the prompt; Clover gets a scheduled pickup only as words in the
   order note (Square gets a SCHEDULED fulfillment). Ready-made choice sets (e.g. spice
@@ -914,3 +939,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Telugu recognition model `chirp_3` → `long`: the first real call failed with Twilio 64101 (te-IN/chirp_3 isn't on Google's global endpoint). Default turned off on the server until a real call succeeds. |
 | 2026-11-23 | Telugu voice ElevenLabs `v4_turbo`; Telugu listening Deepgram `nova-3` set in the switch message (Google recognition never delivered usable text on real calls). Verified by an automated call that speaks a Telugu order. |
 | 2026-11-23 | Correction: Deepgram `te` was rejected (64107) and the call stayed on English recognition; Telugu listening is Deepgram `nova-3` `multi`, verified with no relay errors. |
+| 2026-11-23 | Planned next: event and wedding supplies template, Guides, Inquiries module, Shopify (draft orders with a texted checkout link). |
