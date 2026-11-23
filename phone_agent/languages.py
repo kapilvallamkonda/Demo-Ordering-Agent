@@ -1,6 +1,7 @@
 """Languages a business's callers can switch to (besides English).
 
-A business turns languages on in Settings (settings.languages, e.g. ["te-IN"]). For such a
+A business picks languages in Settings (settings.languages, e.g. ["te-IN"]; [] for none).
+Until it chooses, it offers DEFAULT_LANGUAGES (Telugu for now). For such a
 business, /voice declares each language to ConversationRelay (its voice and speech
 recognition), turns on keypad detection, and the greeting ends with "For Telugu, press 2".
 The caller switches by pressing the key or by asking; the agent's switch_language tool
@@ -62,10 +63,23 @@ def available() -> dict[str, Language]:
     return {lang.code: lang}
 
 
+def default_codes() -> list[str]:
+    """Languages a business offers until it chooses in Settings: DEFAULT_LANGUAGES
+    (comma-separated, default "te-IN"; empty turns the default off for everyone)."""
+    raw = os.environ.get("DEFAULT_LANGUAGES", "te-IN")
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
+def codes_for(settings: dict) -> list[str]:
+    """The business's choice (settings.languages, even an empty one), else the default."""
+    chosen = settings.get("languages")
+    return list(chosen) if isinstance(chosen, list) else default_codes()
+
+
 def for_business(settings: dict) -> list[Language]:
-    """The business's extra languages, in the order it listed them (unknown codes skipped)."""
+    """The business's extra languages, in its order (unknown codes skipped)."""
     langs = available()
-    return [langs[c] for c in settings.get("languages") or [] if c in langs]
+    return [langs[c] for c in codes_for(settings) if c in langs]
 
 
 def greeting_offer(languages: list[Language]) -> str:

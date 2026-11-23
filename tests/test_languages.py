@@ -104,3 +104,19 @@ def test_pressing_2_switches_the_call_before_the_agent_speaks_telugu(app):
     assert ("language", "en-US") in kinds  # the agent switched back on request
     assert "pressed 2 to speak Telugu" in json.dumps(fake.requests[0]["messages"])
     assert any(t["name"] == "switch_language" for t in fake.requests[0]["tools"])
+
+
+def test_telugu_is_the_default_until_the_business_chooses(monkeypatch):
+    monkeypatch.setenv("DEFAULT_LANGUAGES", "te-IN")
+    raw = json.loads(FIXTURE_CATALOG.read_text())
+    assert "languages" not in raw["settings"]
+    assert build_greeting(parse_catalog(raw)).endswith("For Telugu, press 2.")  # not chosen: default
+    raw["settings"]["languages"] = []
+    assert "Telugu" not in build_greeting(parse_catalog(raw))  # chose none: respected
+    from phone_agent.settings_schema import settings_for
+    field = next(f for f in settings_for(get_template("restaurant")) if f["path"] == "languages")
+    assert field["default"] == ["te-IN"]  # the form shows it ticked
+    monkeypatch.setenv("DEFAULT_LANGUAGES", "")  # the switch-off for everyone
+    raw["settings"].pop("languages")
+    assert "Telugu" not in build_greeting(parse_catalog(raw))
+

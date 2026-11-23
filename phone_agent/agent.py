@@ -18,7 +18,7 @@ import anthropic
 from .catalog import Catalog
 
 from .payments import PaymentService
-from . import schedule, web_analytics
+from . import languages, schedule, web_analytics
 from .prompts import build_greeting, build_system_prompt
 from .storage import Store
 from .tools import CallSession, run_tool, start_session, tools_for
@@ -79,7 +79,8 @@ class PhoneAgent:
         self.catalog = catalog
         self.greeting = build_greeting(catalog)
         # what this kind of business can do, plus switch_language if it offers other languages
-        self.tools = tools_for(catalog.template.modules, catalog.settings.get("languages"))
+        self.tools = tools_for(catalog.template.modules,
+                               [lang.code for lang in languages.for_business(catalog.settings)])
         self.session = start_session(CallSession(
             catalog=catalog, store=store, call_id=call_id, caller_phone=caller_phone,
             payments=payments, pos=pos))

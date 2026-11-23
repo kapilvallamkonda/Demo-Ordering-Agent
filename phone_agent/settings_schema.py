@@ -70,11 +70,12 @@ BY_PATH = {f["path"]: f for f in SETTINGS}
 
 
 def _with_options(fields: list[dict]) -> list[dict]:
-    from .languages import available
+    from .languages import available, default_codes
 
     for f in fields:
         if f["type"] == "languages":
             f["options"] = [[lang.code, f"{lang.label} ({lang.native})"] for lang in available().values()]
+            f["default"] = default_codes()  # shown ticked until the business chooses
     return fields
 
 

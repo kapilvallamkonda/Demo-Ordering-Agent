@@ -1082,8 +1082,9 @@
         else if (f.type === "faq") input = faqEditor(r, f, id);
         else if (f.type === "languages") input = el("div", { id, class: "row wrap" }, (f.options || []).map(([code, label]) =>
           el("label", { class: "switch", style: "color:inherit;margin-right:16px" },
-            el("input", { type: "checkbox", checked: (v || []).includes(code), onchange: e => {
-              const cur = new Set(getPath(r, f.path) || []);
+            el("input", { type: "checkbox", checked: (Array.isArray(v) ? v : f.default || []).includes(code), onchange: e => {
+              const now = getPath(r, f.path);
+              const cur = new Set(Array.isArray(now) ? now : f.default || []);
               e.target.checked ? cur.add(code) : cur.delete(code);
               set(f, [...cur], true);
             } }), el("span", {}, label))));

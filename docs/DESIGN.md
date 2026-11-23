@@ -713,7 +713,11 @@ A business sets itself up without us, like creating any online account.
 ## 16b. Languages besides English (Telugu first)
 
 A business can offer callers another language (Settings → Other languages,
-`settings.languages`; `phone_agent/languages.py`). Telugu (`te-IN`) is the first.
+`settings.languages`; `phone_agent/languages.py`). Telugu (`te-IN`) is the first, and for
+now it's on by default: a business that hasn't chosen offers `DEFAULT_LANGUAGES`
+(`te-IN`); unticking saves `[]`, which is respected. Setting `DEFAULT_LANGUAGES` empty
+turns the default off for every business at once (the kill switch if Twilio rejects the
+Telugu setup).
 
 - **Call setup:** for such a business `/voice` adds a `<Language>` element per language to
   `<ConversationRelay>` (Telugu: Google voice `te-IN-Chirp3-HD-Kore`, Google speech
@@ -897,3 +901,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 
 | 2026-11-22 | PostHog on the server (from the PostHog wizard, reworked): setup events, Claude calls as AI events without content, ID-only identification, no exception capture. The wizard's Claude wrapper was replaced because it broke every call once PostHog was on. |
 | 2026-11-23 | Languages besides English, Telugu first: a per-business setting; greeting offers "press 2"; switching by keypad or the agent's `switch_language` tool changes ConversationRelay's voice and listening mid-call (`languages.py`). |
+| 2026-11-23 | Telugu on by default for businesses that haven't chosen (`DEFAULT_LANGUAGES`, empty to turn it off everywhere). |
