@@ -171,8 +171,15 @@ is how to find out why a call didn't produce an order.
   cold start would leave a caller in silence; one machine because SQLite lives on one
   volume. Secrets are Fly secrets, never in the image (`.dockerignore` excludes `.env`
   and local databases). Live at `https://phone-agent-604b.fly.dev` (region
-  `ord`); the Twilio number's voice webhook points there.
+  `ord`); the Twilio numbers' voice webhooks point there.
   Local development still works with uvicorn plus a tunnel.
+- **Moving domains** (planned: `ringcart.ai`): `PUBLIC_BASE_URL` names the main address
+  and `PUBLIC_BASE_URL_ALIASES` the old ones still answered. Twilio signatures are checked
+  against each, and a call's ConversationRelay URL uses the address its webhook came in
+  on, so numbers can move one at a time and move back. Browsers on an old address are
+  redirected (308) to the same page on the main one, keeping sign-in cookies and OAuth on
+  one domain; machine paths (`/voice`, `/ws`, `/health`, `/calls`, `/orders`, `/api/`,
+  `/pos/`, `/stripe/`) never are.
 
 ### Isolation between businesses
 
@@ -1013,3 +1020,4 @@ review's quotes are short phrases. Analytics queries are scoped by `business_id`
 | 2026-11-23 | Background noise: greeting interruptible only by keypad, low interrupt sensitivity, backchannels ignored (`GREETING_INTERRUPTIBLE`, `INTERRUPT_SENSITIVITY`, `IGNORE_BACKCHANNEL`). |
 | 2026-11-23 | Hindi, Tamil and Kannada added alongside Telugu, all four on by default; the greeting asks which language the caller would like instead of "press 2"; unsupported languages get a polite no and the call stays in English; `wait_for_caller` keeps the agent silent on side talk and TV speech. |
 | 2026-11-23 | Prices are said only when the caller asks and in the total at the final read-back, not as each item is added. |
+| 2026-11-24 | Domain move support: `PUBLIC_BASE_URL_ALIASES` keeps old addresses working (Twilio signatures, ConversationRelay on the same address) and redirects browsers to `PUBLIC_BASE_URL`. |

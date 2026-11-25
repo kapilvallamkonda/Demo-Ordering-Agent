@@ -198,6 +198,7 @@ They include a full phone order over the WebSocket.
 | `STRIPE_SECRET_KEY` | unset | Turns on payment links by text. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Enables `/stripe/webhook` and checks Stripe's signature. |
 | `PUBLIC_BASE_URL` | from request | Public URL Twilio uses; needed for signature checks behind proxies. |
+| `PUBLIC_BASE_URL_ALIASES` | unset | Old public addresses still answered while moving domains (comma-separated, e.g. the fly.dev URL). Twilio calls to them keep working, staying on the address they came in on; browsers are redirected to `PUBLIC_BASE_URL`. |
 | `CALL_REVIEWS` | `on` | `off` stops the AI review of each finished call (analytics). |
 | `CALL_REVIEW_MODEL` | `claude-haiku-5-5` | Model for call reviews. |
 | `CALL_REVIEWS_PER_BUSINESS_PER_DAY` | `300` | Daily cap on call reviews per business. |

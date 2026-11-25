@@ -31,7 +31,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 import anthropic
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import RedirectResponse, HTMLResponse, Response
 from twilio.request_validator import RequestValidator
 
 from . import analytics, brand, languages, web_analytics
@@ -225,12 +225,61 @@ async def landing(request: Request) -> HTMLResponse:
     return resp
 
 
-def _public_base(request: Request) -> str:
-    if PUBLIC_BASE_URL:
-        return PUBLIC_BASE_URL
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+def _request_base(conn) -> str:
+    """The scheme and host this request or WebSocket came in on (behind Fly's proxy)."""
+    proto = conn.headers.get("x-forwarded-proto", conn.url.scheme)
+    if proto in ("ws", "wss"):
+        proto = "https" if proto == "wss" else "http"
+    host = conn.headers.get("x-forwarded-host", conn.headers.get("host", conn.url.netloc))
     return f"{proto}://{host}"
+
+
+def public_aliases() -> list[str]:
+    """Other addresses this server still answers on (PUBLIC_BASE_URL_ALIASES, comma-separated),
+    e.g. the old fly.dev address while moving to a new domain. Twilio signatures made for
+    them are accepted, and browsers on them are sent to PUBLIC_BASE_URL."""
+    raw = os.environ.get("PUBLIC_BASE_URL_ALIASES", "")
+    return [b.strip().rstrip("/") for b in raw.split(",") if b.strip()]
+
+
+def _public_bases() -> list[str]:
+    return ([PUBLIC_BASE_URL] if PUBLIC_BASE_URL else []) + public_aliases()
+
+
+def _public_base(request: Request) -> str:
+    """The base URL for links Twilio follows in this call: the address the request came in on
+    when it's one of ours (so a call to the old address stays on it, webhook and
+    ConversationRelay alike), else PUBLIC_BASE_URL."""
+    own = _request_base(request)
+    if not PUBLIC_BASE_URL or own in _public_bases():
+        return own
+    return PUBLIC_BASE_URL
+
+
+def _twilio_signed(signature: str, path_and_query: str, params: dict, ws: bool = False) -> bool:
+    """Twilio signs the full URL it called, so check against each of our public addresses."""
+    validator = RequestValidator(TWILIO_AUTH_TOKEN)
+    for base in _public_bases():
+        url = (_ws_url(base)[:-len("/ws")] if ws else base) + path_and_query
+        if validator.validate(url, params, signature):
+            return True
+    return False
+
+
+# Paths machines call (Twilio, providers, admin scripts): never redirected to the new domain.
+_MACHINE_PATHS = ("/voice", "/ws", "/health", "/calls", "/orders", "/api/", "/pos/", "/stripe/")
+
+
+@app.middleware("http")
+async def to_primary_domain(request: Request, call_next):
+    """A browser on an old address (PUBLIC_BASE_URL_ALIASES) goes to the same page on
+    PUBLIC_BASE_URL, so sign-in cookies and OAuth redirects stay on one domain."""
+    if (PUBLIC_BASE_URL and request.method in ("GET", "HEAD")
+            and not request.url.path.startswith(_MACHINE_PATHS)
+            and _request_base(request) in public_aliases()):
+        target = PUBLIC_BASE_URL + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return RedirectResponse(target, status_code=308)
+    return await call_next(request)
 
 
 def _ws_url(base: str) -> str:
@@ -251,11 +300,11 @@ async def voice(request: Request) -> Response:
     """Twilio voice webhook: hand the call to ConversationRelay."""
     form = dict(await request.form())
     if TWILIO_AUTH_TOKEN:
-        url = _public_base(request) + request.url.path
-        if request.url.query:
-            url += "?" + request.url.query
+        path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
         signature = request.headers.get("x-twilio-signature", "")
-        if not RequestValidator(TWILIO_AUTH_TOKEN).validate(url, form, signature):
+        signed = (_twilio_signed(signature, path, form) if PUBLIC_BASE_URL else
+                  RequestValidator(TWILIO_AUTH_TOKEN).validate(_request_base(request) + path, form, signature))
+        if not signed:
             log.warning("rejected /voice request with bad Twilio signature")
             raise HTTPException(status_code=403, detail="invalid signature")
 
@@ -730,8 +779,8 @@ class RelayCall:
 async def relay(ws: WebSocket) -> None:
     if TWILIO_AUTH_TOKEN and PUBLIC_BASE_URL:
         signature = ws.headers.get("x-twilio-signature")
-        url = _ws_url(PUBLIC_BASE_URL) + (f"?{ws.url.query}" if ws.url.query else "")
-        if signature and not RequestValidator(TWILIO_AUTH_TOKEN).validate(url, {}, signature):
+        path = "/ws" + (f"?{ws.url.query}" if ws.url.query else "")
+        if signature and not _twilio_signed(signature, path, {}, ws=True):
             log.warning("rejected /ws connection with bad Twilio signature")
             await ws.close(code=1008)
             return

@@ -133,6 +133,8 @@ def _check_write(request: Request) -> None:
         public = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         if public:
             allowed.add(public)
+        allowed.update(b.strip().rstrip("/") for b in
+                       os.environ.get("PUBLIC_BASE_URL_ALIASES", "").split(",") if b.strip())
         if origin.rstrip("/") not in allowed:
             raise HTTPException(status_code=403, detail="bad origin")
 

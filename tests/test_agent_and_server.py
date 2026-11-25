@@ -187,3 +187,31 @@ def test_dashboard_and_orders_need_token(app_client, monkeypatch):
     assert c.get("/orders", headers={"authorization": "Bearer nope"}).status_code == 401
     r = c.get("/orders?limit=5", headers={"authorization": "Bearer tok"})
     assert r.status_code == 200 and r.json() == []
+
+
+def test_moving_domains_keeps_the_old_address_working(app_client, monkeypatch):
+    """PUBLIC_BASE_URL is the new domain and the old one is an alias: Twilio calls signed for
+    either address are accepted and stay on the address they came in on; browsers on the old
+    address go to the new one; anything else is rejected."""
+    from twilio.request_validator import RequestValidator
+    c, _ = app_client
+    new, old = "https://ringcart.ai", "https://phone-agent-604b.fly.dev"
+    monkeypatch.setattr(server, "TWILIO_AUTH_TOKEN", "secret")
+    monkeypatch.setattr(server, "PUBLIC_BASE_URL", new)
+    monkeypatch.setenv("PUBLIC_BASE_URL_ALIASES", old)
+    form = {"CallSid": "CA1", "To": BELLA_PHONE}
+    sign = lambda base: RequestValidator("secret").compute_signature(base + "/voice", form)
+    host = lambda base: {"host": base.split("//")[1], "x-forwarded-proto": "https"}
+
+    for base in (new, old):
+        r = c.post("/voice", data=form, headers={**host(base), "x-twilio-signature": sign(base)})
+        assert r.status_code == 200
+        assert f'url="{base.replace("https", "wss")}/ws?business=1' in r.text  # relay on the same address
+    elsewhere = "https://evil.example"
+    r = c.post("/voice", data=form, headers={**host(elsewhere), "x-twilio-signature": sign(elsewhere)})
+    assert r.status_code == 403
+
+    r = c.get("/manage?x=1", headers=host(old), follow_redirects=False)  # a person on the old address
+    assert r.status_code == 308 and r.headers["location"] == new + "/manage?x=1"
+    assert c.get("/health", headers=host(old)).status_code == 200  # machines aren't redirected
+    assert c.get("/manage", headers=host(new), follow_redirects=False).status_code != 308
